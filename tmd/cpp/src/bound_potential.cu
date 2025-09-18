@@ -1,0 +1,182 @@
+// Copyright 2019-2025, Relay Therapeutics
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "assert.h"
+#include "bound_potential.hpp"
+#include "gpu_utils.cuh"
+#include <memory>
+
+namespace tmd {
+
+template <typename RealType>
+BoundPotential<RealType>::BoundPotential(
+    std::shared_ptr<Potential<RealType>> potential,
+    const std::vector<RealType> &params, const int params_dim)
+    : size(params.size()), params_dim(params_dim), d_p(size),
+      potential(potential) {
+  assert(this->size % this->params_dim == 0);
+  set_params(params);
+}
+
+template <typename RealType>
+void BoundPotential<RealType>::execute_device(const int N, const RealType *d_x,
+                                              const RealType *d_box,
+                                              unsigned long long *d_du_dx,
+                                              unsigned long long *d_du_dp,
+                                              __int128 *d_u,
+                                              cudaStream_t stream) {
+  this->potential->execute_device(N, this->size, d_x,
+                                  this->size > 0 ? this->d_p.data : nullptr,
+                                  d_box, d_du_dx, d_du_dp, d_u, stream);
+}
+
+template <typename RealType>
+void BoundPotential<RealType>::execute_batch_host(
+    const int coord_batch_size,  // Number of batches of coordinates
+    const int N,                 // Number of atoms
+    const RealType *h_x,         // [coord_batch_size, N, 3]
+    const RealType *h_box,       // [coord_batch_size, 3, 3]
+    unsigned long long *h_du_dx, // [coord_batch_size, N, 3]
+    __int128 *h_u                // [coord_batch_size]
+) {
+  const int D = 3;
+  DeviceBuffer<RealType> d_box(coord_batch_size * D * D);
+  d_box.copy_from(h_box);
+
+  DeviceBuffer<RealType> d_x_buffer(coord_batch_size * N * D);
+  d_x_buffer.copy_from(h_x);
+
+  DeviceBuffer<unsigned long long> d_du_dx_buffer;
+  DeviceBuffer<__int128> d_u_buffer;
+
+  const int total_executions = coord_batch_size;
+
+  cudaStream_t stream;
+  gpuErrchk(cudaStreamCreate(&stream));
+
+  if (h_du_dx) {
+    d_du_dx_buffer.realloc(total_executions * N * D);
+    gpuErrchk(
+        cudaMemsetAsync(d_du_dx_buffer.data, 0, d_du_dx_buffer.size(), stream));
+  }
+
+  if (h_u) {
+    d_u_buffer.realloc(total_executions);
+    gpuErrchk(cudaMemsetAsync(d_u_buffer.data, 0, d_u_buffer.size(), stream));
+  }
+
+  this->potential->execute_batch_device(
+      coord_batch_size, N,
+      1, // only a single set of parameters
+      this->size, d_x_buffer.data, this->size > 0 ? this->d_p.data : nullptr,
+      d_box.data, h_du_dx ? d_du_dx_buffer.data : nullptr, nullptr,
+      h_u ? d_u_buffer.data : nullptr, stream);
+
+  gpuErrchk(cudaStreamSynchronize(stream));
+  gpuErrchk(cudaStreamDestroy(stream));
+
+  if (h_du_dx) {
+    d_du_dx_buffer.copy_to(h_du_dx);
+  }
+
+  if (h_u) {
+    d_u_buffer.copy_to(h_u);
+  }
+}
+
+template <typename RealType>
+void BoundPotential<RealType>::execute_host(
+    const int N,
+    const RealType *h_x,         // [N,3]
+    const RealType *h_box,       // [3, 3]
+    unsigned long long *h_du_dx, // [N, 3]
+    __int128 *h_u                // [1]
+) {
+
+  const int D = 3;
+
+  DeviceBuffer<RealType> d_x(N * D);
+  DeviceBuffer<RealType> d_box(D * D);
+
+  d_x.copy_from(h_x);
+  d_box.copy_from(h_box);
+
+  DeviceBuffer<unsigned long long> d_du_dx;
+  DeviceBuffer<__int128> d_u;
+
+  cudaStream_t stream = static_cast<cudaStream_t>(0);
+  // very important that these are initialized to zero since the kernels
+  // themselves just accumulate
+  if (h_du_dx != nullptr) {
+    d_du_dx.realloc(N * D);
+    gpuErrchk(cudaMemsetAsync(d_du_dx.data, 0, d_du_dx.size(), stream));
+  }
+  if (h_u != nullptr) {
+    d_u.realloc(1);
+    gpuErrchk(cudaMemsetAsync(d_u.data, 0, d_u.size(), stream));
+  }
+
+  this->execute_device(N, d_x.data, d_box.data,
+                       h_du_dx != nullptr ? d_du_dx.data : nullptr, nullptr,
+                       h_u != nullptr ? d_u.data : nullptr, stream);
+  gpuErrchk(cudaStreamSynchronize(stream));
+
+  if (h_du_dx) {
+    d_du_dx.copy_to(h_du_dx);
+  }
+  if (h_u) {
+    d_u.copy_to(h_u);
+  }
+};
+
+template <typename RealType>
+void BoundPotential<RealType>::set_params(const std::vector<RealType> &params) {
+  if (params.size() != d_p.length) {
+    throw std::runtime_error(
+        "parameter size is not equal to device buffer size: " +
+        std::to_string(params.size()) + " != " + std::to_string(d_p.length));
+  }
+  d_p.copy_from(params.data());
+  this->size = params.size();
+}
+
+template <typename RealType>
+std::vector<RealType> BoundPotential<RealType>::get_params() const {
+  std::vector<RealType> h_params(this->size);
+  if (this->size > 0) {
+    gpuErrchk(cudaMemcpy(&h_params[0], d_p.data, this->size * sizeof(*d_p.data),
+                         cudaMemcpyDeviceToHost));
+  }
+  return h_params;
+};
+
+template <typename RealType>
+void BoundPotential<RealType>::set_params_device(const int new_size,
+                                                 const RealType *d_new_params,
+                                                 const cudaStream_t stream) {
+  if (static_cast<size_t>(new_size) > d_p.length) {
+    throw std::runtime_error(
+        "parameter size is greater than device buffer size: " +
+        std::to_string(new_size) + " > " + std::to_string(d_p.length));
+  }
+  gpuErrchk(cudaMemcpyAsync(d_p.data, d_new_params,
+                            new_size * sizeof(*d_p.data),
+                            cudaMemcpyDeviceToDevice, stream));
+  this->size = new_size;
+}
+
+template class BoundPotential<double>;
+template class BoundPotential<float>;
+
+} // namespace tmd

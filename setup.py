@@ -1,0 +1,156 @@
+# Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025 Forrest York
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""setuptools based setup module.
+
+Adapted from https://github.com/pypa/sampleproject/blob/main/setup.py
+"""
+
+import multiprocessing
+import os
+import pathlib
+import subprocess
+import sys
+
+from setuptools import Extension, find_packages, setup
+from setuptools.command.build_ext import build_ext
+
+
+def install_custom_ops() -> bool:
+    """Determine if we should install the custom ops.
+
+    If it is not a linux machine and doesn't have at least nvcc we skip it. Can
+    still use the reference platform if needed in such cases.
+    """
+    if os.environ.get("SKIP_CUSTOM_OPS"):
+        return False
+    if "linux" not in sys.platform:
+        return False
+    try:
+        subprocess.check_call(["nvcc", "--version"])
+    except FileNotFoundError:
+        return False
+
+    return True
+
+
+# CMake configuration adapted from https://github.com/pybind/cmake_example
+class CMakeExtension(Extension):
+    def __init__(self, name, sourcedir=""):
+        Extension.__init__(self, name, sources=[])
+        self.sourcedir = os.path.abspath(sourcedir)
+
+
+class CMakeBuild(build_ext):
+    def build_extension(self, ext):
+        extdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
+
+        # required for auto-detection & inclusion of auxiliary "native" libs
+        if not extdir.endswith(os.path.sep):
+            extdir += os.path.sep
+
+        cmake_args = [
+            f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}",
+            f"-DPYTHON_EXECUTABLE={sys.executable}",
+        ]
+
+        build_args = []
+        if "CMAKE_ARGS" in os.environ:
+            cmake_args += [item for item in os.environ["CMAKE_ARGS"].split(" ") if item]
+
+        if "CMAKE_BUILD_PARALLEL_LEVEL" not in os.environ:
+            build_args += [f"-j{multiprocessing.cpu_count()}"]
+
+        if not os.path.exists(self.build_temp):
+            os.makedirs(self.build_temp)
+
+        subprocess.check_call(["cmake", ext.sourcedir, *cmake_args], cwd=self.build_temp)
+        subprocess.check_call(["cmake", "--build", ".", *build_args], cwd=self.build_temp)
+
+
+here = pathlib.Path(__file__).parent.resolve()
+
+# Get the long description from the README file
+long_description = (here / "README.md").read_text(encoding="utf-8")
+
+ext_modules = None
+if install_custom_ops():
+    ext_modules = [CMakeExtension("tmd.lib.custom_ops", "tmd/cpp")]
+
+setup(
+    name="tmd",
+    version="0.1.0",
+    cmdclass={"build_ext": CMakeBuild},
+    description="A high-performance differentiable molecular dynamics and optimization engine",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url="https://github.com/badisa/tmd",
+    author="Forrest York",
+    classifiers=[
+        "Development Status :: 5 - Production/Stable",
+        "License :: OSI Approved :: Apache Software License",
+        "Programming Language :: Python :: 3",
+        "Environment :: GPU :: NVIDIA CUDA :: 12",
+    ],
+    keywords="molecular dynamics",
+    ext_modules=ext_modules,
+    packages=find_packages(),
+    python_requires=">=3.12",
+    install_requires=[
+        "jax",
+        "jaxlib>0.4.1",
+        "networkx",
+        "numpy",
+        "rdkit",
+        "scipy",
+        "matplotlib",
+        "openmm",
+    ],
+    extras_require={
+        "dev": ["ruff==0.9.3", "mypy==1.14.1", "pre-commit==4.1.0", "tbump==6.11.*"],
+        "test": [
+            "pytest",
+            "pytest-cov",
+            "pytest-xdist",
+            "hilbertcurve==1.0.5",
+            "hypothesis[numpy]==6.54.6",
+            "psutil==5.9.5",
+            "py3Dmol==2.0.3",
+        ],
+        "viz": ["py3Dmol"],
+    },
+    package_data={
+        "tmd": [
+            "py.typed",
+        ],
+        "tmd.testsystems": [
+            "**/*.pdb",
+            "**/*.npz",
+            "**/*.sdf",
+        ],
+        "tmd.cpp": [
+            "**/*.h",
+            "**/*.cu",
+            "**/*.cuh",
+            "**/*.hpp",
+            "**/*.cpp",
+            "CMakeLists.txt",
+            "generate_stubs",
+        ],
+    },
+    project_urls={
+        "Bug Reports": "https://github.com/badisa/tmd/issues",
+        "Source": "https://github.com/badisa/tmd/",
+    },
+)

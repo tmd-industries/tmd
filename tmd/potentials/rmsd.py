@@ -1,0 +1,195 @@
+# Copyright 2019-2025, Relay Therapeutics
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import jax.numpy as jnp
+
+
+def psi(rotation, k):
+    cos_theta = (jnp.trace(rotation) - 1) / 2
+    return cos_angle_u(cos_theta, k)
+
+
+def angle_u(theta, k):
+    return cos_angle_u(jnp.cos(theta), k)
+
+
+def cos_angle_u(cos_theta, k):
+    term = cos_theta - 1
+    nrg = k * term * term
+    return nrg
+
+
+def get_optimal_rotation(x1, x2):
+    # x1, x2 must be centered
+    assert x1.shape == x2.shape
+
+    # x1 and x2 must be already mean aligned.
+    correlation_matrix = jnp.dot(x2.T, x1)
+    U, S, V_tr = jnp.linalg.svd(correlation_matrix, full_matrices=False)
+    is_reflection = (jnp.linalg.det(U) * jnp.linalg.det(V_tr)) < 0.0
+    U = U.at[:, -1].set(jnp.where(is_reflection, -U[:, -1], U[:, -1]))
+    rotation = jnp.dot(U, V_tr)
+
+    return rotation
+
+
+def get_optimal_translation(x1, x2):
+    """
+    Returns the displacement vector whose tail is at x1 and head its at x2.
+    """
+    return jnp.mean(x2, axis=0) - jnp.mean(x1, axis=0)
+
+
+def get_optimal_rotation_and_translation(x1, x2):
+    """
+    Compute the optimal rotation and translation of x2 unto x1.
+
+    Parameters
+    ----------
+    x1: np.ndarray (K,3)
+
+    x2: np.ndarray (K,3)
+
+    Returns
+    -------
+    tuple (np.ndarray, np.ndarray)
+        Rotation translation pair
+    """
+    t = get_optimal_translation(x1, x2)
+    x1 = x1 - jnp.mean(x1, axis=0)
+    x2 = x2 - jnp.mean(x2, axis=0)
+    return get_optimal_rotation(x1, x2), t
+
+
+def apply_rotation_and_translation(x, R, t):
+    """
+    Apply R and t from x.
+    """
+    x_com = jnp.mean(x, axis=0)
+    aligned_x = (x - x_com) @ R - t + x_com
+    return aligned_x
+
+
+def align_x2_unto_x1(x1, x2):
+    """
+    Optimally align x2 unto x1. In particular, x2 is shifted so that its centroid is placed
+    at the same position as the of x1's centroid. x2 is also rotated so that the RMSD
+    is minimized.
+
+    Parameters
+    ----------
+    x1: np.ndarray of shape (N,3)
+        Coordinates of the first conformation
+
+    x2: np.ndarray of shape (N,3)
+        Coordinates of the second conformation
+
+    Returns
+    -------
+    np.ndarray of shape (N,3)
+        Optimally aligned x2
+
+    """
+    com1 = jnp.mean(x1, axis=0)
+    com2 = jnp.mean(x2, axis=0)
+    t = com2 - com1
+    x1_centered = x1 - com1
+    x2_centered = x2 - com2
+
+    R = get_optimal_rotation(x1_centered, x2_centered)
+
+    return x2_centered @ R + com2 - t
+
+
+def rmsd_align(x1, x2):
+    """
+    Optimally align x1 and x2 via rigid translation and rotations.
+
+    The returned alignment is a proper rotation. Note while it is technically
+    possible to find an ever better alignment if we were to allow for reflections,
+    there are technical difficulties with defining what the "standard" rotation is,
+    i.e. either np.eye(3) or -np.eye(3). We can revisit this at a later time.
+
+    Parameters
+    ----------
+    x1: np.ndarray (N,3)
+        conformation 1
+
+    x1: np.ndarray (N,3)
+        conformation 2
+
+    Returns
+    -------
+    2-tuple
+        Return a pair of aligned (N,3) ndarrays. Each conformer has its centroid
+        set to the origin.
+
+    """
+
+    assert x1.shape == x2.shape
+
+    x1 = x1 - jnp.mean(x1, axis=0)
+    x2 = x2 - jnp.mean(x2, axis=0)
+
+    rotation = get_optimal_rotation(x1, x2)
+
+    xa = x1
+    xb = x2 @ rotation
+
+    return xa, xb
+
+
+def rmsd_restraint(conf, params, box, group_a_idxs, group_b_idxs, k):
+    """
+    Compute a rigid RMSD restraint using two groups of atoms. group_a_idxs and group_b_idxs
+    must have the same size. a and b can have duplicate indices and need not be necessarily
+    disjoint. This function will automatically recenter the two groups of atoms before computing
+    the rotation matrix. For relative binding free energy calculations, this restraint
+    does not need to be turned off.
+
+    Note that you should add a center of mass restraint as well to accommodate for the translational
+    component.
+
+    Parameters
+    ----------
+    conf: np.ndarray
+        N x 3 coordinates
+
+    params: Any
+        Unused dummy variable for API consistency
+
+    box: Any
+        Unused dummy variable for API consistency
+
+    group_a_idxs: list of int
+        idxs for the first group of atoms
+
+    group_b_idxs: list of int
+        idxs for the second group of atoms
+
+    k: float
+        force constant
+
+    """
+    assert len(group_a_idxs) == len(group_b_idxs)
+
+    x1 = conf[group_a_idxs]
+    x2 = conf[group_b_idxs]
+    # recenter
+    x1 = x1 - jnp.mean(x1, axis=0)
+    x2 = x2 - jnp.mean(x2, axis=0)
+
+    rotation = get_optimal_rotation(x1, x2)
+
+    return psi(rotation, k)

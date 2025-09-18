@@ -1,0 +1,19 @@
+.idea
+*.pkl
+__pycache__/
+tmd/cpp/build/
+*.so
+*.DS_Store
+oe_license.txt
+*.swp
+.ipynb_checkpoints/
+build/
+dist/
+*.egg-info/
+.coverage*
+.hypothesis/
+pytest-artifacts/
+
+# Nsys profiling files
+*.sqlite
+*.nsys-rep

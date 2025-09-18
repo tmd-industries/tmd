@@ -1,0 +1,115 @@
+# Copyright 2019-2025, Relay Therapeutics
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import numpy as np
+import pytest
+from common import convert_quaternion_for_scipy
+from scipy.spatial.transform import Rotation
+
+from tmd.fe.model_utils import image_molecule
+from tmd.lib import custom_ops
+
+
+@pytest.mark.memcheck
+@pytest.mark.parametrize("seed", [2023])
+@pytest.mark.parametrize("precision,atol,rtol", [(np.float64, 1e-8, 1e-8), (np.float32, 2.2e-5, 1e-5)])
+@pytest.mark.parametrize("n_rotations", [2, 33, 100])
+@pytest.mark.parametrize("n_coords", [8, 33, 65])
+def test_cuda_rotation_by_quaternion(seed, precision, atol, rtol, n_rotations, n_coords):
+    rng = np.random.default_rng(seed)
+
+    all_coords = rng.normal(size=(n_coords, 3)) * 100.0
+
+    quaternions = rng.normal(size=(n_rotations, 4))
+    rotate_function = custom_ops.rotate_coords_f32
+    if precision == np.float64:
+        rotate_function = custom_ops.rotate_coords_f64
+
+    # Generates rotations for all individual sets of coordinates
+    all_coords = all_coords.astype(precision)
+    quaternions = quaternions.astype(precision)
+    rotated_coords = rotate_function(all_coords, quaternions)
+    assert rotated_coords.shape == (n_coords, n_rotations, 3)
+
+    inv_quaternions = quaternions.copy()
+    inv_quaternions[:, 1:] *= -1
+
+    rotation = Rotation.from_quat([convert_quaternion_for_scipy(quat) for quat in quaternions])
+    for i, coords in enumerate(all_coords):
+        ref_rotated_coords = rotation.apply(coords).astype(precision)
+
+        inverted_coords = rotate_function(ref_rotated_coords, inv_quaternions)
+
+        for j, ref_coords in enumerate(ref_rotated_coords):
+            np.testing.assert_allclose(
+                rotated_coords[i][j],
+                ref_coords,
+                rtol=rtol,
+                atol=atol,
+                err_msg=f"Coords {i} with Rotation {j} have a mismatch",
+            )
+            np.testing.assert_allclose(
+                inverted_coords[j][j],
+                coords,
+                rtol=rtol,
+                atol=atol,
+                err_msg=f"Coords {j} didn't get back to original value",
+            )
+
+
+@pytest.mark.memcheck
+@pytest.mark.parametrize("seed", [2023, 2024])
+@pytest.mark.parametrize("precision,atol,rtol", [(np.float64, 1e-8, 1e-8), (np.float32, 2e-5, 1e-5)])
+@pytest.mark.parametrize("n_moves, batch_size", [(5, 1), (33, 1), (10, 100), (2, 1000)])
+@pytest.mark.parametrize("n_coords", [3, 33, 65])
+def test_cuda_rotation_and_translate_mol_by_quaternion(seed, precision, atol, rtol, n_moves, batch_size, n_coords):
+    rng = np.random.default_rng(seed)
+
+    mol_coords = rng.normal(size=(n_coords, 3)) * 10.0
+    box = np.eye(3) * 10.0
+
+    rotate_function = custom_ops.rotate_and_translate_mol_f32
+    if precision == np.float64:
+        rotate_function = custom_ops.rotate_and_translate_mol_f64
+
+    mol_centroid = np.mean(mol_coords, axis=0, keepdims=True)
+
+    for _ in range(n_moves):
+        quaternions = rng.normal(size=(batch_size, 4))
+        translations = rng.uniform(size=(batch_size, 3))
+
+        mol_coords = mol_coords.astype(precision)
+        box = box.astype(precision)
+        quaternions = quaternions.astype(precision)
+        translations = translations.astype(precision)
+
+        rotated_translated_mol = rotate_function(mol_coords, box, quaternions, translations)
+
+        assert rotated_translated_mol.shape == (batch_size, *mol_coords.shape)
+
+        for i, (quat, translation) in enumerate(zip(quaternions, translations)):
+            rotation = Rotation.from_quat(convert_quaternion_for_scipy(quat))
+
+            new_translation = np.diag(box) * translation
+            # Rotate about the origin
+            ref_rotated_translated_mol = rotation.apply(mol_coords - mol_centroid)
+            # Move the center to the translation
+            ref_rotated_translated_mol += new_translation
+
+            np.testing.assert_allclose(
+                rotated_translated_mol[i],
+                image_molecule(ref_rotated_translated_mol, box),
+                rtol=rtol,
+                atol=atol,
+            )

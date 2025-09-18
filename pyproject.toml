@@ -1,0 +1,78 @@
+[tool.mypy]
+plugins = ["numpy.typing.mypy_plugin"]
+ignore_missing_imports = true
+check_untyped_defs = false
+disable_error_code = [
+  "has-type",
+  "misc",
+  "var-annotated"
+]
+
+[[tool.mypy.overrides]]
+module = "tmd._vendored.fire"
+follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+module = "tmd._vendored.pymbar"
+follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+module = "tmd._vendored.pymbar.mbar_solvers"
+follow_imports = "silent"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# https://docs.astral.sh/ruff/rules
+select = [
+  "E", # pycodestyle
+  "F", # Pyflakes
+  "I", # isort
+  "NPY", # numpy-specific rules
+  "UP", # pyupgrade
+  "RUF", # ruff-specific
+  "W", # warning
+]
+ignore = [
+  "E402", # Module level import not at top of file
+  "E501", # Line too long
+  "E731", # Do not assign a lambda expression, use a def
+  "E741", # Do not use variables named 'I', 'O', or 'l'
+
+  "NPY002", # Replace legacy `np.random.choice` call with `np.random.Generator`
+
+  "RUF002", # Docstring contains ambiguous `–` (EN DASH). Did you mean `-` (HYPHEN-MINUS)?
+]
+
+[build-system]
+requires = [
+  # Need cmake/mypy if building the C++, only supported on linux
+  "cmake==3.24.3; sys_platform == 'linux'",
+  "mypy==1.14.1; sys_platform == 'linux'",
+  "setuptools >= 64.0.0",
+  "wheel",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.tbump.version]
+current = "0.1.1"
+
+regex = '''
+  (?P<major>\d+)
+  \.
+  (?P<minor>\d+)
+  \.
+  (?P<patch>\d+)
+  '''
+
+[tool.tbump.git]
+message_template = "Bump to {new_version}"
+tag_template = "v{new_version}"
+
+[[tool.tbump.file]]
+src = "pyproject.toml"
+search = 'current = "{current_version}"'
+
+[[tool.tbump.file]]
+src = "tmd/__init__.py"

@@ -1,0 +1,63 @@
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+    -   id: check-yaml
+    -   id: end-of-file-fixer
+    -   id: trailing-whitespace
+
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.3
+    hooks:
+    -   id: ruff
+        args: [ --fix ]
+    -   id: ruff-format
+
+-   repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.1
+    hooks:
+    -   id: mypy
+        # include dependencies that export types (i.e. have a py.typed file in the root module) so that they can be used
+        # by mypy in pre-commit
+        additional_dependencies:
+          - "jax==0.4.28"
+          - "numpy==2.2.2"
+          - "scipy==1.15.1"
+          - "matplotlib==3.10.0"
+
+        # Exclude custom_ops.py to work around clash with stub file when typechecking
+        # Exclude vendored code to reduce maintenance burden
+        exclude: '(?x)(^tmd/lib/custom_ops.py$ | ^tmd/_vendored)'
+
+-   repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v19.1.7
+    hooks:
+    -   id: clang-format
+        types_or: [c, c++, cuda]
+        files: '^tmd/cpp/src/'
+
+-   repo: local
+    hooks:
+    -   id: verify-typing-stubs
+        name: Verify typing stubs
+
+        # NOTE: Building generates new typing stubs, so this hook will
+        # fail if stub file committed to the repo is out of date.
+        # (pre-commit hooks fail if files are modified)
+        entry: make build
+
+        language: system
+        pass_filenames: false
+        files: '^tmd/cpp/src/wrap_kernels.cpp$'
+
+exclude: |
+  (?x)(
+    \.pdb$
+  | \.sdf$
+  | \.proto$
+  | \.xml$
+  | /vendored/
+  | ^tmd/ff/params/
+  | ^tmd/_vendored/
+  | ^tmd/lib/custom_ops.pyi$
+  )

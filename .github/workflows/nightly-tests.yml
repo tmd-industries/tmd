@@ -1,0 +1,100 @@
+name: Nightly Tests
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # UTC Time
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  no_gpu_nightly:
+    runs-on: [self-hosted, gpu]
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        CMAKE_ARGS=-DCUDA_ARCH=75 pip install -e .[dev,test,viz]
+
+    - name: Run Nightly No GPU tests
+      run: make nogpu_nightly_tests
+
+  no_cuda_nightly:
+    runs-on: [self-hosted, gpu]
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        SKIP_CUSTOM_OPS=true pip install -e .[dev,test,viz]
+
+    - name: Run Nightly No CUDA tests
+      run: make nocuda_nightly_tests
+
+  nightly_tests:
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Conda Env
+        run: |
+          source ~/miniforge3/etc/profile.d/conda.sh
+          conda env create -f environment.yml | conda env update -f environment.yml
+      - name: Install requirements
+        run: |
+          source ~/miniforge3/etc/profile.d/conda.sh
+          conda activate tmd
+          export PATH=$PATH:/usr/local/cuda/bin/
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
+          pip install -r requirements.txt
+          pip install -e .[dev,test]
+      - name: Run Nightly Unit Tests
+        run: |
+          source ~/miniforge3/etc/profile.d/conda.sh
+          conda activate tmd
+          export PATH=$PATH:/usr/local/cuda/bin/
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
+          make nightly_tests
+
+  nightly_memory_tests:
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Conda Env
+        run: |
+          source ~/miniforge3/etc/profile.d/conda.sh
+          conda env create -f environment.yml | conda env update -f environment.yml
+      - name: Install requirements
+        run: |
+          source ~/miniforge3/etc/profile.d/conda.sh
+          conda activate tmd
+          export PATH=$PATH:/usr/local/cuda/bin/
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
+          pip install -r requirements.txt
+          pip install -e .[dev,test]
+      - name: Run Nightly Memory Tests
+        run: |
+          source ~/miniforge3/etc/profile.d/conda.sh
+          conda activate tmd
+          export PATH=$PATH:/usr/local/cuda/bin/
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
+          make nightly_memcheck_tests

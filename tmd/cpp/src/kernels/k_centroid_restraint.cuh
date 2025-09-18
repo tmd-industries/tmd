@@ -1,0 +1,98 @@
+// Copyright 2019-2025, Relay Therapeutics
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#pragma once
+
+#include "k_fixed_point.cuh"
+
+namespace tmd {
+
+template <typename RealType>
+void __global__ k_calc_centroid(const RealType *__restrict__ d_coords, // [n, 3]
+                                const int *__restrict__ d_group_a_idxs,
+                                const int *__restrict__ d_group_b_idxs,
+                                const int N_A, const int N_B,
+                                unsigned long long *d_centroid_a, // [3]
+                                unsigned long long *d_centroid_b  // [3]
+) {
+  int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
+  if (N_A + N_B <= t_idx) {
+    return;
+  }
+  int group_idx = t_idx < N_A ? t_idx : t_idx - N_A;
+  unsigned long long *centroid = t_idx < N_A ? d_centroid_a : d_centroid_b;
+  const int *cur_array = t_idx < N_A ? d_group_a_idxs : d_group_b_idxs;
+
+#pragma unroll
+  for (int d = 0; d < 3; d++) {
+    atomicAdd(centroid + d,
+              FLOAT_TO_FIXED<RealType>(d_coords[cur_array[group_idx] * 3 + d]));
+  }
+}
+
+template <typename RealType>
+void __global__ k_centroid_restraint(
+    // const int N,     // number of bonds, ignore for now
+    const RealType *__restrict__ d_coords, // [n, 3]
+    const int *__restrict__ d_group_a_idxs,
+    const int *__restrict__ d_group_b_idxs, const int N_A, const int N_B,
+    const unsigned long long *__restrict__ d_centroid_a, // [3]
+    const unsigned long long *__restrict__ d_centroid_b, // [3]
+    // const RealType *d_masses, // ignore d_masses for now
+    const RealType kb, const RealType b0,
+    unsigned long long *__restrict__ d_du_dx, __int128 *__restrict__ d_u) {
+
+  const int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
+  if (N_A + N_B <= t_idx) {
+    return;
+  }
+  int group_idx = t_idx < N_A ? t_idx : t_idx - N_A;
+  int count = t_idx < N_A ? N_A : N_B;
+  const int *cur_array = t_idx < N_A ? d_group_a_idxs : d_group_b_idxs;
+  RealType sign = t_idx < N_A ? 1.0 : -1.0;
+  RealType dij = 0;
+  RealType deltas[3];
+#pragma unroll
+  for (int d = 0; d < 3; d++) {
+    deltas[d] = FIXED_TO_FLOAT<RealType>(d_centroid_a[d]) / N_A -
+                FIXED_TO_FLOAT<RealType>(d_centroid_b[d]) / N_B;
+    dij += deltas[d] * deltas[d];
+  }
+  dij = sqrt(dij);
+
+  if (t_idx == 0 && d_u) {
+    RealType nrg = kb * (dij - b0) * (dij - b0);
+    d_u[t_idx] = FLOAT_TO_FIXED_ENERGY<RealType>(nrg);
+  }
+
+  // grads
+  if (d_du_dx) {
+#pragma unroll
+    for (int d = 0; d < 3; d++) {
+      if (b0 != 0) {
+        RealType du_ddij = 2 * kb * (dij - b0);
+        RealType ddij_dxi = deltas[d] / dij;
+        RealType delta = sign * du_ddij * ddij_dxi / count;
+        atomicAdd(d_du_dx + cur_array[group_idx] * 3 + d,
+                  FLOAT_TO_FIXED<RealType>(delta));
+      } else {
+        RealType delta = sign * 2 * kb * deltas[d] / count;
+        atomicAdd(d_du_dx + cur_array[group_idx] * 3 + d,
+                  FLOAT_TO_FIXED<RealType>(delta));
+      }
+    }
+  }
+}
+
+} // namespace tmd
