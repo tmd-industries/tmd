@@ -25,6 +25,7 @@ from tmd.md import builders
 pytestmark = [pytest.mark.nogpu]
 
 
+@pytest.mark.xfail(reason="Github hosted instances don't have NVCC and self hosted always has a GPU")
 def test_no_gpu_raises_exception():
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     host_config = builders.build_water_system(3.0, ff.water_ff)
