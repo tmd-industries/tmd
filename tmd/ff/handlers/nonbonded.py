@@ -356,7 +356,7 @@ def amber_am1bcc_charge_mol(mol: Chem.Mol) -> NDArray:
         with Chem.SDWriter(Path(tmpdir) / mol_path) as writer:
             writer.write(mol)
         charged_mol_path = "charged.mol2"
-        subprocess.run(
+        subprocess.check_output(
             [
                 antechamber_path,
                 "-i",
@@ -380,7 +380,7 @@ def amber_am1bcc_charge_mol(mol: Chem.Mol) -> NDArray:
         )
         charges_output = "charges.txt"
         # Write out just charges
-        subprocess.run(
+        subprocess.check_output(
             [
                 antechamber_path,
                 "-dr",
