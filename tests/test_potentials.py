@@ -313,6 +313,58 @@ def test_unbound_impl_execute_batch(harmonic_bond, precision):
             assert batch_u is None
 
 
+# @pytest.mark.parametrize("precision", [np.float32, np.float64])
+# def test_potential_executor_execute(harmonic_bond, precision):
+#     np.random.seed(2022)
+
+#     N = 5
+
+#     coords = np.random.random((N, 3)).astype(np.float32)
+#     perturbed_coords = coords + np.random.random(coords.shape).astype(np.float32)
+
+#     num_coord_batches = 5
+#     num_param_batches = 3
+
+#     box = np.diag(np.ones(3)).astype(np.float32)
+#     coords_batch = np.stack([coords, perturbed_coords] * num_coord_batches)
+#     boxes_batch = np.stack([box] * 2 * num_coord_batches)
+
+#     params = harmonic_bond.params
+#     random_params = np.random.random(params.shape).astype(np.float32)
+
+#     params_batch = np.stack([params, random_params] * num_param_batches)
+
+#     unbound_impl = harmonic_bond.potential.to_gpu(precision).unbound_impl
+
+#     for combo in itertools.product([False, True], repeat=3):
+#         compute_du_dx, compute_du_dp, compute_u = combo
+#         batch_du_dx, batch_du_dp, batch_u = unbound_impl.execute_batch(
+#             coords_batch,
+#             params_batch,
+#             boxes_batch,
+#             compute_du_dx,
+#             compute_du_dp,
+#             compute_u,
+#         )
+#         if compute_du_dx:
+#             assert batch_du_dx.shape == (*shape_prefix, N, 3)
+#             np.testing.assert_array_equal(batch_du_dx, ref_du_dx)
+#         else:
+#             assert batch_du_dx is None
+
+#         if compute_du_dp:
+#             assert batch_du_dp.shape == (*shape_prefix, *harmonic_bond.params.shape)
+#             np.testing.assert_array_equal(batch_du_dp, ref_du_dp)
+#         else:
+#             assert batch_du_dp is None
+
+#         if compute_u:
+#             assert batch_u.shape == (*shape_prefix,)
+#             np.testing.assert_array_equal(batch_u, ref_u)
+#         else:
+#             assert batch_u is None
+
+
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 def test_bound_impl_execute_batch(harmonic_bond, precision):
     np.random.seed(2022)

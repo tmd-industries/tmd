@@ -114,7 +114,14 @@ void NonbondedPairListPrecomputed<RealType>::du_dp_fixed_to_float(
     const int N, const int P, const unsigned long long *du_dp,
     RealType *du_dp_float) {
 
-  for (int i = 0; i < B_; i++) {
+  if (P % PARAMS_PER_PAIR != 0) {
+    throw std::runtime_error("NonbondedPairListPrecomputed::du_dp_fixed_to_"
+                             "float(): expected P % B == 0, got P=" +
+                             std::to_string(P) + ", " +
+                             std::to_string(PARAMS_PER_PAIR) +
+                             "*B=" + std::to_string(PARAMS_PER_PAIR * B_));
+  }
+  for (int i = 0; i < P / PARAMS_PER_PAIR; i++) {
     const int idx = i * PARAMS_PER_PAIR;
     const int idx_charge = idx + PARAM_OFFSET_CHARGE;
     const int idx_sig = idx + PARAM_OFFSET_SIG;

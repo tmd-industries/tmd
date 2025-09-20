@@ -70,7 +70,7 @@ template <typename RealType> Context<RealType>::~Context() {
   gpuErrchk(cudaFree(d_v_t_));
   gpuErrchk(cudaFree(d_box_t_));
 
-  gpuErrchk(cudaStreamDestroy(stream_))
+  gpuErrchk(cudaStreamDestroy(stream_));
 };
 
 template <typename RealType>
