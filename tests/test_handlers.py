@@ -886,9 +886,11 @@ def test_charging_compounds_with_non_zero_charge():
     am1h = nonbonded.AmberAM1BCCHandler(smirks, params, props)
 
     positive_mol = Chem.AddHs(Chem.MolFromSmiles("c1cc[nH+]cc1"))
+    utils.set_mol_name(positive_mol, "positive_mol")
     AllChem.EmbedMolecule(positive_mol)
 
     negative_mol = Chem.AddHs(Chem.MolFromSmiles("[N+](=O)([O-])[O-]"))
+    utils.set_mol_name(negative_mol, "negative_mol")
     AllChem.EmbedMolecule(negative_mol)
 
     es_params = am1h.parameterize(positive_mol)
