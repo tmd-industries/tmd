@@ -64,7 +64,8 @@ void __global__ k_periodic_torsion(
 
   RealType rkj_norm_square = 0;
 
-  // (todo) cap to three dims, while keeping stride at 4
+// (todo) cap to three dims, while keeping stride at 4
+#pragma unroll D
   for (int d = 0; d < D; d++) {
     RealType box_dim = box[d * 3 + d];
     RealType vij = coords[j_idx * D + d] - coords[i_idx * D + d];
@@ -93,10 +94,11 @@ void __global__ k_periodic_torsion(
   RealType rij_dot_rkj = dot_product(rij, rkj);
   RealType rkl_dot_rkj = dot_product(rkl, rkj);
 
-  RealType rkj_n = sqrt(dot_product(rkj, rkj));
+  RealType rkj_norm = sqrt(rkj_norm_square);
 
+#pragma unroll D
   for (int d = 0; d < D; d++) {
-    rkj[d] /= rkj_n;
+    rkj[d] /= rkj_norm;
   }
 
   RealType y = dot_product(n3, rkj);
@@ -112,7 +114,6 @@ void __global__ k_periodic_torsion(
   RealType period = params[period_idx];
 
   if (COMPUTE_DU_DX) {
-    RealType rkj_norm = sqrt(rkj_norm_square);
     RealType prefactor = kt * sin(period * angle - phase) * period;
 
     for (int d = 0; d < D; d++) {
