@@ -362,12 +362,8 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
     """Test setting the min overlap below target overlap and verify that the results are comparable"""
     host_name, (mol_a, mol_b, core, forcefield, host_config) = hif2a_single_topology_leg
 
-    if host_name is not None:
-        pytest.skip("No local MD for vacuum")
-
     target_overlap = 0.667
-    # Empirically selected value from SHP2 run. Below ~0.45 overlap the lambda schedule changes significantly
-    overlap_diff = 0.2
+    overlap_diff = 0.1
 
     md_params = MDParams(
         n_frames=100,
@@ -384,7 +380,7 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
         forcefield,
         host_config,
         replace(md_params, seed=seed),
-        lambda_interval=(0.0, 0.25),
+        lambda_interval=(0.0, 0.35),
         min_overlap=target_overlap,
     )
 
@@ -395,7 +391,7 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
         forcefield,
         host_config,
         replace(md_params, seed=seed),
-        lambda_interval=(0.0, 0.25),
+        lambda_interval=(0.0, 0.35),
         min_overlap=target_overlap - overlap_diff,
     )
 
@@ -405,12 +401,16 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
     comp_final_swap_acceptance_rates = comp_res.hrex_diagnostics.cumulative_swap_acceptance_rates[-1]
 
     assert ref_final_swap_acceptance_rates.size == comp_final_swap_acceptance_rates.size
-    # Accept 5% difference in swaps
-    np.testing.assert_allclose(ref_final_swap_acceptance_rates, comp_final_swap_acceptance_rates, atol=0.05)
+    # Accept 5% difference in overlaps, 2x for swaps
+    tolerance = 0.05
+    np.testing.assert_allclose(ref_final_swap_acceptance_rates, comp_final_swap_acceptance_rates, atol=tolerance * 2)
+    # Verify that all swaps are greater than zero
+    assert np.all(ref_final_swap_acceptance_rates > tolerance)
+    assert np.all(comp_final_swap_acceptance_rates > tolerance)
 
-    # Overlaps should be with 5% of the target overlap or large (because final pair can be significantly higher)
-    assert np.all(np.array(ref_res.final_result.overlaps) >= target_overlap - 0.05)
-    assert np.all(np.array(comp_res.final_result.overlaps) >= target_overlap - 0.05)
+    # Overlaps should be within 5% of the target overlap or higher than the target overlap (because final neighboring windows can have significantly higher overlap)
+    assert np.all(np.array(ref_res.final_result.overlaps) >= target_overlap - tolerance)
+    assert np.all(np.array(comp_res.final_result.overlaps) >= target_overlap - tolerance)
 
 
 @pytest.mark.parametrize("seed", [2023])

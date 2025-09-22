@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pickle
 from dataclasses import replace
 from importlib import resources
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -1058,14 +1056,3 @@ def test_targeted_moves_with_complex_and_ligand_in_brd4(
             # If an unexpect error was raised, re-raise the error
             raise
     assert False, f"No moves were made after {iterations}"
-
-
-@pytest.mark.skip("stale")
-@pytest.mark.memcheck
-def test_targeted_insertion_invalid_sample_bug():
-    # Tests a rare out-of-boundary access encountered during the rewind logic of the batched TIBD mover.
-    with open(Path(__file__).parent / "data" / "water_sampling_bug.pkl", "rb") as ifs:
-        state, md_params = pickle.load(ifs)
-
-    md_params = replace(md_params, n_eq_steps=2_000, steps_per_frame=10)
-    sample(state, md_params, 100)

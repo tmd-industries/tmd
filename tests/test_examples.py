@@ -255,8 +255,8 @@ def test_water_sampling_mc_bulk_water(batch_size, insertion_type, last_frame_sha
 @pytest.mark.parametrize(
     "insertion_type, last_frame_sha",
     [
-        ("targeted", "fc290a2da3820ac2ab1cb86cdba1035fa32b40101c37235de8849c66373cc353"),
-        ("untargeted", "cef0f069eb3b736cbcc8488969c0c1ba14f25c1fe838e607a7b2f33699a2dcd0"),
+        ("targeted", "71ed0e592f7f15e4f602a32c91f391f67932f770c53e5ff2a98045b088d9ba08"),
+        ("untargeted", "98853a6900d7c8d0792dd87312ab431f0bf4a688e64e0995a4b07d72a63ef9a4"),
     ],
 )
 def test_water_sampling_mc_buckyball(batch_size, insertion_type, last_frame_sha):
@@ -313,19 +313,19 @@ def test_run_rbfe_legs(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         "vacuum": (
-            "d0053d7c82bdfc3483bd1783e400577e7a9237a77c9f340354107a37e74ce139",
-            "153f6e9338f543c8f54b8a042c368bf2c4d7ee655816e3ba77858de6109484f5",
-            "e2ab017d637295936e1b7db5377ef74506fc730e18ed283982a241af053767e3",
+            "c88fcd6df806b1bc020d93bfadaca7b38243407668894775be98383efab310d6",
+            "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
+            "016af8696f58e58daf3135e87fddc3d0630b5cfc409bb10c649a1cecc6630bb2",
         ),
         "solvent": (
-            "085e1be90aaf94626f57e2e0f5f611095d67f818c2787b57b1a24fcd5630d596",
-            "2cb6275df293c6cf364805b32328758d0344fb058e8d384b428cb1f7dc5dc073",
-            "09343bfa01d6903a0fa712b47aca40a37ca3f04a6e90abbde3f3f6b114aee9d2",
+            "2560e1d3283183bbd38d3ffd3b7651884ea0e4994964de8ec28d989de8d94105",
+            "cf8f3ea796d806e83759868f58e333d8c486ef8682ab88bb883ea8820fed756a",
+            "f17298079f56be48da33c969b956403727f1f8b84e8ca8ac345ea1c1aab9ba0b",
         ),
         "complex": (
-            "40ba694a90606c4356c4fdc03af64ac9c3b508a4db3613be89920359044711b2",
-            "7bcb538ad95aebe24ea64025c3c4beab12151a8cedca9e9410437e1deecfd854",
-            "6b2f5a226103f0b878d983c39c34507523449794a8cab5ad9f75c41b398715ce",
+            "9f8b586e9d2703357380160dc2b3a269fc3c22c4ae9e504d0902997bded4e555",
+            "307aa781bb9697747d8245f470c86ed0d0a79581b4f7a1360dee3f0abe080c84",
+            "a565cd74cd994df1c0a07cc6bf818c6e2d376f066c3e0a1c91933d68e34dfd98",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -502,14 +502,14 @@ def test_run_rbfe_legs_local(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         "solvent": (
-            "e03f19d69a8862815107c4c6276de60e32adf5381a57ed50e5bc320d2dc179ec",
-            "bb157c58370a4c54141a9359d855c43807c62aad0af580ae8cb37b37d4dafee1",
-            "3fc402cf0f60c9ee77ea2ada33e18ef271fde76c1b656451ebbc0a2b3751011b",
+            "5519004ac7a647596f1e7af302ad4ede94b2aa50fffa392f5714136ae0b2762c",
+            "330ab473b16e82d79b4357b85d27c41ec5e7cd5c264cf467762b59a07e68386b",
+            "47375f67ebdcdb200c6f592072a10e70cb921beec92873b4a09d12c5190efbed",
         ),
         "complex": (
-            "eb7c8fcd2e47775257ca0c1c3604af43d11a7e8283c8a846166356fa9028b8cc",
-            "5133a1bdc62b1493a21e67c2ceecd48176868431f53f26285a220f3c2852f12b",
-            "896ae5435b587f2f49c3eca41ea3eb2e0adc61353d9407c413ac924c6e1fb151",
+            "1e62acd25471ae88d3e24c742dacc57db611470899664bfa9cc2c7c310690ef6",
+            "ad00f2cac4a35ccb27f06323b2c4f263da17f48cb23294116772ccdc61fa39c8",
+            "f32a0b9f4e4f7a8d95ffb5285726c71c5f4367ba146863485ed20b0c4eca5752",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:

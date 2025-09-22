@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+import itertools
 
 import numpy as np
 import pytest
@@ -31,13 +34,18 @@ pytestmark = [pytest.mark.memcheck]
 
 @pytest.mark.parametrize(
     "precision,rtol,atol",
-    [(np.float32, 1e-4, 1e-6)],
+    [(np.float32, 1e-7, 1e-7)],
 )
-def test_deterministic_energies(precision, rtol, atol):
+@pytest.mark.parametrize("seed", [1234, 2025, 2022, 2021, 814])
+def test_recomputation_of_energies(precision, rtol, atol, seed):
     """Verify that recomputing the energies of frames that have already had energies computed
-    before, will produce the same bitwise identical energy.
+    before, will produce nearly identical energies.
+
+    The expectation is that `pot.execute(x, params, box)` will produce deterministic outputs when the
+    parameters are identical (ie: Permutation of the values for compute_du_dx, compute_u and compute_du_dp). When
+    the parameters differ the energies should be very close. This is due to the fact that kernels are templated to
+    the specific parameters and may differ due to different code paths.
     """
-    seed = 1234
     dt = 1.5e-3
     temperature = DEFAULT_TEMP
     pressure = DEFAULT_PRESSURE
@@ -128,9 +136,32 @@ def test_deterministic_energies(precision, rtol, atol):
                 test_u += U
                 _, _, U_selective = unbound.execute(x, fn.params.astype(precision), b, False, False, True)
                 test_u_selective += U_selective
+                # Verify that executing the potential twice produces identical results
+                for combo in itertools.product([False, True], repeat=3):
+                    compute_du_dx, compute_du_dp, compute_u = combo
+                    ref_du_dx, ref_du_dp, ref_u = unbound.execute(
+                        x, fn.params.astype(precision), b, compute_du_dx, compute_du_dp, compute_u
+                    )
+                    comp_du_dx, comp_du_dp, comp_u = unbound.execute(
+                        x, fn.params.astype(precision), b, compute_du_dx, compute_du_dp, compute_u
+                    )
+                    if compute_du_dx:
+                        np.testing.assert_array_equal(comp_du_dx, ref_du_dx)
+                    else:
+                        assert comp_du_dx is None and ref_du_dx is None
+                    if compute_du_dp:
+                        np.testing.assert_array_equal(comp_du_dp, ref_du_dp)
+                    else:
+                        assert comp_du_dp is None and ref_du_dp is None
+                    if compute_u:
+                        np.testing.assert_array_equal(comp_u, ref_u)
+                    else:
+                        assert comp_u is None and ref_u is None
 
             # cast to expected level of precision
-            assert precision(ref_U) == precision(fixed_to_float(test_U_fixed)), precision
-            assert precision(test_u) == precision(test_u_selective), str(movers)
+            np.testing.assert_allclose(
+                precision(test_u), precision(test_u_selective), rtol=rtol, atol=atol, err_msg=str(movers)
+            )
+            np.testing.assert_allclose(precision(ref_U), precision(fixed_to_float(test_U_fixed)), rtol=rtol, atol=atol)
             np.testing.assert_allclose(ref_U, test_u, rtol=rtol, atol=atol)
             np.testing.assert_allclose(ref_U, test_u_selective, rtol=rtol, atol=atol)
