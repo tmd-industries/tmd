@@ -1289,7 +1289,7 @@ class AlignedChiralAtom(AlignedPotential):
         params = batch_interpolate_chiral_atom_params(
             self.src_params, self.dst_params, lamb, k_min, self.mins, self.maxes
         )
-        params = jnp.array(params).reshape(-1, 4)
+        params = jnp.array(params)
         return ChiralAtomRestraint(self.idxs).bind(params)
 
 
