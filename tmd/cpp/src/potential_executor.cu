@@ -212,7 +212,6 @@ void PotentialExecutor<RealType>::execute_batch_potentials_sparse(
           d_box.data + (ic * D * D),
           h_du_dx == nullptr ? nullptr
                              : d_du_dx_buffer.data + (offset_factor * N * D),
-          // TBD: Think this is wrong
           h_du_dp == nullptr ? nullptr : d_du_dp_buffer.data + du_dp_offset,
           h_u == nullptr ? nullptr : d_u_buffer.data + offset_factor,
           pot_stream);
