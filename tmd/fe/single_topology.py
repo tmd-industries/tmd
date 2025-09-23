@@ -707,9 +707,7 @@ def setup_end_state(
 
     # chiral atoms need special code for canonicalization, since triple product is invariant
     # under rotational symmetry (but not something like swap symmetry)
-    mol_c_chiral_atom_idxs = canonicalize_chiral_atom_idxs(mol_c_chiral_atom_idxs).reshape(
-        -1, mol_c_chiral_atom_idxs.shape[-1]
-    )
+    mol_c_chiral_atom_idxs = canonicalize_chiral_atom_idxs(mol_c_chiral_atom_idxs)
 
     mol_c_chiral_bond_idxs = canonicalize_bonds(mol_a_chiral_bond_idxs)
     mol_c_chiral_bond_signs = mol_a_chiral_bond.potential.signs
@@ -1289,7 +1287,7 @@ class AlignedChiralAtom(AlignedPotential):
         params = batch_interpolate_chiral_atom_params(
             self.src_params, self.dst_params, lamb, k_min, self.mins, self.maxes
         )
-        params = jnp.array(params)
+        params = jnp.array(params).reshape(-1)
         return ChiralAtomRestraint(self.idxs).bind(params)
 
 
