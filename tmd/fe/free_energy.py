@@ -1567,14 +1567,13 @@ def run_sims_hrex(
         hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica, replica_from_samples)
         water_sampler_proposals_by_state_by_iter.append(water_sampling_acceptance_proposal_counts_by_state)
         # Generate the per-potential U_kl, avoids the need to re-compute the U_kln at the end
-        # (fey): TBD compute these in parallel
-        U_kl_raw_ = []
-        for i, bp in enumerate(bound_potentials):
-            pot_U_kl_raw = compute_potential_matrix(
-                bp.get_potential(), hrex, params_by_state_by_pot[i], md_params.hrex_params.max_delta_states
-            )
-            U_kl_raw_.append(pot_U_kl_raw)
-        U_kl_raw = np.array(U_kl_raw_, dtype=iterated_u_kln.dtype)
+        U_kl_raw = batch_compute_potential_matrix(
+            [bp.get_potential() for bp in bound_potentials],
+            hrex,
+            params_by_state_by_pot,
+            md_params.hrex_params.max_delta_states,
+        )
+        U_kl_raw = U_kl_raw.astype(iterated_u_kln.dtype)
         # Sum the per-potential components for performing swaps
         U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 
