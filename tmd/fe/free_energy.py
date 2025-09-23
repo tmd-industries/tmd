@@ -1334,7 +1334,7 @@ def generate_pair_bar_ulkns(
     initial_states: Sequence[InitialState],
     samples_by_state: Sequence[Trajectory],
     temperature: float,
-    unbound_impls: Sequence[custom_ops.Potential_f32] | None,
+    unbound_impls: list[custom_ops.Potential_f32] | None,
 ) -> NDArray:
     """Generate pair bair u_klns.
     This is a specialized variant of generating u_klns, only loading each set of frames into memory once.
@@ -1349,6 +1349,8 @@ def generate_pair_bar_ulkns(
 
     assert len(initial_states) > 0
     assert len(initial_states) == len(samples_by_state)
+    num_samples = len(samples_by_state[0].boxes)
+    assert all([len(traj.boxes) == num_samples for traj in samples_by_state])
     if unbound_impls is None:
         unbound_impls = [pot.potential.to_gpu(np.float32).unbound_impl for pot in initial_states[0].potentials]
     assert len(unbound_impls) == len(initial_states[0].potentials)
@@ -1357,6 +1359,8 @@ def generate_pair_bar_ulkns(
     energies_by_frames_by_params = np.zeros(
         (len(initial_states), len(initial_states), len(unbound_impls)), dtype=object
     )
+    params_by_state = [[bp.params for bp in initial_state.potentials] for initial_state in initial_states]
+    executor = custom_ops.PotentialExecutor_f32()
     for i, state in enumerate(initial_states):
         frames = np.array(samples_by_state[i].frames)
         boxes = np.asarray(samples_by_state[i].boxes)
@@ -1367,25 +1371,25 @@ def generate_pair_bar_ulkns(
         state_idxs.append(i)
         if i < len(initial_states) - 1:
             state_idxs.append(i + 1)
-        for j, pot in enumerate(state.potentials):
-            params = np.array([initial_states[idx].potentials[j].params for idx in state_idxs])
-            _, _, Us = unbound_impls[j].execute_batch(
-                frames,
-                params,
-                boxes,
-                compute_du_dx=False,
-                compute_du_dp=False,
-                compute_u=True,
-            )
+        state_params = [params_by_state[idx] for idx in state_idxs]
+        params_by_state_by_pot = [np.asarray([params[i] for params in state_params]) for i in range(len(unbound_impls))]
+        _, _, Us = executor.execute_batch(
+            unbound_impls,
+            frames,
+            params_by_state_by_pot,
+            boxes,
+            compute_du_dx=False,
+            compute_du_dp=False,
+            compute_u=True,
+        )
+        us = Us / kBT
+        for j in range(len(unbound_impls)):
+            # Transpose to get energies by params
+            per_pot_us = us[j].T
+            for state_idx, p_us in zip(state_idxs, per_pot_us):
+                energies_by_frames_by_params[i, state_idx, j] = p_us
 
-            Us = Us.T  # Transpose to get energies by params
-            us = Us.reshape(len(state_idxs), -1) / kBT
-            for p_idx, p_us in zip(state_idxs, us):
-                energies_by_frames_by_params[i, p_idx, j] = p_us
-
-    u_kln_by_component_by_lambda = np.empty(
-        (len(initial_states) - 1, len(unbound_impls), 2, 2, len(energies_by_frames_by_params[0][0][0]))
-    )
+    u_kln_by_component_by_lambda = np.empty((len(initial_states) - 1, len(unbound_impls), 2, 2, num_samples))
     for i, states in enumerate(zip(range(len(initial_states)), range(1, len(initial_states)))):
         assert len(states) == 2
         for j in range(len(unbound_impls)):
