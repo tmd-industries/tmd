@@ -31,14 +31,23 @@ class LangevinIntegrator:
     masses: NDArray[np.float64]
     seed: int
 
-    def impl(self):
-        return custom_ops.LangevinIntegrator_f32(
-            np.array(self.masses, dtype=np.float32),
-            self.temperature,
-            self.dt,
-            self.friction,
-            self.seed,
-        )
+    def impl(self, precision=np.float32):
+        if precision == np.float32:
+            return custom_ops.LangevinIntegrator_f32(
+                np.array(self.masses, dtype=precision),
+                self.temperature,
+                self.dt,
+                self.friction,
+                self.seed,
+            )
+        else:
+            return custom_ops.LangevinIntegrator_f64(
+                np.array(self.masses, dtype=precision),
+                self.temperature,
+                self.dt,
+                self.friction,
+                self.seed,
+            )
 
 
 @dataclass
@@ -71,18 +80,33 @@ class MonteCarloBarostat:
     adaptive_scaling_enabled: bool = True
     initial_volume_scale_factor: Optional[float] = None
 
-    def impl(self, bound_potentials):
-        return custom_ops.MonteCarloBarostat_f32(
-            self.N,
-            self.pressure,
-            self.temperature,
-            self.group_idxs,
-            self.interval,
-            bound_potentials,
-            self.seed,
-            self.adaptive_scaling_enabled,
-            self.initial_volume_scale_factor or 0.0,  # 0.0 is a special value meaning "use 1% of initial box volume"
-        )
+    def impl(self, bound_potentials, precision=np.float32):
+        if precision == np.float32:
+            return custom_ops.MonteCarloBarostat_f32(
+                self.N,
+                self.pressure,
+                self.temperature,
+                self.group_idxs,
+                self.interval,
+                bound_potentials,
+                self.seed,
+                self.adaptive_scaling_enabled,
+                self.initial_volume_scale_factor
+                or 0.0,  # 0.0 is a special value meaning "use 1% of initial box volume"
+            )
+        else:
+            return custom_ops.MonteCarloBarostat_f64(
+                self.N,
+                self.pressure,
+                self.temperature,
+                self.group_idxs,
+                self.interval,
+                bound_potentials,
+                self.seed,
+                self.adaptive_scaling_enabled,
+                self.initial_volume_scale_factor
+                or 0.0,  # 0.0 is a special value meaning "use 1% of initial box volume"
+            )
 
 
 # wrapper to do automatic casting

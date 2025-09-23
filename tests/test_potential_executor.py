@@ -90,12 +90,17 @@ def get_potentials_and_frames(host_name: str | None, precision):
             barostat_interval,
             seed,
         )
-        movers.append(baro.impl(bps))
+
+        movers.append(baro.impl(bps, precision=precision))
 
     intg = LangevinIntegrator(temperature, dt, 1.0, np.asarray(masses), seed)
 
     num_steps = 200
-    ctxt = custom_ops.Context_f32(x0, v0, box, intg.impl(), bps, movers=movers)
+
+    if precision == np.float32:
+        ctxt = custom_ops.Context_f32(x0, v0, box, intg.impl(precision), bps, movers=movers)  # type: ignore
+    else:
+        ctxt = custom_ops.Context_f64(x0, v0, box, intg.impl(precision), bps, movers=movers)  # type: ignore
     xs, boxes = ctxt.multiple_steps(num_steps, num_steps // 10)
 
     return u_fns, xs, boxes
@@ -104,19 +109,22 @@ def get_potentials_and_frames(host_name: str | None, precision):
 @pytest.fixture(
     scope="module",
     params=[
-        (None, np.float32),
-        ("solvent", np.float32),
-        ("complex", np.float32),
+        (None, np.float32, 1e-4, 1e-5),
+        ("solvent", np.float32, 1e-4, 1e-5),
+        ("complex", np.float32, 1e-4, 1e-5),
+        (None, np.float64, 1e-6, 1e-8),
+        ("solvent", np.float64, 1e-6, 1e-8),
+        ("complex", np.float64, 1e-6, 1e-8),
     ],
 )
 def pots_and_frames(request):
-    host_name, precision = request.param
-    return host_name, precision, get_potentials_and_frames(host_name, precision)
+    host_name, precision, rtol, atol = request.param
+    return host_name, precision, rtol, atol, get_potentials_and_frames(host_name, precision)
 
 
 def test_potential_executor_execute(pots_and_frames):
     """Test PotentialExecutor's execute function. Intention is to parallelize a set of potentials from Python"""
-    host_name, precision, (bps, xs, boxes) = pots_and_frames
+    host_name, precision, rtol, atol, (bps, xs, boxes) = pots_and_frames
     ubps = []
     references_vals_by_pot = []
     for bp in bps:
@@ -130,7 +138,11 @@ def test_potential_executor_execute(pots_and_frames):
         # Toss out the parameters dimension
         references_vals_by_pot.append((du_dx.squeeze(axis=1), du_dp.squeeze(axis=1), u.squeeze(axis=1)))
 
-    potential_executor = custom_ops.PotentialExecutor_f32()
+    if precision == np.float32:
+        potential_executor = custom_ops.PotentialExecutor_f32()
+    else:
+        potential_executor = custom_ops.PotentialExecutor_f64()
+
     pot_params = [bp.params.astype(precision) for bp in bps]
 
     for i, (x, b) in enumerate(zip(xs, boxes)):
@@ -152,23 +164,23 @@ def test_potential_executor_execute(pots_and_frames):
             )
 
             if compute_du_dx:
-                np.testing.assert_allclose(select_du_dxs, comp_du_dxs, rtol=1e-4, atol=1e-5)
+                np.testing.assert_allclose(select_du_dxs, comp_du_dxs, rtol=rtol, atol=atol)
             else:
                 assert select_du_dxs is None
             if compute_du_dp:
                 for j in range(len(ubps)):
-                    np.testing.assert_allclose(select_du_dps[j], comp_du_dps[j], rtol=1e-4, atol=1e-5)
+                    np.testing.assert_allclose(select_du_dps[j], comp_du_dps[j], rtol=rtol, atol=atol)
             else:
                 assert select_du_dps is None
             if compute_u:
-                np.testing.assert_allclose(select_us, comp_us, rtol=1e-4, atol=1e-5)
+                np.testing.assert_allclose(select_us, comp_us, rtol=rtol, atol=atol)
             else:
                 assert select_us is None
 
 
 def test_potential_executor_execute_batch(pots_and_frames):
     """Test PotentialExecutor's execute_batch function."""
-    host_name, precision, (bps, xs, boxes) = pots_and_frames
+    host_name, precision, rtol, atol, (bps, xs, boxes) = pots_and_frames
     rng = np.random.default_rng(2025)
     ubps = []
     pot_params = [bp.params.astype(precision) for bp in bps]
@@ -195,7 +207,10 @@ def test_potential_executor_execute_batch(pots_and_frames):
 
         references_vals_by_pot.append((du_dx, du_dp, u))
 
-    potential_executor = custom_ops.PotentialExecutor_f32()
+    if precision == np.float32:
+        potential_executor = custom_ops.PotentialExecutor_f32()
+    else:
+        potential_executor = custom_ops.PotentialExecutor_f64()
 
     # Basic error checking
 
@@ -250,23 +265,23 @@ def test_potential_executor_execute_batch(pots_and_frames):
             compute_du_dp=compute_du_dp,
         )
         if compute_du_dx:
-            np.testing.assert_allclose(select_du_dxs, comp_du_dxs, rtol=1e-4, atol=1e-4)
+            np.testing.assert_allclose(select_du_dxs, comp_du_dxs, rtol=rtol, atol=atol)
         else:
             assert select_du_dxs is None
         if compute_du_dp:
             for i in range(len(ubps)):
-                np.testing.assert_allclose(select_du_dps[i], comp_du_dps[i], rtol=1e-4, atol=1e-4)
+                np.testing.assert_allclose(select_du_dps[i], comp_du_dps[i], rtol=rtol, atol=atol)
         else:
             assert select_du_dps is None
         if compute_u:
-            np.testing.assert_allclose(select_us, comp_us, rtol=1e-4, atol=1e-4)
+            np.testing.assert_allclose(select_us, comp_us, rtol=rtol, atol=atol)
         else:
             assert select_us is None
 
 
 def test_potential_executor_execute_batch_sparse(pots_and_frames):
     """Test PotentialExecutor's execute_batch_sparse function."""
-    host_name, precision, (bps, xs, boxes) = pots_and_frames
+    host_name, precision, rtol, atol, (bps, xs, boxes) = pots_and_frames
     rng = np.random.default_rng(2025)
     ubps = []
     pot_params = [bp.params.astype(precision) for bp in bps]
@@ -297,7 +312,10 @@ def test_potential_executor_execute_batch_sparse(pots_and_frames):
 
         references_vals_by_pot.append((du_dx, du_dp, u))
 
-    potential_executor = custom_ops.PotentialExecutor_f32()
+    if precision == np.float32:
+        potential_executor = custom_ops.PotentialExecutor_f32()
+    else:
+        potential_executor = custom_ops.PotentialExecutor_f64()
 
     # Basic error checking
 
@@ -373,15 +391,15 @@ def test_potential_executor_execute_batch_sparse(pots_and_frames):
             compute_du_dp=compute_du_dp,
         )
         if compute_du_dx:
-            np.testing.assert_allclose(select_du_dxs, comp_du_dxs, rtol=1e-4, atol=1e-5)
+            np.testing.assert_allclose(select_du_dxs, comp_du_dxs, rtol=rtol, atol=atol)
         else:
             assert select_du_dxs is None
         if compute_du_dp:
             for i in range(len(ubps)):
-                np.testing.assert_allclose(select_du_dps[i], comp_du_dps[i], rtol=1e-4, atol=1e-5)
+                np.testing.assert_allclose(select_du_dps[i], comp_du_dps[i], rtol=rtol, atol=atol)
         else:
             assert select_du_dps is None
         if compute_u:
-            np.testing.assert_allclose(select_us, comp_us, rtol=1e-4, atol=1e-5)
+            np.testing.assert_allclose(select_us, comp_us, rtol=rtol, atol=atol)
         else:
             assert select_us is None
