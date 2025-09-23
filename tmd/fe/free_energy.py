@@ -1168,6 +1168,72 @@ def compute_potential_matrix(
     return U_kl
 
 
+def batch_compute_potential_matrix(
+    potentials: list[custom_ops.Potential_f32],
+    hrex: HREX[CoordsVelBox],
+    params_by_state_by_potential: list[NDArray],
+    max_delta_states: Optional[int] = None,
+) -> NDArray:
+    """Computes the (n_replicas, n_states) sparse matrix of potential energies, where a given element $(k, l)$ is
+    computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
+    set to `np.inf`.
+
+    Parameters
+    ----------
+    potential : custom_ops.Potential
+        potential to evaluate
+
+    hrex : HREX
+        HREX state (containing replica states and permutation)
+
+    params_by_state : NDArray
+        (n_states, ...) array of potential parameters for each state
+
+    max_delta_states : int or None, optional
+        If given, number of neighbor states on either side of a given replica's initial state for which to compute
+        potentials. Otherwise, compute potentials for all (replica, state) pairs.
+    """
+
+    potential_runner = custom_ops.PotentialExecutor_f32()
+    coords = np.array([xvb.coords for xvb in hrex.replicas])
+    boxes = np.array([xvb.box for xvb in hrex.replicas])
+
+    def compute_sparse(k: int):
+        n_states = len(hrex.replicas)
+        state_idx = np.argsort(hrex.replica_idx_by_state)
+        neighbor_state_idxs = state_idx[:, None] + np.arange(-k, k + 1)[None, :]
+        valid_idxs: tuple = np.nonzero((0 <= neighbor_state_idxs) & (neighbor_state_idxs < n_states))
+        coords_batch_idxs = valid_idxs[0].astype(np.uint32)
+        params_batch_idxs = neighbor_state_idxs[valid_idxs].astype(np.uint32)
+
+        _, _, U = potential_runner.execute_batch_sparse(
+            potentials,
+            coords,
+            params_by_state_by_potential,
+            boxes,
+            coords_batch_idxs,
+            params_batch_idxs,
+            False,
+            False,
+            True,
+        )
+
+        U_kl = np.full((len(potentials), n_states, n_states), np.inf)
+        U_kl[:, coords_batch_idxs, params_batch_idxs] = U
+
+        return U_kl
+
+    def compute_dense():
+        _, _, U_kl = potential_runner.execute_batch(
+            potentials, coords, params_by_state_by_potential, boxes, False, False, True
+        )
+        return U_kl
+
+    U_kl = compute_sparse(max_delta_states) if max_delta_states is not None else compute_dense()
+
+    return U_kl
+
+
 def verify_and_sanitize_potential_matrix(
     U_kl: NDArray, replica_idx_by_state: Sequence[int], abs_energy_threshold: float = 1e9
 ) -> NDArray:
