@@ -1,4 +1,4 @@
-# Copyright 2019-2025, Relay Therapeutics
+# Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
