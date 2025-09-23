@@ -1118,14 +1118,14 @@ def compute_potential_matrix(
     hrex: HREX[CoordsVelBox],
     params_by_state: NDArray,
     max_delta_states: Optional[int] = None,
-) -> NDArray:
+) -> NDArray[np.float32]:
     """Computes the (n_replicas, n_states) sparse matrix of potential energies, where a given element $(k, l)$ is
     computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
     set to `np.inf`.
 
     Parameters
     ----------
-    potential : custom_ops.Potential
+    potential : custom_ops.Potential_f32
         potential to evaluate
 
     hrex : HREX
@@ -1154,7 +1154,7 @@ def compute_potential_matrix(
             coords, params_by_state, boxes, coords_batch_idxs, params_batch_idxs, False, False, True
         )
 
-        U_kl = np.full((n_states, n_states), np.inf)
+        U_kl = np.full((n_states, n_states), np.inf, dtype=np.float32)
         U_kl[coords_batch_idxs, params_batch_idxs] = U
 
         return U_kl
@@ -1173,15 +1173,17 @@ def batch_compute_potential_matrix(
     hrex: HREX[CoordsVelBox],
     params_by_state_by_potential: list[NDArray],
     max_delta_states: Optional[int] = None,
-) -> NDArray:
-    """Computes the (n_replicas, n_states) sparse matrix of potential energies, where a given element $(k, l)$ is
+) -> NDArray[np.float32]:
+    """Computes the (n_potentials, n_replicas, n_states) sparse matrix of potential energies, where a given element $(k, l)$ is
     computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
     set to `np.inf`.
 
+    A batched variant of `compute_potential_matrix`.
+
     Parameters
     ----------
-    potential : custom_ops.Potential
-        potential to evaluate
+    potentials : list[custom_ops.Potential_f32]
+        list of potentials to evaluate
 
     hrex : HREX
         HREX state (containing replica states and permutation)
@@ -1218,7 +1220,7 @@ def batch_compute_potential_matrix(
             True,
         )
 
-        U_kl = np.full((len(potentials), n_states, n_states), np.inf)
+        U_kl = np.full((len(potentials), n_states, n_states), np.inf, dtype=np.float32)
         U_kl[:, coords_batch_idxs, params_batch_idxs] = U
 
         return U_kl
@@ -1577,7 +1579,6 @@ def run_sims_hrex(
             params_by_state_by_pot,
             md_params.hrex_params.max_delta_states,
         )
-        U_kl_raw = U_kl_raw.astype(iterated_u_kln.dtype)
         # Sum the per-potential components for performing swaps
         U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 
