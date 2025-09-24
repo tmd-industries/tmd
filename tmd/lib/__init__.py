@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -98,9 +99,14 @@ class MonteCarloBarostat:
 
 
 # wrapper to do automatic casting
-def Context(x0, v0, box, integrator, bps, movers=None) -> custom_ops.Context_f32:
-    x0 = x0.astype(np.float32)
-    v0 = v0.astype(np.float32)
-    box = box.astype(np.float32)
+def Context(
+    x0, v0, box, integrator, bps, movers=None, precision=np.float32
+) -> custom_ops.Context_f32 | custom_ops.Context_f64:
+    x0 = x0.astype(precision)
+    v0 = v0.astype(precision)
+    box = box.astype(precision)
 
-    return custom_ops.Context_f32(x0, v0, box, integrator, bps, movers)
+    klass: type[custom_ops.Context_f32] | type[custom_ops.Context_f64] = custom_ops.Context_f32
+    if precision == np.float64:
+        klass = custom_ops.Context_f64
+    return klass(x0, v0, box, integrator, bps, movers)

@@ -109,8 +109,8 @@ void Context<RealType>::_verify_coords_and_box(const RealType *coords_buffer,
 }
 
 template <typename RealType> RealType Context<RealType>::_get_temperature() {
-  if (std::shared_ptr<LangevinIntegrator<float>> langevin =
-          std::dynamic_pointer_cast<LangevinIntegrator<float>>(intg_);
+  if (std::shared_ptr<LangevinIntegrator<RealType>> langevin =
+          std::dynamic_pointer_cast<LangevinIntegrator<RealType>>(intg_);
       langevin != nullptr) {
     return langevin->get_temperature();
   } else {
