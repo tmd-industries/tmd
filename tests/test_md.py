@@ -530,7 +530,7 @@ def test_multiple_steps_local_consistency(freeze_reference):
     # Get the particles within a certain distance of local idxs
     nblist = custom_ops.Neighborlist_f32(len(coords), False)
     nblist.set_row_idxs(local_idxs.astype(np.uint32))
-    # Add padding to the radius to account for probablistic selection
+    # Add padding to the radius to account for probabilistic selection
     # note that we don't want to pass in padding here, since the padded_cutoff is padding/2+cutoff
     # for frozen atoms
     ixn_list = nblist.get_nblist(coords, box, radius + 0.2, 0.0)
@@ -1235,7 +1235,8 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference):
 
 
 @pytest.mark.memcheck
-def test_context_invalid_boxes():
+@pytest.mark.parametrize("precision", [np.float32, np.float64])
+def test_context_invalid_boxes(precision):
     """Verify that nonbonded all pairs potentials provided to the context will correctly validate the box size"""
     mol, _ = get_biphenyl()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
@@ -1257,12 +1258,12 @@ def test_context_invalid_boxes():
 
     bps = []
     for p, pot in zip(sys_params, unbound_potentials):
-        bound_impl = pot.bind(p).to_gpu(np.float32).bound_impl
+        bound_impl = pot.bind(p).to_gpu(precision).bound_impl
         bps.append(bound_impl)
 
     intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
 
-    ctxt = Context(coords, v0, box, intg.impl(), bps)
+    ctxt = Context(coords, v0, box, intg.impl(precision), bps, precision=precision)
     ctxt.multiple_steps(steps)
     ctxt.multiple_steps_local(steps, ligand_idxs)
     ctxt.multiple_steps_local_selection(steps, reference_idx, selection)
