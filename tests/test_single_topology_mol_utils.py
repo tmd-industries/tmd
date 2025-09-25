@@ -143,3 +143,4 @@ def test_st_mol():
             mol_conf.SetAtomPosition(a_idx, (pos * 10).astype(np.float64))
         mol_copy.AddConformer(mol_conf)
         writer.write(mol_copy)
+        writer.close()
