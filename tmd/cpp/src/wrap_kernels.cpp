@@ -1575,7 +1575,41 @@ void declare_potential_executor(py::module &m, const char *typestr) {
           },
           py::arg("pots"), py::arg("coords"), py::arg("params"), py::arg("box"),
           py::arg("compute_du_dx") = true, py::arg("compute_du_dp") = true,
-          py::arg("compute_u") = true)
+          py::arg("compute_u") = true,
+          R"pbdoc("Execute potentials over the a set of coordinates and box.
+
+        Parameters
+        ----------
+        pots: list[Potential]
+            list of potentials to execute over
+
+        coords: NDArray
+            (n_atoms, 3) array containing the coordinates
+
+        params: list[NDArray]
+            (n_pots, P) list containing multiple parameter arrays
+
+        boxes: NDArray
+            (3, 3) array containing the boxes
+
+        compute_du_dx: bool
+            Indicates to compute du_dx, else returns None for du_dx
+
+        compute_du_dp: bool
+            Indicates to compute du_dp, else returns None for du_dp
+
+        compute_u: bool
+            Indicates to compute u, else returns None for u
+
+
+        Returns
+        -------
+        3-tuple of du_dx, du_dp, u
+            du_dx has shape (n_pots, N, 3)
+            du_dp has shape (n_pots,  P)
+            u has shape (n_pots)
+
+    )pbdoc")
       .def(
           "execute_batch",
           [](tmd::PotentialExecutor<RealType> &runner,
@@ -1727,7 +1761,52 @@ void declare_potential_executor(py::module &m, const char *typestr) {
           },
           py::arg("pots"), py::arg("coords"), py::arg("params"), py::arg("box"),
           py::arg("compute_du_dx") = true, py::arg("compute_du_dp") = true,
-          py::arg("compute_u") = true)
+          py::arg("compute_u") = true,
+          R"pbdoc("Execute potentials over a batch of coordinates and parameters. The total number of evaluations is len(pots) * len(coords) * len(params)
+
+        Notes
+        -----
+        * This function allocates memory for all of the inputs on the GPU. This may lead to OOMs.
+        * When using with stateful potentials, care should be taken in the ordering of the evaluations (as specified by
+          coords_batch_idxs and params_batch_idxs) to maintain efficiency. For example, batch evaluation of a nonbonded
+          all-pairs potential may be most efficient in the order [(coords_1, params_1), (coords_1, params_2), ... ,
+          (coords_2, params_1), ..., (coords_n, params_n)], i.e. with an "outer loop" over the coordinates and "inner
+          loop" over parameters, to avoid unnecessary rebuilds of the neighborlist.
+
+        Parameters
+        ----------
+        pots: list[Potential]
+            list of potentials to execute over
+
+        coords: NDArray
+            (coord_batches, n_atoms, 3) array containing multiple coordinate arrays
+
+        params: list[NDArray]
+            (n_pots, param_batches, P) list containing multiple parameter arrays
+
+        boxes: NDArray
+            (coord_batches, 3, 3) array containing a batch of boxes
+
+        compute_du_dx: bool
+            Indicates to compute du_dx, else returns None for du_dx
+
+        compute_du_dp: bool
+            Indicates to compute du_dp, else returns None for du_dp
+
+        compute_u: bool
+            Indicates to compute u, else returns None for u
+
+
+        Returns
+        -------
+        3-tuple of du_dx, du_dp, u
+            coord_batches = coords.shape[0]
+            param_batches = params[0].shape[0]
+            du_dx has shape (n_pots, coord_batches, param_batches, N, 3)
+            du_dp has shape (n_pots, coord_batches, param_batches, P)
+            u has shape (n_pots, coord_batches, param_batches)
+
+    )pbdoc")
       .def(
           "execute_batch_sparse",
           [](tmd::PotentialExecutor<RealType> &runner,
@@ -1895,7 +1974,61 @@ void declare_potential_executor(py::module &m, const char *typestr) {
           py::arg("pots"), py::arg("coords"), py::arg("params"), py::arg("box"),
           py::arg("coords_batch_idxs"), py::arg("params_batch_idxs"),
           py::arg("compute_du_dx") = true, py::arg("compute_du_dp") = true,
-          py::arg("compute_u") = true);
+          py::arg("compute_u") = true,
+          R"pbdoc("Execute potentials over a batch of coordinates and parameters. Similar to execute_batch, except that instead
+        of evaluating the potential on the dense matrix of pairs of coordinates and parameters, this accepts arrays
+        specifying the indices of the coordinates and parameters to use for each evaluation, allowing evaluation of
+        arbitrary elements of the matrix. The total number of evaluations is len(coords_batch_idxs)
+        [= len(params_batch_idxs)].
+
+        Notes
+        -----
+        * This function allocates memory for all of the inputs on the GPU. This may lead to OOMs.
+        * When using with stateful potentials, care should be taken in the ordering of the evaluations (as specified by
+          coords_batch_idxs and params_batch_idxs) to maintain efficiency. For example, batch evaluation of a nonbonded
+          all-pairs potential may be most efficient in the order [(coords_1, params_1), (coords_1, params_2), ... ,
+          (coords_2, params_1), ..., (coords_n, params_n)], i.e. with an "outer loop" over the coordinates and "inner
+          loop" over parameters, to avoid unnecessary rebuilds of the neighborlist.
+
+        Parameters
+        ----------
+        pots: list[Potential]
+            list of potentials to execute over
+
+        coords: NDArray
+            (coords_size, n_atoms, 3) array containing multiple coordinate arrays
+
+        params: list[NDArray]
+            (n_pots, params_size, P) array containing multiple parameter arrays
+
+        boxes: NDArray
+            (coords_size, 3, 3) array containing a batch of boxes
+
+        coords_batch_idxs: NDArray
+            (batch_size,) indices of the coordinates to use for each evaluation
+
+        params_batch_idxs: NDArray
+            (batch_size,) indices of the parameters to use for each evaluation
+
+        compute_du_dx: bool
+            Indicates to compute du_dx, else returns None for du_dx
+
+        compute_du_dp: bool
+            Indicates to compute du_dp, else returns None for du_dp
+
+        compute_u: bool
+            Indicates to compute u, else returns None for u
+
+
+        Returns
+        -------
+        3-tuple of du_dx, du_dp, u
+            batch_size = coords_batch_idxs.shape[0]
+            du_dx has shape (n_pots, batch_size, N, 3)
+            du_dp has shape (n_pots, batch_size, P)
+            u has shape (n_pots, batch_size,)
+
+    )pbdoc");
 }
 
 template <typename RealType>

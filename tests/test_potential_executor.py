@@ -145,6 +145,12 @@ def test_potential_executor_execute(pots_and_frames):
 
     pot_params = [bp.params.astype(precision) for bp in bps]
 
+    with pytest.raises(RuntimeError, match="number of potentials and the number of parameter sets must match"):
+        potential_executor.execute(ubps, xs[-1], pot_params[:1], boxes[-1])
+
+    with pytest.raises(RuntimeError, match="must compute either du_dx, du_dp or energy"):
+        potential_executor.execute(ubps, xs[-1], pot_params, boxes[-1], False, False, False)
+
     for i, (x, b) in enumerate(zip(xs, boxes)):
         comp_du_dxs, comp_du_dps, comp_us = potential_executor.execute(ubps, x, pot_params, b)
         assert comp_du_dxs.shape == (len(ubps), *xs[0].shape)
