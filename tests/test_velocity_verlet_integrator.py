@@ -29,7 +29,7 @@ from tmd.testsystems.relative import get_relative_hif2a_in_vacuum
 def setup_velocity_verlet(bps, x0, box, dt, masses):
     integrator = VelocityVerletIntegrator(dt, masses)
     # return integrator impl to avoid deallocating
-    intg = integrator.impl_f64()
+    intg = integrator.impl(np.float64)
     context = custom_ops.Context_f64(x0, np.zeros_like(x0), box, intg, bps)
     return context
 

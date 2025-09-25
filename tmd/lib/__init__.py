@@ -39,7 +39,7 @@ class LangevinIntegrator:
         if precision == np.float64:
             klass = custom_ops.LangevinIntegrator_f64
         return klass(
-            np.array(self.masses, dtype=np.float32),
+            np.array(self.masses, dtype=precision),
             self.temperature,
             self.dt,
             self.friction,
@@ -59,11 +59,13 @@ class VelocityVerletIntegrator:
         cb *= -1
         self.cbs = cb
 
-    def impl(self):
-        return custom_ops.VelocityVerletIntegrator_f32(self.dt, self.cbs.astype(np.float32))
-
-    def impl_f64(self):
-        return custom_ops.VelocityVerletIntegrator_f64(self.dt, self.cbs.astype(np.float64))
+    def impl(self, precision=np.float32):
+        klass: type[custom_ops.VelocityVerletIntegrator_f32] | type[custom_ops.VelocityVerletIntegrator_f64] = (
+            custom_ops.VelocityVerletIntegrator_f32
+        )
+        if precision == np.float64:
+            klass = custom_ops.VelocityVerletIntegrator_f64
+        return klass(self.dt, self.cbs.astype(precision))
 
 
 @dataclass
@@ -77,8 +79,13 @@ class MonteCarloBarostat:
     adaptive_scaling_enabled: bool = True
     initial_volume_scale_factor: Optional[float] = None
 
-    def impl(self, bound_potentials):
-        return custom_ops.MonteCarloBarostat_f32(
+    def impl(self, bound_potentials, precision=np.float32):
+        klass: type[custom_ops.MonteCarloBarostat_f32] | type[custom_ops.MonteCarloBarostat_f64] = (
+            custom_ops.MonteCarloBarostat_f32
+        )
+        if precision == np.float64:
+            klass = custom_ops.MonteCarloBarostat_f64
+        return klass(
             self.N,
             self.pressure,
             self.temperature,

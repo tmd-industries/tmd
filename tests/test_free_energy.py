@@ -42,6 +42,7 @@ from tmd.fe.free_energy import (
     Trajectory,
     WaterSamplingParams,
     assert_potentials_compatible,
+    batch_compute_potential_matrix,
     batches,
     compute_potential_matrix,
     estimate_free_energy_bar,
@@ -631,6 +632,50 @@ def test_compute_potential_matrix(hif2a_ligand_pair_single_topology, n_states: i
     )
     np.testing.assert_array_equal(U_ref[is_computed], U_test[is_computed])
     assert np.all(np.isinf(U_test[~is_computed]))
+
+
+@pytest.mark.parametrize(
+    "n_states,max_delta_states", [(1, 1), (1, None), (1, 2), (2, 1), (3, 6), (6, 3), (6, None), (30, 5)]
+)
+@pytest.mark.parametrize("seed", [2024, 2025])
+def test_batch_compute_potential_matrix(
+    hif2a_ligand_pair_single_topology, n_states: int, max_delta_states: int | None, seed
+):
+    st, _ = hif2a_ligand_pair_single_topology
+    states = [st.setup_intermediate_state(lam) for lam in np.linspace(0.0, 1.0, n_states)]
+
+    potentials = [pot for pot in states[0].get_U_fns()]
+    unbound_impls = [pot.potential.to_gpu(np.float32).unbound_impl for pot in potentials]
+
+    params_by_state_by_pot = []
+    for i in range(len(potentials)):
+        params_by_state = []
+        for j, state in enumerate(states):
+            params_by_state.append([state.get_U_fns()[i].params.astype(np.float32)])
+        params_by_state_by_pot.append(np.array(params_by_state))
+
+    conf_a = utils.get_romol_conf(st.mol_a)
+    conf_b = utils.get_romol_conf(st.mol_b)
+    conf = st.combine_confs(conf_a, conf_b)
+    conf = conf.astype(np.float32)
+
+    rng = np.random.default_rng(seed)
+    confs = conf + rng.normal(0.0, 0.01, (len(states), st.get_num_atoms(), 3)).astype(np.float32)
+    boxes = 100.0 * np.eye(3) + rng.uniform(-1.0, 1.0, (len(states), 3, 3))
+    boxes = boxes.astype(np.float32)
+    xvbs = [CoordsVelBox(conf, np.zeros_like(conf), box) for conf, box in zip(confs, boxes)]
+
+    replica_idx_by_state = [ReplicaIdx(i) for i in rng.choice(n_states, size=n_states, replace=False)]
+    hrex = HREX(xvbs, replica_idx_by_state)
+
+    combined_ref_matrix = []
+    for i, ubp in enumerate(unbound_impls):
+        matrix_ref = compute_potential_matrix(ubp, hrex, params_by_state_by_pot[i], max_delta_states)
+        verify_and_sanitize_potential_matrix(matrix_ref, hrex.replica_idx_by_state)
+        combined_ref_matrix.append(matrix_ref)
+
+    comp_matrix = batch_compute_potential_matrix(unbound_impls, hrex, params_by_state_by_pot, max_delta_states)
+    np.testing.assert_equal(comp_matrix, combined_ref_matrix)
 
 
 @pytest.mark.nogpu

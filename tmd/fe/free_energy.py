@@ -1118,14 +1118,14 @@ def compute_potential_matrix(
     hrex: HREX[CoordsVelBox],
     params_by_state: NDArray,
     max_delta_states: Optional[int] = None,
-) -> NDArray:
+) -> NDArray[np.float32]:
     """Computes the (n_replicas, n_states) sparse matrix of potential energies, where a given element $(k, l)$ is
     computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
     set to `np.inf`.
 
     Parameters
     ----------
-    potential : custom_ops.Potential
+    potential : custom_ops.Potential_f32
         potential to evaluate
 
     hrex : HREX
@@ -1154,13 +1154,81 @@ def compute_potential_matrix(
             coords, params_by_state, boxes, coords_batch_idxs, params_batch_idxs, False, False, True
         )
 
-        U_kl = np.full((n_states, n_states), np.inf)
+        U_kl = np.full((n_states, n_states), np.inf, dtype=np.float32)
         U_kl[coords_batch_idxs, params_batch_idxs] = U
 
         return U_kl
 
     def compute_dense():
         _, _, U_kl = potential.execute_batch(coords, params_by_state, boxes, False, False, True)
+        return U_kl
+
+    U_kl = compute_sparse(max_delta_states) if max_delta_states is not None else compute_dense()
+
+    return U_kl
+
+
+def batch_compute_potential_matrix(
+    potentials: list[custom_ops.Potential_f32],
+    hrex: HREX[CoordsVelBox],
+    params_by_state_by_potential: list[NDArray],
+    max_delta_states: Optional[int] = None,
+) -> NDArray[np.float32]:
+    """Computes the (n_potentials, n_replicas, n_states) sparse matrix of potential energies, where a given element $(k, l)$ is
+    computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
+    set to `np.inf`.
+
+    A batched variant of `compute_potential_matrix`.
+
+    Parameters
+    ----------
+    potentials : list[custom_ops.Potential_f32]
+        list of potentials to evaluate
+
+    hrex : HREX
+        HREX state (containing replica states and permutation)
+
+    params_by_state : NDArray
+        (n_states, ...) array of potential parameters for each state
+
+    max_delta_states : int or None, optional
+        If given, number of neighbor states on either side of a given replica's initial state for which to compute
+        potentials. Otherwise, compute potentials for all (replica, state) pairs.
+    """
+
+    potential_runner = custom_ops.PotentialExecutor_f32()
+    coords = np.array([xvb.coords for xvb in hrex.replicas])
+    boxes = np.array([xvb.box for xvb in hrex.replicas])
+
+    def compute_sparse(k: int):
+        n_states = len(hrex.replicas)
+        state_idx = np.argsort(hrex.replica_idx_by_state)
+        neighbor_state_idxs = state_idx[:, None] + np.arange(-k, k + 1)[None, :]
+        valid_idxs: tuple = np.nonzero((0 <= neighbor_state_idxs) & (neighbor_state_idxs < n_states))
+        coords_batch_idxs = valid_idxs[0].astype(np.uint32)
+        params_batch_idxs = neighbor_state_idxs[valid_idxs].astype(np.uint32)
+
+        _, _, U = potential_runner.execute_batch_sparse(
+            potentials,
+            coords,
+            params_by_state_by_potential,
+            boxes,
+            coords_batch_idxs,
+            params_batch_idxs,
+            False,
+            False,
+            True,
+        )
+
+        U_kl = np.full((len(potentials), n_states, n_states), np.inf, dtype=np.float32)
+        U_kl[:, coords_batch_idxs, params_batch_idxs] = U
+
+        return U_kl
+
+    def compute_dense():
+        _, _, U_kl = potential_runner.execute_batch(
+            potentials, coords, params_by_state_by_potential, boxes, False, False, True
+        )
         return U_kl
 
     U_kl = compute_sparse(max_delta_states) if max_delta_states is not None else compute_dense()
@@ -1268,7 +1336,7 @@ def generate_pair_bar_ulkns(
     initial_states: Sequence[InitialState],
     samples_by_state: Sequence[Trajectory],
     temperature: float,
-    unbound_impls: Sequence[custom_ops.Potential_f32] | None,
+    unbound_impls: list[custom_ops.Potential_f32] | None,
 ) -> NDArray:
     """Generate pair bair u_klns.
     This is a specialized variant of generating u_klns, only loading each set of frames into memory once.
@@ -1283,6 +1351,8 @@ def generate_pair_bar_ulkns(
 
     assert len(initial_states) > 0
     assert len(initial_states) == len(samples_by_state)
+    num_samples = len(samples_by_state[0].boxes)
+    assert all([len(traj.boxes) == num_samples for traj in samples_by_state])
     if unbound_impls is None:
         unbound_impls = [pot.potential.to_gpu(np.float32).unbound_impl for pot in initial_states[0].potentials]
     assert len(unbound_impls) == len(initial_states[0].potentials)
@@ -1291,6 +1361,8 @@ def generate_pair_bar_ulkns(
     energies_by_frames_by_params = np.zeros(
         (len(initial_states), len(initial_states), len(unbound_impls)), dtype=object
     )
+    params_by_state = [[bp.params for bp in initial_state.potentials] for initial_state in initial_states]
+    executor = custom_ops.PotentialExecutor_f32()
     for i, state in enumerate(initial_states):
         frames = np.array(samples_by_state[i].frames)
         boxes = np.asarray(samples_by_state[i].boxes)
@@ -1301,25 +1373,25 @@ def generate_pair_bar_ulkns(
         state_idxs.append(i)
         if i < len(initial_states) - 1:
             state_idxs.append(i + 1)
-        for j, pot in enumerate(state.potentials):
-            params = np.array([initial_states[idx].potentials[j].params for idx in state_idxs])
-            _, _, Us = unbound_impls[j].execute_batch(
-                frames,
-                params,
-                boxes,
-                compute_du_dx=False,
-                compute_du_dp=False,
-                compute_u=True,
-            )
+        state_params = [params_by_state[idx] for idx in state_idxs]
+        params_by_state_by_pot = [np.asarray([params[i] for params in state_params]) for i in range(len(unbound_impls))]
+        _, _, Us = executor.execute_batch(
+            unbound_impls,
+            frames,
+            params_by_state_by_pot,
+            boxes,
+            compute_du_dx=False,
+            compute_du_dp=False,
+            compute_u=True,
+        )
+        us = Us / kBT
+        for j in range(len(unbound_impls)):
+            # Transpose to get energies by params
+            per_pot_us = us[j].T
+            for state_idx, p_us in zip(state_idxs, per_pot_us):
+                energies_by_frames_by_params[i, state_idx, j] = p_us
 
-            Us = Us.T  # Transpose to get energies by params
-            us = Us.reshape(len(state_idxs), -1) / kBT
-            for p_idx, p_us in zip(state_idxs, us):
-                energies_by_frames_by_params[i, p_idx, j] = p_us
-
-    u_kln_by_component_by_lambda = np.empty(
-        (len(initial_states) - 1, len(unbound_impls), 2, 2, len(energies_by_frames_by_params[0][0][0]))
-    )
+    u_kln_by_component_by_lambda = np.empty((len(initial_states) - 1, len(unbound_impls), 2, 2, num_samples))
     for i, states in enumerate(zip(range(len(initial_states)), range(1, len(initial_states)))):
         assert len(states) == 2
         for j in range(len(unbound_impls)):
@@ -1501,14 +1573,12 @@ def run_sims_hrex(
         hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica, replica_from_samples)
         water_sampler_proposals_by_state_by_iter.append(water_sampling_acceptance_proposal_counts_by_state)
         # Generate the per-potential U_kl, avoids the need to re-compute the U_kln at the end
-        # (fey): TBD compute these in parallel
-        U_kl_raw_ = []
-        for i, bp in enumerate(bound_potentials):
-            pot_U_kl_raw = compute_potential_matrix(
-                bp.get_potential(), hrex, params_by_state_by_pot[i], md_params.hrex_params.max_delta_states
-            )
-            U_kl_raw_.append(pot_U_kl_raw)
-        U_kl_raw = np.array(U_kl_raw_, dtype=iterated_u_kln.dtype)
+        U_kl_raw = batch_compute_potential_matrix(
+            [bp.get_potential() for bp in bound_potentials],
+            hrex,
+            params_by_state_by_pot,
+            md_params.hrex_params.max_delta_states,
+        )
         # Sum the per-potential components for performing swaps
         U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 

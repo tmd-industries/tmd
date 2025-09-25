@@ -286,7 +286,6 @@ def test_hrex_rbfe_hif2a(
 
     ref_bar_results = []
     # Generate reference pair bar estimates by re-computing the energies.
-    # HREX re-uses the energies computed for swaps, so there is some difference
     for i, initial_states in enumerate(zip(initial_states, initial_states[1:])):
         trajs = [result.trajectories[i], result.trajectories[i + 1]]
         u_kln_by_component = generate_pair_bar_ulkns(initial_states, trajs, temperature, unbound_impls)

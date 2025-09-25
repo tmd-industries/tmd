@@ -48,6 +48,7 @@
 #include "nonbonded_precomputed.hpp"
 #include "periodic_torsion.hpp"
 #include "potential.hpp"
+#include "potential_executor.hpp"
 #include "rmsd_align.hpp"
 #include "rotations.hpp"
 #include "segmented_sumexp.hpp"
@@ -1462,6 +1463,575 @@ void declare_bound_potential(py::module &m, const char *typestr) {
 }
 
 template <typename RealType>
+void declare_potential_executor(py::module &m, const char *typestr) {
+
+  using Class = tmd::PotentialExecutor<RealType>;
+  std::string pyclass_name = std::string("PotentialExecutor_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>>(
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def(py::init([](const bool parallel) {
+             return new tmd::PotentialExecutor<RealType>(parallel);
+           }),
+           py::arg("parallel") = true)
+      .def(
+          "execute",
+          [](tmd::PotentialExecutor<RealType> &runner,
+             std::vector<std::shared_ptr<tmd::Potential<RealType>>> &pots,
+             const py::array_t<RealType, py::array::c_style> &coords,
+             const std::vector<py::array_t<RealType, py::array::c_style>>
+                 &params,
+             const py::array_t<RealType, py::array::c_style> &box,
+             const bool compute_du_dx, const bool compute_du_dp,
+             const bool compute_u) -> py::tuple {
+            const long unsigned int N = coords.shape()[0];
+            const long unsigned int D = coords.shape()[1];
+            verify_coords_and_box(coords, box);
+
+            if (!compute_du_dx && !compute_u && !compute_du_dp) {
+              throw std::runtime_error(
+                  "must compute either du_dx, du_dp or energy");
+            }
+
+            if (params.size() != pots.size()) {
+              throw std::runtime_error("number of potentials and the number of "
+                                       "parameter sets must match");
+            }
+            const long unsigned int num_pots = pots.size();
+
+            int offset = 0;
+            std::vector<RealType> combined_params(0);
+
+            std::vector<int> vec_param_sizes;
+
+            for (unsigned int i = 0; i < num_pots; i++) {
+              const int size = params[i].size();
+              vec_param_sizes.push_back(size);
+              combined_params.resize(combined_params.size() + size);
+              std::memcpy(combined_params.data() + offset, params[i].data(),
+                          size * sizeof(RealType));
+              offset += size;
+            }
+            const int P = runner.get_total_num_params(vec_param_sizes);
+
+            // initialize with fixed garbage values for debugging convenience
+            // (these should be overwritten by `execute_potentials`)
+            std::vector<unsigned long long> du_dx;
+            if (compute_du_dx) {
+              du_dx.assign(num_pots * N * D, 9999);
+            }
+            std::vector<__int128> u;
+            if (compute_u) {
+              u.assign(num_pots, 9999);
+            }
+
+            std::vector<unsigned long long> du_dp;
+            if (compute_du_dp) {
+              du_dp.assign(P, 9999);
+            }
+
+            runner.execute_potentials(N, vec_param_sizes, pots, coords.data(),
+                                      combined_params.data(), box.data(),
+                                      compute_du_dx ? &du_dx[0] : nullptr,
+                                      compute_du_dp ? &du_dp[0] : nullptr,
+                                      compute_u ? &u[0] : nullptr);
+
+            auto result = py::make_tuple(py::none(), py::none(), py::none());
+            if (compute_du_dx) {
+              py::array_t<RealType, py::array::c_style> py_du_dx(
+                  {num_pots, N, D});
+              for (unsigned int i = 0; i < du_dx.size(); i++) {
+                py_du_dx.mutable_data()[i] = FIXED_TO_FLOAT<RealType>(du_dx[i]);
+              }
+              result[0] = py_du_dx;
+            }
+
+            if (compute_du_dp) {
+              std::vector<py::array_t<RealType, py::array::c_style>>
+                  output_du_dp;
+              offset = 0;
+              for (unsigned int i = 0; i < num_pots; i++) {
+                std::vector<ssize_t> pshape(
+                    params[i].shape(), params[i].shape() + params[i].ndim());
+                py::array_t<RealType, py::array::c_style> py_du_dp(pshape);
+                pots[i]->du_dp_fixed_to_float(N, params[i].size(),
+                                              &du_dp[0] + offset,
+                                              py_du_dp.mutable_data());
+                offset += params[i].size();
+                output_du_dp.push_back(py_du_dp);
+              }
+              result[1] = output_du_dp;
+            }
+
+            if (compute_u) {
+              py::array_t<RealType, py::array::c_style> py_u(num_pots);
+
+              for (unsigned int i = 0; i < py_u.size(); i++) {
+                py_u.mutable_data()[i] = convert_energy_to_fp(u[i]);
+              }
+              result[2] = py_u;
+            }
+
+            return result;
+          },
+          py::arg("pots"), py::arg("coords"), py::arg("params"), py::arg("box"),
+          py::arg("compute_du_dx") = true, py::arg("compute_du_dp") = true,
+          py::arg("compute_u") = true,
+          R"pbdoc("Execute potentials over the a set of coordinates and box.
+
+        Parameters
+        ----------
+        pots: list[Potential]
+            list of potentials to execute over
+
+        coords: NDArray
+            (n_atoms, 3) array containing the coordinates
+
+        params: list[NDArray]
+            (n_pots, P) list containing multiple parameter arrays
+
+        boxes: NDArray
+            (3, 3) array containing the boxes
+
+        compute_du_dx: bool
+            Indicates to compute du_dx, else returns None for du_dx
+
+        compute_du_dp: bool
+            Indicates to compute du_dp, else returns None for du_dp
+
+        compute_u: bool
+            Indicates to compute u, else returns None for u
+
+
+        Returns
+        -------
+        3-tuple of du_dx, du_dp, u
+            du_dx has shape (n_pots, N, 3)
+            du_dp has shape (n_pots,  P)
+            u has shape (n_pots)
+
+    )pbdoc")
+      .def(
+          "execute_batch",
+          [](tmd::PotentialExecutor<RealType> &runner,
+             std::vector<std::shared_ptr<tmd::Potential<RealType>>> &pots,
+             const py::array_t<RealType, py::array::c_style> &coords,
+             const std::vector<py::array_t<RealType, py::array::c_style>>
+                 &params,
+             const py::array_t<RealType, py::array::c_style> &boxes,
+             const bool compute_du_dx, const bool compute_du_dp,
+             const bool compute_u) -> py::tuple {
+            if (!compute_du_dx && !compute_u && !compute_du_dp) {
+              throw std::runtime_error(
+                  "must compute either du_dx, du_dp or energy");
+            }
+            if (coords.ndim() != 3 || boxes.ndim() != 3) {
+              throw std::runtime_error(
+                  "coords and boxes must have 3 dimensions");
+            }
+            if (coords.shape()[0] != boxes.shape()[0]) {
+              throw std::runtime_error(
+                  "number of batches of coords and boxes don't match");
+            }
+
+            const long unsigned int coord_batches = coords.shape()[0];
+            const long unsigned int N = coords.shape()[1];
+            const long unsigned int D = coords.shape()[2];
+
+            if (params.size() != pots.size()) {
+              throw std::runtime_error("number of potentials and the number of "
+                                       "parameter sets must match");
+            }
+
+            const long unsigned int param_batches = params[0].shape()[0];
+            for (auto param_batch : params) {
+              if (param_batch.shape()[0] !=
+                  static_cast<long int>(param_batches)) {
+                throw std::runtime_error("number of parameter batches must "
+                                         "match for each potential");
+              }
+              if (param_batch.ndim() < 2) {
+                throw std::runtime_error(
+                    "params must have at least 2 dimensions");
+              }
+            }
+            const long unsigned int total_combinations =
+                coord_batches * param_batches;
+            const long unsigned int num_pots = pots.size();
+
+            std::vector<RealType> combined_params(0);
+
+            std::vector<int> vec_batch_param_sizes;
+
+            // Probably a better way to do this
+            int offset = 0;
+            for (unsigned int i = 0; i < num_pots; i++) {
+              const int size = params[i].size();
+              // Only count the size of parameters per batch
+              vec_batch_param_sizes.push_back(size / params[i].shape()[0]);
+
+              combined_params.resize(combined_params.size() + size);
+
+              std::memcpy(combined_params.data() + offset, params[i].data(),
+                          size * sizeof(RealType));
+              offset += size;
+            }
+            const int P = runner.get_total_num_params(vec_batch_param_sizes);
+
+            // Setup the indices to use. Reduces duplicate code with
+            // execute_batch_sparse
+            std::vector<unsigned int> coords_batch_idxs;
+            std::vector<unsigned int> param_batch_idxs;
+            for (unsigned int i = 0; i < coord_batches; i++) {
+              for (unsigned int j = 0; j < param_batches; j++) {
+                coords_batch_idxs.push_back(i);
+                param_batch_idxs.push_back(j);
+              }
+            }
+            if (coords_batch_idxs.size() != param_batch_idxs.size() ||
+                coords_batch_idxs.size() != total_combinations) {
+              throw std::runtime_error("Something went wrong, report a bug");
+            }
+
+            // initialize with fixed garbage values for debugging convenience
+            // (these should be overwritten by `execute_potentials`)
+            std::vector<unsigned long long> du_dx;
+            if (compute_du_dx) {
+              du_dx.assign(total_combinations * num_pots * N * D, 9999);
+            }
+            std::vector<__int128> u;
+            if (compute_u) {
+              u.assign(total_combinations * num_pots, 9999);
+            }
+
+            std::vector<unsigned long long> du_dp;
+            if (compute_du_dp) {
+              du_dp.assign(total_combinations * P, 9999);
+            }
+
+            runner.execute_batch_potentials_sparse(
+                N, vec_batch_param_sizes, total_combinations, coord_batches,
+                param_batches, coords_batch_idxs.data(),
+                param_batch_idxs.data(), pots, coords.data(),
+                combined_params.data(), boxes.data(),
+                compute_du_dx ? &du_dx[0] : nullptr,
+                compute_du_dp ? &du_dp[0] : nullptr,
+                compute_u ? &u[0] : nullptr);
+
+            auto result = py::make_tuple(py::none(), py::none(), py::none());
+            if (compute_du_dx) {
+              py::array_t<RealType, py::array::c_style> py_du_dx(
+                  {num_pots, coord_batches, param_batches, N, D});
+              for (unsigned int i = 0; i < du_dx.size(); i++) {
+                py_du_dx.mutable_data()[i] = FIXED_TO_FLOAT<RealType>(du_dx[i]);
+              }
+              result[0] = py_du_dx;
+            }
+
+            if (compute_du_dp) {
+              std::vector<py::array_t<RealType, py::array::c_style>>
+                  output_du_dp;
+              int offset = 0;
+              for (unsigned int i = 0; i < num_pots; i++) {
+                std::vector<ssize_t> pshape(
+                    params[i].shape(), params[i].shape() + params[i].ndim());
+                // Add the coords batch dimension
+                pshape.insert(pshape.begin(),
+                              static_cast<ssize_t>(coord_batches));
+                py::array_t<RealType, py::array::c_style> py_du_dp(pshape);
+                pots[i]->du_dp_fixed_to_float(
+                    N * total_combinations, py_du_dp.size(), &du_dp[0] + offset,
+                    py_du_dp.mutable_data());
+                offset += py_du_dp.size();
+                output_du_dp.push_back(py_du_dp);
+              }
+              result[1] = output_du_dp;
+            }
+
+            if (compute_u) {
+              py::array_t<RealType, py::array::c_style> py_u(
+                  {num_pots, coord_batches, param_batches});
+
+              for (unsigned int i = 0; i < py_u.size(); i++) {
+                py_u.mutable_data()[i] = convert_energy_to_fp(u[i]);
+              }
+              result[2] = py_u;
+            }
+
+            return result;
+          },
+          py::arg("pots"), py::arg("coords"), py::arg("params"), py::arg("box"),
+          py::arg("compute_du_dx") = true, py::arg("compute_du_dp") = true,
+          py::arg("compute_u") = true,
+          R"pbdoc("Execute potentials over a batch of coordinates and parameters. The total number of evaluations is len(pots) * len(coords) * len(params)
+
+        Notes
+        -----
+        * This function allocates memory for all of the inputs on the GPU. This may lead to OOMs.
+        * When using with stateful potentials, care should be taken in the ordering of the evaluations (as specified by
+          coords_batch_idxs and params_batch_idxs) to maintain efficiency. For example, batch evaluation of a nonbonded
+          all-pairs potential may be most efficient in the order [(coords_1, params_1), (coords_1, params_2), ... ,
+          (coords_2, params_1), ..., (coords_n, params_n)], i.e. with an "outer loop" over the coordinates and "inner
+          loop" over parameters, to avoid unnecessary rebuilds of the neighborlist.
+
+        Parameters
+        ----------
+        pots: list[Potential]
+            list of potentials to execute over
+
+        coords: NDArray
+            (coord_batches, n_atoms, 3) array containing multiple coordinate arrays
+
+        params: list[NDArray]
+            (n_pots, param_batches, P) list containing multiple parameter arrays
+
+        boxes: NDArray
+            (coord_batches, 3, 3) array containing a batch of boxes
+
+        compute_du_dx: bool
+            Indicates to compute du_dx, else returns None for du_dx
+
+        compute_du_dp: bool
+            Indicates to compute du_dp, else returns None for du_dp
+
+        compute_u: bool
+            Indicates to compute u, else returns None for u
+
+
+        Returns
+        -------
+        3-tuple of du_dx, du_dp, u
+            coord_batches = coords.shape[0]
+            param_batches = params[0].shape[0]
+            du_dx has shape (n_pots, coord_batches, param_batches, N, 3)
+            du_dp has shape (n_pots, coord_batches, param_batches, P)
+            u has shape (n_pots, coord_batches, param_batches)
+
+    )pbdoc")
+      .def(
+          "execute_batch_sparse",
+          [](tmd::PotentialExecutor<RealType> &runner,
+             std::vector<std::shared_ptr<tmd::Potential<RealType>>> &pots,
+             const py::array_t<RealType, py::array::c_style> &coords,
+             const std::vector<py::array_t<RealType, py::array::c_style>>
+                 &params,
+             const py::array_t<RealType, py::array::c_style> &boxes,
+             const py::array_t<unsigned int, py::array::c_style>
+                 &coords_batch_idxs,
+             const py::array_t<unsigned int, py::array::c_style>
+                 &params_batch_idxs,
+             const bool compute_du_dx, const bool compute_du_dp,
+             const bool compute_u) -> py::tuple {
+            if (!compute_du_dx && !compute_u && !compute_du_dp) {
+              throw std::runtime_error(
+                  "must compute either du_dx, du_dp or energy");
+            }
+            if (coords.ndim() != 3 || boxes.ndim() != 3) {
+              throw std::runtime_error(
+                  "coords and boxes must have 3 dimensions");
+            }
+            if (coords.shape()[0] != boxes.shape()[0]) {
+              throw std::runtime_error(
+                  "number of batches of coords and boxes don't match");
+            }
+
+            const long unsigned int coord_batches = coords.shape()[0];
+            const long unsigned int N = coords.shape()[1];
+            const long unsigned int D = coords.shape()[2];
+
+            if (params.size() != pots.size()) {
+              throw std::runtime_error("number of potentials and the number of "
+                                       "parameter sets must match");
+            }
+
+            const long unsigned int param_batches = params[0].shape()[0];
+            for (auto param_batch : params) {
+              if (param_batch.shape()[0] !=
+                  static_cast<long int>(param_batches)) {
+                throw std::runtime_error("number of parameter batches must "
+                                         "match for each potential");
+              }
+              if (param_batch.ndim() < 2) {
+                throw std::runtime_error(
+                    "params must have at least 2 dimensions");
+              }
+            }
+
+            if (coords_batch_idxs.ndim() != 1 ||
+                params_batch_idxs.ndim() != 1) {
+              throw std::runtime_error(
+                  "coords_batch_idxs and params_batch_idxs must be "
+                  "one-dimensional arrays");
+            }
+            if (coords_batch_idxs.size() != params_batch_idxs.size()) {
+              throw std::runtime_error(
+                  "coords_batch_idxs and params_batch_idxs must have the same "
+                  "length");
+            }
+
+            const int batch_size = coords_batch_idxs.size();
+            const unsigned int *coords_batch_idxs_data =
+                coords_batch_idxs.data();
+            const unsigned int *params_batch_idxs_data =
+                params_batch_idxs.data();
+
+            for (int i = 0; i < batch_size; i++) {
+              if (coords_batch_idxs_data[i] >= coord_batches) {
+                throw std::runtime_error("coords_batch_idxs contains an index "
+                                         "that is out of bounds");
+              }
+              if (params_batch_idxs_data[i] >= param_batches) {
+                throw std::runtime_error("params_batch_idxs contains an index "
+                                         "that is out of bounds");
+              }
+            }
+
+            const long unsigned int num_pots = pots.size();
+
+            std::vector<RealType> combined_params(0);
+
+            std::vector<int> vec_batch_param_sizes;
+
+            // Probably a better way to do this
+            int offset = 0;
+            for (unsigned int i = 0; i < num_pots; i++) {
+              const int size = params[i].size();
+              // Only count the size of parameters per batch
+              vec_batch_param_sizes.push_back(size / params[i].shape()[0]);
+
+              combined_params.resize(combined_params.size() + size);
+
+              std::memcpy(combined_params.data() + offset, params[i].data(),
+                          size * sizeof(RealType));
+              offset += size;
+            }
+            const int P = runner.get_total_num_params(vec_batch_param_sizes);
+
+            // initialize with fixed garbage values for debugging convenience
+            // (these should be overwritten by `execute_potentials`)
+            std::vector<unsigned long long> du_dx;
+            if (compute_du_dx) {
+              du_dx.assign(batch_size * num_pots * N * D, 9999);
+            }
+            std::vector<__int128> u;
+            if (compute_u) {
+              u.assign(batch_size * num_pots, 9999);
+            }
+
+            std::vector<unsigned long long> du_dp;
+            if (compute_du_dp) {
+              du_dp.assign(batch_size * P, 9999);
+            }
+
+            runner.execute_batch_potentials_sparse(
+                N, vec_batch_param_sizes, batch_size, coord_batches,
+                param_batches, coords_batch_idxs_data, params_batch_idxs_data,
+                pots, coords.data(), combined_params.data(), boxes.data(),
+                compute_du_dx ? &du_dx[0] : nullptr,
+                compute_du_dp ? &du_dp[0] : nullptr,
+                compute_u ? &u[0] : nullptr);
+
+            auto result = py::make_tuple(py::none(), py::none(), py::none());
+            if (compute_du_dx) {
+              py::array_t<RealType, py::array::c_style> py_du_dx(
+                  {num_pots, static_cast<long unsigned int>(batch_size), N, D});
+              for (unsigned int i = 0; i < du_dx.size(); i++) {
+                py_du_dx.mutable_data()[i] = FIXED_TO_FLOAT<RealType>(du_dx[i]);
+              }
+              result[0] = py_du_dx;
+            }
+
+            if (compute_du_dp) {
+              std::vector<py::array_t<RealType, py::array::c_style>>
+                  output_du_dp;
+              int offset = 0;
+              for (unsigned int i = 0; i < num_pots; i++) {
+                std::vector<ssize_t> pshape(
+                    params[i].shape(), params[i].shape() + params[i].ndim());
+                // set the batch dimension
+                pshape[0] = batch_size;
+                py::array_t<RealType, py::array::c_style> py_du_dp(pshape);
+                pots[i]->du_dp_fixed_to_float(N * batch_size, py_du_dp.size(),
+                                              &du_dp[0] + offset,
+                                              py_du_dp.mutable_data());
+                offset += py_du_dp.size();
+                output_du_dp.push_back(py_du_dp);
+              }
+              result[1] = output_du_dp;
+            }
+
+            if (compute_u) {
+              py::array_t<RealType, py::array::c_style> py_u(
+                  {num_pots, static_cast<long unsigned int>(batch_size)});
+
+              for (unsigned int i = 0; i < py_u.size(); i++) {
+                py_u.mutable_data()[i] = convert_energy_to_fp(u[i]);
+              }
+              result[2] = py_u;
+            }
+
+            return result;
+          },
+          py::arg("pots"), py::arg("coords"), py::arg("params"), py::arg("box"),
+          py::arg("coords_batch_idxs"), py::arg("params_batch_idxs"),
+          py::arg("compute_du_dx") = true, py::arg("compute_du_dp") = true,
+          py::arg("compute_u") = true,
+          R"pbdoc("Execute potentials over a batch of coordinates and parameters. Similar to execute_batch, except that instead
+        of evaluating the potential on the dense matrix of pairs of coordinates and parameters, this accepts arrays
+        specifying the indices of the coordinates and parameters to use for each evaluation, allowing evaluation of
+        arbitrary elements of the matrix. The total number of evaluations is len(coords_batch_idxs)
+        [= len(params_batch_idxs)].
+
+        Notes
+        -----
+        * This function allocates memory for all of the inputs on the GPU. This may lead to OOMs.
+        * When using with stateful potentials, care should be taken in the ordering of the evaluations (as specified by
+          coords_batch_idxs and params_batch_idxs) to maintain efficiency. For example, batch evaluation of a nonbonded
+          all-pairs potential may be most efficient in the order [(coords_1, params_1), (coords_1, params_2), ... ,
+          (coords_2, params_1), ..., (coords_n, params_n)], i.e. with an "outer loop" over the coordinates and "inner
+          loop" over parameters, to avoid unnecessary rebuilds of the neighborlist.
+
+        Parameters
+        ----------
+        pots: list[Potential]
+            list of potentials to execute over
+
+        coords: NDArray
+            (coords_size, n_atoms, 3) array containing multiple coordinate arrays
+
+        params: list[NDArray]
+            (n_pots, params_size, P) array containing multiple parameter arrays
+
+        boxes: NDArray
+            (coords_size, 3, 3) array containing a batch of boxes
+
+        coords_batch_idxs: NDArray
+            (batch_size,) indices of the coordinates to use for each evaluation
+
+        params_batch_idxs: NDArray
+            (batch_size,) indices of the parameters to use for each evaluation
+
+        compute_du_dx: bool
+            Indicates to compute du_dx, else returns None for du_dx
+
+        compute_du_dp: bool
+            Indicates to compute du_dp, else returns None for du_dp
+
+        compute_u: bool
+            Indicates to compute u, else returns None for u
+
+
+        Returns
+        -------
+        3-tuple of du_dx, du_dp, u
+            batch_size = coords_batch_idxs.shape[0]
+            du_dx has shape (n_pots, batch_size, N, 3)
+            du_dp has shape (n_pots, batch_size, P)
+            u has shape (n_pots, batch_size,)
+
+    )pbdoc");
+}
+
+template <typename RealType>
 void declare_harmonic_bond(py::module &m, const char *typestr) {
 
   using Class = HarmonicBond<RealType>;
@@ -2325,6 +2895,9 @@ PYBIND11_MODULE(custom_ops, m) {
   declare_summed_potential<float>(m, "f32");
   declare_fanout_summed_potential<double>(m, "f64");
   declare_fanout_summed_potential<float>(m, "f32");
+
+  declare_potential_executor<double>(m, "f64");
+  declare_potential_executor<float>(m, "f32");
 
   declare_neighborlist<double>(m, "f64");
   declare_neighborlist<float>(m, "f32");

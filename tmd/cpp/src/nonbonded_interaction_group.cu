@@ -370,7 +370,6 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   }
 
   if (this->needs_sort()) {
-    gpuErrchk(cudaPeekAtLastError());
     // Sorting always triggers a neighborlist rebuild
     this->sort(d_x, d_box, stream);
   } else {
