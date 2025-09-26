@@ -1250,8 +1250,8 @@ def run_complex(
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = 0.7,
 ):
-    complex_host_config = builders.build_protein_system(
-        protein, forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
+    complex_host_config = builders.build_membrane_system(
+        protein, "amber14/protein.ff14SB", forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
     )
     complex_host_config = setup_optimized_host(complex_host_config, [mol_a, mol_b], forcefield, seed=md_params.seed)
     complex_res = estimate_relative_free_energy_bisection_or_hrex(

@@ -27,6 +27,7 @@ from tmd.ff import sanitize_water_ff
 from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
 from tmd.md.builders import (
     WATER_RESIDUE_NAME,
+    build_membrane_system,
     build_protein_system,
     build_water_system,
     get_box_from_coords,
@@ -110,6 +111,16 @@ def test_build_protein_system_returns_correct_water_count():
             if last_num_waters is not None:
                 assert last_num_waters == host_config.num_water_atoms
             last_num_waters = host_config.num_water_atoms
+
+
+@pytest.mark.nocuda
+def test_build_protein_system_with_membrane():
+    with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "ligands.sdf") as sdf_path:
+        mols = read_sdf(sdf_path)
+    # Add all the mols in a single pass, as this runs OpenMM CPU MD which is slow
+    with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "a2a_hip278.pdb") as pdb_path:
+        host_config = build_membrane_system(str(pdb_path), "amber14/protein.ff14SB", "amber14/tip3p", mols=mols)
+    assert host_config.num_membrane_atoms == 30016
 
 
 def validate_host_config_ions_and_charge(
