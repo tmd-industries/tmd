@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "assert.h"
 #include "chiral_atom_restraint.hpp"
 #include "gpu_utils.cuh"
 #include "k_chiral_restraint.cuh"
@@ -64,10 +65,11 @@ ChiralAtomRestraint<RealType>::~ChiralAtomRestraint() {
 
 template <typename RealType>
 void ChiralAtomRestraint<RealType>::execute_device(
-    const int N, const int P, const RealType *d_x, const RealType *d_p,
-    const RealType *d_box, unsigned long long *d_du_dx,
+    const int batches, const int N, const int P, const RealType *d_x,
+    const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
+  assert(batches == 1);
   if (P != R_) {
     throw std::runtime_error(
         "ChiralAtomRestraint::execute_device(): expected P == R, got P=" +

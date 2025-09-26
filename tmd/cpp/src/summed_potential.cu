@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "assert.h"
 #include "fixed_point.hpp"
 #include "gpu_utils.cuh"
 #include "nonbonded_common.hpp"
@@ -61,10 +62,11 @@ const std::vector<int> &SummedPotential<RealType>::get_parameter_sizes() {
 
 template <typename RealType>
 void SummedPotential<RealType>::execute_device(
-    const int N, const int P, const RealType *d_x, const RealType *d_p,
-    const RealType *d_box, unsigned long long *d_du_dx,
+    const int batches, const int N, const int P, const RealType *d_x,
+    const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
+  assert(batches == 1);
   if (P != P_) {
     throw std::runtime_error(
         "SummedPotential<RealType>::execute_device(): expected " +
@@ -89,7 +91,7 @@ void SummedPotential<RealType>::execute_device(
       pot_stream = manager_.get_stream(i);
     }
     potentials_[i]->execute_device(
-        N, params_sizes_[i], d_x, d_p + offset, d_box, d_du_dx,
+        batches, N, params_sizes_[i], d_x, d_p + offset, d_box, d_du_dx,
         d_du_dp == nullptr ? nullptr : d_du_dp + offset,
         d_u == nullptr ? nullptr : d_u_buffer_.data + i, pot_stream);
     offset += params_sizes_[i];

@@ -192,7 +192,7 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
 
         bond_idxs = np.array(bond_idxs_, dtype=np.int32)
         bond_params = np.array(bond_params_, dtype=np.float64)
-        bond = potentials.HarmonicBond(bond_idxs).bind(bond_params)
+        bond = potentials.HarmonicBond(N, bond_idxs).bind(bond_params)
 
     angle_forces = get_forces_by_type(omm_forces, mm.HarmonicAngleForce)
     if len(angle_forces) > 0:

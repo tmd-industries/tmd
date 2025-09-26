@@ -64,6 +64,17 @@
 namespace py = pybind11;
 using namespace tmd;
 
+void verify_bond_idxs(const py::array_t<int, py::array::c_style> &bond_idxs) {
+  size_t bond_dims = bond_idxs.ndim();
+  if (bond_dims != 2) {
+    throw std::runtime_error("bond idxs dimensions must be 2");
+  }
+  if (bond_idxs.shape(bond_dims - 1) != 2) {
+    throw std::runtime_error(
+        "bond idxs must have a shape that is 2 dimensional");
+  }
+}
+
 void verify_coords(const py::array_t<double, py::array::c_style> &coords) {
   size_t coord_dimensions = coords.ndim();
   if (coord_dimensions != 2) {
@@ -877,6 +888,7 @@ void declare_potential(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("Potential_") + typestr;
   py::class_<Class, std::shared_ptr<Class>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def("batch_size", &Class::batch_size)
       .def(
           "execute_batch",
           [](Potential<RealType> &pot,
@@ -1215,7 +1227,7 @@ void declare_potential(py::module &m, const char *typestr) {
               u.assign(1, 9999);
             }
 
-            pot.execute_host(N, P, coords.data(), params.data(), box.data(),
+            pot.execute_host(1, N, P, coords.data(), params.data(), box.data(),
                              compute_du_dx ? &du_dx[0] : nullptr,
                              compute_du_dp ? &du_dp[0] : nullptr,
                              compute_u ? &u[0] : nullptr);
@@ -1240,9 +1252,101 @@ void declare_potential(py::module &m, const char *typestr) {
             }
             if (compute_u) {
               RealType u_sum = convert_energy_to_fp(u[0]);
-              // returning a plain of float32 causes python to interpet it as a
+              // returning a raw float32 causes python to interpret it as a
               // 'float' type (which is 64bit)
               result[2] = u_sum;
+            }
+
+            return result;
+          },
+          py::arg("coords"), py::arg("params"), py::arg("box"),
+          py::arg("compute_du_dx") = true, py::arg("compute_du_dp") = true,
+          py::arg("compute_u") = true)
+      .def(
+          "execute_dim",
+          [](Potential<RealType> &pot,
+             const py::array_t<RealType, py::array::c_style> &coords,
+             const std::vector<py::array_t<RealType, py::array::c_style>>
+                 &params,
+             const py::array_t<RealType, py::array::c_style> &boxes,
+             const bool compute_du_dx, const bool compute_du_dp,
+             const bool compute_u) -> py::tuple {
+            const long batches = coords.shape(0);
+            if (static_cast<long>(params.size()) != batches) {
+              throw std::runtime_error(
+                  "Parameters must have same number of batches as coords");
+            } else if (boxes.shape(0) != batches) {
+              throw std::runtime_error(
+                  "Boxes must have same number of batches as coords");
+            }
+
+            const long unsigned int N = coords.shape(1);
+            const long unsigned int D = coords.shape(2);
+            // verify_coords_and_box(coords, box);
+
+            long unsigned int P = 0;
+            for (auto batch : params) {
+              P += batch.size();
+            }
+            py::array_t<RealType, py::array::c_style> param_data(P);
+            int offset = 0;
+            for (auto batch : params) {
+              std::memcpy(param_data.mutable_data() + offset, batch.data(),
+                          batch.size() * sizeof(RealType));
+              offset += batch.size();
+            }
+
+            // initialize with fixed garbage values for debugging convenience
+            // (these should be overwritten by `execute_host`)
+            std::vector<unsigned long long> du_dx;
+            if (compute_du_dx) {
+              du_dx.assign(batches * N * D, 9999);
+            }
+            std::vector<unsigned long long> du_dp;
+            if (compute_du_dp) {
+              du_dp.assign(P, 9999);
+            }
+            std::vector<__int128> u;
+            if (compute_u) {
+              u.assign(batches, 9999);
+            }
+
+            pot.execute_host(batches, N, P, coords.data(), param_data.data(),
+                             boxes.data(), compute_du_dx ? &du_dx[0] : nullptr,
+                             compute_du_dp ? &du_dp[0] : nullptr,
+                             compute_u ? &u[0] : nullptr);
+
+            auto result = py::make_tuple(py::none(), py::none(), py::none());
+
+            if (compute_du_dx) {
+              py::array_t<RealType, py::array::c_style> py_du_dx(
+                  {static_cast<long unsigned int>(batches), N, D});
+              for (unsigned int i = 0; i < du_dx.size(); i++) {
+                py_du_dx.mutable_data()[i] = FIXED_TO_FLOAT<RealType>(du_dx[i]);
+              }
+              result[0] = py_du_dx;
+            }
+            if (compute_du_dp) {
+              std::vector<py::array_t<RealType, py::array::c_style>> py_du_dp;
+              int offset = 0;
+              for (auto batch : params) {
+                py::array_t<RealType, py::array::c_style> batch_du_dp(
+                    {batch.shape(0), batch.shape(1)});
+                pot.du_dp_fixed_to_float(N, batch.size(), &du_dp[0] + offset,
+                                         batch_du_dp.mutable_data());
+                py_du_dp.push_back(batch_du_dp);
+                offset += batch.size();
+              }
+              result[1] = py_du_dp;
+            }
+            if (compute_u) {
+              py::array_t<RealType, py::array::c_style> py_u({batches});
+              for (unsigned int i = 0; i < u.size(); i++) {
+                py_u.mutable_data()[i] = convert_energy_to_fp(u[i]);
+              }
+              // returning a raw float32 causes python to interpret it as a
+              // 'float' type (which is 64bit)
+              result[2] = py_u;
             }
 
             return result;
@@ -1327,7 +1431,7 @@ void declare_bound_potential(py::module &m, const char *typestr) {
               u.assign(1, 9999);
             }
 
-            bp.execute_host(N, coords.data(), box.data(),
+            bp.execute_host(1, N, coords.data(), box.data(),
                             compute_du_dx ? &du_dx[0] : nullptr,
                             compute_u ? &u[0] : nullptr);
 
@@ -1448,7 +1552,7 @@ void declare_bound_potential(py::module &m, const char *typestr) {
             verify_coords_and_box(coords, box);
             std::vector<__int128> u(1, 9999);
 
-            bp.execute_host(N, coords.data(), box.data(), nullptr, &u[0]);
+            bp.execute_host(1, N, coords.data(), box.data(), nullptr, &u[0]);
 
             py::array_t<uint64_t, py::array::c_style> py_u(1);
             if (fixed_point_overflow(u[0])) {
@@ -2031,6 +2135,21 @@ void declare_potential_executor(py::module &m, const char *typestr) {
     )pbdoc");
 }
 
+// TBD: Is this needed?
+template <typename T>
+std::vector<T> flatten_vector_of_arrays(
+    const std::vector<py::array_t<T, py::array::c_style>> &input) {
+  int offset = 0;
+  std::vector<T> output;
+
+  for (int i = 0; i < input.size(); i++) {
+    const unsigned long arr_size = input[i].size();
+    output.resize(output.size() + arr_size);
+    std::memcpy(output.data() + offset, input[i].data(), arr_size * sizeof(T));
+    offset += arr_size;
+  }
+}
+
 template <typename RealType>
 void declare_harmonic_bond(py::module &m, const char *typestr) {
 
@@ -2038,10 +2157,42 @@ void declare_harmonic_bond(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("HarmonicBond_") + typestr;
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const py::array_t<int, py::array::c_style> &bond_idxs) {
-             return new HarmonicBond<RealType>(py_array_to_vector(bond_idxs));
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &bond_idxs) {
+             verify_bond_idxs(bond_idxs);
+             // Create a vector with all zeros
+             std::vector<int> bond_system_idxs(bond_idxs.shape(0), 0);
+             const int num_batches = 1;
+             return new HarmonicBond<RealType>(num_batches, num_atoms,
+                                               py_array_to_vector(bond_idxs),
+                                               bond_system_idxs);
            }),
-           py::arg("bond_idxs"))
+           py::arg("num_atoms"), py::arg("bond_idxs"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &bond_idxs) {
+             const int num_batches = bond_idxs.size();
+             std::vector<int> combined_bond_vec;
+             std::vector<int> bond_system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_batches; i++) {
+               verify_bond_idxs(bond_idxs[i]);
+               const unsigned long bond_arr_size = bond_idxs[i].size();
+               combined_bond_vec.resize(combined_bond_vec.size() +
+                                        bond_arr_size);
+               std::memcpy(combined_bond_vec.data() + offset,
+                           bond_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               bond_system_idxs.resize(bond_system_idxs.size() +
+                                       bond_idxs[i].shape(0));
+               std::fill(bond_system_idxs.end() - bond_idxs[i].shape(0),
+                         bond_system_idxs.end(), i);
+             }
+             return new HarmonicBond<RealType>(
+                 num_batches, num_atoms, combined_bond_vec, bond_system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("bond_idxs"))
       .def("get_idxs", [](Class &pot) -> py::array_t<int, py::array::c_style> {
         std::vector<int> output_idxs = pot.get_idxs_host();
         py::array_t<int, py::array::c_style> out_idx_buffer(

@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "assert.h"
 #include "fanout_summed_potential.hpp"
 #include "gpu_utils.cuh"
 #include "nonbonded_common.hpp"
@@ -48,10 +49,11 @@ FanoutSummedPotential<RealType>::get_potentials() {
 
 template <typename RealType>
 void FanoutSummedPotential<RealType>::execute_device(
-    const int N, const int P, const RealType *d_x, const RealType *d_p,
-    const RealType *d_box, unsigned long long *d_du_dx,
+    const int batches, const int N, const int P, const RealType *d_x,
+    const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
+  assert(batches == 1);
   if (d_u) {
     gpuErrchk(cudaMemsetAsync(d_u_buffer_.data, 0, d_u_buffer_.size(), stream));
   }
@@ -70,7 +72,7 @@ void FanoutSummedPotential<RealType>::execute_device(
       pot_stream = manager_.get_stream(i);
     }
     potentials_[i]->execute_device(
-        N, P, d_x, d_p, d_box, d_du_dx, d_du_dp,
+        batches, N, P, d_x, d_p, d_box, d_du_dx, d_du_dp,
         d_u == nullptr ? nullptr : d_u_buffer_.data + i, pot_stream);
   }
 

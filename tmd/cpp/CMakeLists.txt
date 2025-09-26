@@ -99,6 +99,7 @@ pybind11_add_module(${LIBRARY_NAME} SHARED NO_EXTRAS
   src/bound_potential.cu
   src/potential_executor.cu
   src/centroid_restraint.cu
+  src/cub_utils.cuh
   src/gpu_utils.cu
   src/vendored/hilbert.cpp
   src/mol_utils.cpp

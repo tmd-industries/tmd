@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,10 +40,10 @@ public:
       const RealType *h_p, const RealType *h_box, unsigned long long *h_du_dx,
       unsigned long long *h_du_dp, __int128 *h_u);
 
-  void execute_host(const int N, const int P, const RealType *h_x,
-                    const RealType *h_p, const RealType *h_box,
-                    unsigned long long *h_du_dx, unsigned long long *h_du_dp,
-                    __int128 *h_u);
+  void execute_host(const int batches, const int N, const int P,
+                    const RealType *h_x, const RealType *h_p,
+                    const RealType *h_box, unsigned long long *h_du_dx,
+                    unsigned long long *h_du_dp, __int128 *h_u);
 
   void execute_host_du_dx(const int N, const int P, const RealType *h_x,
                           const RealType *h_p, const RealType *h_box,
@@ -62,8 +63,9 @@ public:
       const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
       unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream);
 
-  virtual void execute_device(const int N, const int P, const RealType *d_x,
-                              const RealType *d_p, const RealType *d_box,
+  virtual void execute_device(const int batches, const int N, const int P,
+                              const RealType *d_x, const RealType *d_p,
+                              const RealType *d_box,
                               unsigned long long *d_du_dx,
                               unsigned long long *d_du_dp, __int128 *h_u,
                               cudaStream_t stream) = 0;
@@ -71,6 +73,8 @@ public:
   virtual void du_dp_fixed_to_float(const int N, const int P,
                                     const unsigned long long *du_dp,
                                     RealType *du_dp_float);
+
+  virtual int batch_size() const;
 };
 
 } // namespace tmd

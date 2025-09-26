@@ -695,6 +695,8 @@ def setup_end_state(
                 ChiralVolumeDisabledWarning,
             )
 
+    num_atoms = mol_a.GetNumAtoms() + mol_b.GetNumAtoms() - len(core)
+
     all_proper_dummy_chiral_atom_idxs = np.array(all_proper_dummy_chiral_atom_idxs_, np.int32).reshape(-1, 4)
     all_proper_dummy_chiral_atom_params = np.array(all_proper_dummy_chiral_atom_params_, np.float64)
 
@@ -703,7 +705,7 @@ def setup_end_state(
 
     # canonicalize bonds
     mol_c_bond_idxs_canon = canonicalize_bonds(mol_c_bond_idxs)
-    bond_potential = HarmonicBond(mol_c_bond_idxs_canon).bind(np.array(mol_c_bond_params))
+    bond_potential = HarmonicBond(num_atoms, mol_c_bond_idxs_canon).bind(np.array(mol_c_bond_params))
 
     # chiral atoms need special code for canonicalization, since triple product is invariant
     # under rotational symmetry (but not something like swap symmetry)
@@ -717,7 +719,6 @@ def setup_end_state(
         mol_a_chiral_bond.params
     )
 
-    num_atoms = mol_a.GetNumAtoms() + mol_b.GetNumAtoms() - len(core)
     assert get_num_connected_components(num_atoms, bond_potential.potential.idxs) == 1, (
         "hybrid molecule has multiple connected components"
     )
@@ -1241,6 +1242,7 @@ def assert_chiral_consistency(src_chiral_idxs: NDArray, dst_chiral_idxs: NDArray
 
 @dataclass
 class AlignedPotential:
+    num_atoms: int
     idxs: NDArray[np.int32]
     src_params: NDArray[np.float64]
     dst_params: NDArray[np.float64]
@@ -1259,7 +1261,7 @@ class AlignedBond(AlignedPotential):
         )
         params = jnp.array(params).T
 
-        return HarmonicBond(self.idxs).bind(params)
+        return HarmonicBond(self.num_atoms, self.idxs).bind(params)
 
 
 class AlignedAngle(AlignedPotential):
@@ -1383,7 +1385,7 @@ class SingleTopology(AtomMapMixin):
         idxs = idxs.reshape(-1, 2)
         src_params = src_params.reshape(-1, 2)
         dst_params = dst_params.reshape(-1, 2)
-        return AlignedBond(idxs, src_params, dst_params, mins, maxes)
+        return AlignedBond(self.get_num_atoms(), idxs, src_params, dst_params, mins, maxes)
 
     def _align_angles(self):
         idxs, src_params, dst_params, mins, maxes = self._align_bonded_term(
@@ -1395,7 +1397,7 @@ class SingleTopology(AtomMapMixin):
         idxs = idxs.reshape(-1, 3)
         src_params = src_params.reshape(-1, 3)
         dst_params = dst_params.reshape(-1, 3)
-        return AlignedAngle(idxs, src_params, dst_params, mins, maxes)
+        return AlignedAngle(self.get_num_atoms(), idxs, src_params, dst_params, mins, maxes)
 
     def _align_propers(self):
         idxs, src_params, dst_params, mins, maxes = self._align_bonded_term(
@@ -1407,7 +1409,7 @@ class SingleTopology(AtomMapMixin):
         idxs = idxs.reshape(-1, 4)
         src_params = src_params.reshape(-1, 3)
         dst_params = dst_params.reshape(-1, 3)
-        return AlignedTorsion(idxs, src_params, dst_params, mins, maxes)
+        return AlignedTorsion(self.get_num_atoms(), idxs, src_params, dst_params, mins, maxes)
 
     def _align_impropers(self):
         idxs, src_params, dst_params, mins, maxes = self._align_bonded_term(
@@ -1419,7 +1421,7 @@ class SingleTopology(AtomMapMixin):
         idxs = idxs.reshape(-1, 4)
         src_params = src_params.reshape(-1, 3)
         dst_params = dst_params.reshape(-1, 3)
-        return AlignedTorsion(idxs, src_params, dst_params, mins, maxes)
+        return AlignedTorsion(self.get_num_atoms(), idxs, src_params, dst_params, mins, maxes)
 
     def _align_chiral_atoms(self):
         idxs, src_params, dst_params, mins, maxes = self._align_bonded_term(
@@ -1431,7 +1433,7 @@ class SingleTopology(AtomMapMixin):
         idxs = idxs.reshape(-1, 4)
         src_params = src_params.reshape(-1)
         dst_params = dst_params.reshape(-1)
-        return AlignedChiralAtom(idxs, src_params, dst_params, mins, maxes)
+        return AlignedChiralAtom(self.get_num_atoms(), idxs, src_params, dst_params, mins, maxes)
 
     def _align_nonbonded_pair_list(self):
         src_cutoff = self.src_system.nonbonded_pair_list.potential.cutoff
@@ -1453,6 +1455,7 @@ class SingleTopology(AtomMapMixin):
         src_params = src_params.reshape(-1, 4)
         dst_params = dst_params.reshape(-1, 4)
         return AlignedNonbondedPairlist(
+            self.get_num_atoms(),
             idxs=idxs,
             src_params=src_params,
             dst_params=dst_params,
@@ -2066,6 +2069,7 @@ class SingleTopology(AtomMapMixin):
 
         guest_system = self.setup_intermediate_state(lamb=lamb)
         num_host_atoms = host_system.nonbonded_all_pairs.params.shape[0]
+        N = num_host_atoms + self.get_num_atoms()
         guest_chiral_atom_idxs = np.array(guest_system.chiral_atom.potential.idxs, dtype=np.int32) + num_host_atoms
         guest_system.chiral_atom.potential.idxs = guest_chiral_atom_idxs
         guest_chiral_bond_idxs = np.array(guest_system.chiral_bond.potential.idxs, dtype=np.int32) + num_host_atoms
@@ -2079,7 +2083,7 @@ class SingleTopology(AtomMapMixin):
             [host_system.bond.potential.idxs, guest_system.bond.potential.idxs + num_host_atoms]
         )
         combined_bond_params = jnp.concatenate([host_system.bond.params, guest_system.bond.params])
-        combined_bond = HarmonicBond(combined_bond_idxs).bind(combined_bond_params)
+        combined_bond = HarmonicBond(N, combined_bond_idxs).bind(combined_bond_params)
 
         combined_angle_idxs = np.concatenate(
             [host_system.angle.potential.idxs, guest_system.angle.potential.idxs + num_host_atoms]

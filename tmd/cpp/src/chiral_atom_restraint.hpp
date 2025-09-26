@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025 Forrest Yor3k
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -48,8 +48,9 @@ public:
 
   ~ChiralAtomRestraint();
 
-  virtual void execute_device(const int N, const int P, const RealType *d_x,
-                              const RealType *d_p, const RealType *d_box,
+  virtual void execute_device(const int batches, const int N, const int P,
+                              const RealType *d_x, const RealType *d_p,
+                              const RealType *d_box,
                               unsigned long long *d_du_dx, // buffered
                               unsigned long long *d_du_dp, __int128 *d_u,
                               cudaStream_t stream) override;

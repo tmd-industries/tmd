@@ -38,6 +38,7 @@ from .types import Box, Conf, Params
 
 @dataclass
 class HarmonicBond(Potential):
+    num_atoms: int
     idxs: NDArray[np.int32]
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:

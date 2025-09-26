@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 from typing import Any, Optional
 
 import jax.numpy as jnp
@@ -159,6 +160,8 @@ class HostGuestTopology:
         combined_params = jnp.concatenate([host_params, guest_params])
         combined_idxs = np.concatenate([host_idxs, guest_idxs])
         ctor = type(guest_potential)
+        if isinstance(guest_potential, potentials.HarmonicBond):
+            ctor = partial(ctor, self.get_num_atoms())
 
         return combined_params, ctor(combined_idxs)
 
@@ -362,7 +365,7 @@ class BaseTopology:
 
     def parameterize_harmonic_bond(self, ff_params):
         params, idxs = self.ff.hb_handle.partial_parameterize(ff_params, self.mol)
-        return params, potentials.HarmonicBond(idxs)
+        return params, potentials.HarmonicBond(self.mol.GetNumAtoms(), idxs)
 
     def parameterize_harmonic_angle(self, ff_params):
         params, idxs = self.ff.ha_handle.partial_parameterize(ff_params, self.mol)
@@ -630,6 +633,8 @@ class MultiTopology(BaseTopology):
             offset += mol.GetNumAtoms()
         params_c = jnp.concatenate(mol_parameters)
         idxs_c = np.concatenate(mol_idxs)
+        if potential == potentials.HarmonicBond:
+            potential = partial(potential, offset)
         return params_c, potential(idxs_c)
 
     def parameterize_harmonic_bond(self, ff_params):

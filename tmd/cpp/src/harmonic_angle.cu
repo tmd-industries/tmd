@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "assert.h"
 #include "gpu_utils.cuh"
 #include "harmonic_angle.hpp"
 #include "k_harmonic_angle.cuh"
@@ -77,10 +78,11 @@ template <typename RealType> HarmonicAngle<RealType>::~HarmonicAngle() {
 
 template <typename RealType>
 void HarmonicAngle<RealType>::execute_device(
-    const int N, const int P, const RealType *d_x, const RealType *d_p,
-    const RealType *d_box, unsigned long long *d_du_dx,
+    const int batches, const int N, const int P, const RealType *d_x,
+    const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
+  assert(batches == 1);
   if (cur_num_idxs_ > 0) {
     const int tpb = DEFAULT_THREADS_PER_BLOCK;
     const int blocks = ceil_divide(cur_num_idxs_, tpb);

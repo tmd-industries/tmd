@@ -115,7 +115,7 @@ def test_harmonic_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     x = GradientTest().get_random_coords(n_particles, dim)
 
     atom_idxs = np.arange(n_particles)
-    params = np.random.rand(n_bonds, 2).astype(np.float64)
+    params = np.random.rand(n_bonds, 2).astype(precision)
 
     bond_idxs = []
     for _ in range(n_bonds):
@@ -125,22 +125,19 @@ def test_harmonic_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     # Shift half of the bond indices by a single box dimension to ensure testing PBCs
     x[bond_idxs[:, 1][: n_bonds // 2]] += np.diagonal(box)
 
-    box = np.eye(3) * 10
-
     # specific to harmonic bond force
-    potential = HarmonicBond(bond_idxs)
+    potential = HarmonicBond(n_particles, bond_idxs)
     test_impl = potential.to_gpu(precision)
     np.testing.assert_array_equal(potential.idxs, test_impl.unbound_impl.get_idxs())
 
     x = x.astype(precision)
-    params = params.astype(precision)
     box = box.astype(precision)
 
     GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
     GradientTest().assert_differentiable_interface_consistency(x, params, box, test_impl)
 
     # test bitwise commutativity
-    test_potential_rev = HarmonicBond(bond_idxs[:, ::-1])
+    test_potential_rev = HarmonicBond(n_particles, bond_idxs[:, ::-1])
 
     test_potential_rev_impl = test_potential_rev.to_gpu(precision).unbound_impl
 
@@ -151,6 +148,27 @@ def test_harmonic_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     np.testing.assert_array_equal(test_u, test_u_rev)
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
+
+    # Testing batching across multiple coords/params
+    num_batches = 3
+
+    coords = np.array([GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision)
+    batch_params = np.random.rand(3, n_bonds, 2).astype(precision)
+    bond_idxs = [bond_idxs] * num_batches
+
+    batch_pot = HarmonicBond(n_particles, bond_idxs)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.batch_size() == num_batches
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, [box] * num_batches, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_batches
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+    for i, (x, params) in enumerate(zip(coords, batch_params)):
+        ref_du_dx, ref_du_dp, ref_u = test_impl.unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
 
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
@@ -264,11 +282,12 @@ def test_harmonic_bond_singularity(precision, rtol):
     box = np.array(np.eye(3) * 100, dtype=precision)
 
     bond_idxs = np.array([[0, 1]], dtype=np.int32)
-    potential = HarmonicBond(bond_idxs)
+    potential = HarmonicBond(len(x), bond_idxs)
     GradientTest().compare_forces(x, params, box, potential, potential.to_gpu(precision), rtol)
 
     # test with both zero and non zero terms
     x = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=precision)
+    potential = HarmonicBond(len(x), bond_idxs)
     GradientTest().compare_forces(x, params, box, potential, potential.to_gpu(precision), rtol)
 
 

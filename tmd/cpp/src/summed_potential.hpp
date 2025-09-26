@@ -48,8 +48,9 @@ public:
 
   const std::vector<int> &get_parameter_sizes();
 
-  virtual void execute_device(const int N, const int P, const RealType *d_x,
-                              const RealType *d_p, const RealType *d_box,
+  virtual void execute_device(const int batches, const int N, const int P,
+                              const RealType *d_x, const RealType *d_p,
+                              const RealType *d_box,
                               unsigned long long *d_du_dx,
                               unsigned long long *d_du_dp, __int128 *d_u,
                               cudaStream_t stream) override;

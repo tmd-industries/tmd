@@ -126,7 +126,7 @@ void PotentialExecutor<RealType>::execute_potentials_device(
     }
     const int pot_param_count = param_sizes[i];
     pots[i]->execute_device(
-        N, pot_param_count, d_x,
+        1, N, pot_param_count, d_x,
         pot_param_count > 0 ? d_params + offset : nullptr, d_box,
         d_du_dx == nullptr ? nullptr : d_du_dx + (i * N * D),
         d_du_dp == nullptr ? nullptr : d_du_dp + offset,
@@ -205,7 +205,7 @@ void PotentialExecutor<RealType>::execute_batch_potentials_sparse(
       // Note that the parameters are stored {pots, param_batches, ....}
       // which is why we have to handle the offset for parameters differently
       pots[i]->execute_device(
-          N, pot_param_count, d_x.data + (ic * N * D),
+          1, N, pot_param_count, d_x.data + (ic * N * D),
           pot_param_count > 0
               ? d_params.data + (ip * pot_param_count + param_offset)
               : nullptr,

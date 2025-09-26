@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,13 +31,11 @@ BoundPotential<RealType>::BoundPotential(
 }
 
 template <typename RealType>
-void BoundPotential<RealType>::execute_device(const int N, const RealType *d_x,
-                                              const RealType *d_box,
-                                              unsigned long long *d_du_dx,
-                                              unsigned long long *d_du_dp,
-                                              __int128 *d_u,
-                                              cudaStream_t stream) {
-  this->potential->execute_device(N, this->size, d_x,
+void BoundPotential<RealType>::execute_device(
+    const int batches, const int N, const RealType *d_x, const RealType *d_box,
+    unsigned long long *d_du_dx, unsigned long long *d_du_dp, __int128 *d_u,
+    cudaStream_t stream) {
+  this->potential->execute_device(batches, N, this->size, d_x,
                                   this->size > 0 ? this->d_p.data : nullptr,
                                   d_box, d_du_dx, d_du_dp, d_u, stream);
 }
@@ -97,17 +96,17 @@ void BoundPotential<RealType>::execute_batch_host(
 
 template <typename RealType>
 void BoundPotential<RealType>::execute_host(
-    const int N,
-    const RealType *h_x,         // [N,3]
-    const RealType *h_box,       // [3, 3]
-    unsigned long long *h_du_dx, // [N, 3]
-    __int128 *h_u                // [1]
+    const int batches, const int N,
+    const RealType *h_x,         // [batches, N,3]
+    const RealType *h_box,       // [batches, 3, 3]
+    unsigned long long *h_du_dx, // [batches, N, 3]
+    __int128 *h_u                // [batches]
 ) {
 
   const int D = 3;
 
-  DeviceBuffer<RealType> d_x(N * D);
-  DeviceBuffer<RealType> d_box(D * D);
+  DeviceBuffer<RealType> d_x(batches * N * D);
+  DeviceBuffer<RealType> d_box(batches * D * D);
 
   d_x.copy_from(h_x);
   d_box.copy_from(h_box);
@@ -119,15 +118,15 @@ void BoundPotential<RealType>::execute_host(
   // very important that these are initialized to zero since the kernels
   // themselves just accumulate
   if (h_du_dx != nullptr) {
-    d_du_dx.realloc(N * D);
+    d_du_dx.realloc(batches * N * D);
     gpuErrchk(cudaMemsetAsync(d_du_dx.data, 0, d_du_dx.size(), stream));
   }
   if (h_u != nullptr) {
-    d_u.realloc(1);
+    d_u.realloc(batches);
     gpuErrchk(cudaMemsetAsync(d_u.data, 0, d_u.size(), stream));
   }
 
-  this->execute_device(N, d_x.data, d_box.data,
+  this->execute_device(batches, N, d_x.data, d_box.data,
                        h_du_dx != nullptr ? d_du_dx.data : nullptr, nullptr,
                        h_u != nullptr ? d_u.data : nullptr, stream);
   gpuErrchk(cudaStreamSynchronize(stream));

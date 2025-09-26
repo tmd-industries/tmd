@@ -48,8 +48,9 @@ public:
 
   ~ChiralBondRestraint();
 
-  virtual void execute_device(const int N, const int P, const RealType *d_x,
-                              const RealType *d_p, const RealType *d_box,
+  virtual void execute_device(const int batches, const int N, const int P,
+                              const RealType *d_x, const RealType *d_p,
+                              const RealType *d_box,
                               unsigned long long *d_du_dx, // buffered
                               unsigned long long *d_du_dp,
                               __int128 *d_u, // buffered
