@@ -24,6 +24,7 @@ from scipy.stats import normaltest
 
 import tmd._vendored.pymbar as pymbar
 from tmd._vendored.pymbar.utils import kln_to_kn
+from tmd.constants import DEFAULT_KT
 
 DG_KEY = "Delta_f"
 DG_ERR_KEY = "dDelta_f"
@@ -429,3 +430,96 @@ def compute_fwd_and_reverse_df_over_time(
     forward_predictions = np.array(forward_predictions_)
     reverse_predictions = np.array(reverse_predictions_)
     return forward_predictions[:, 0], forward_predictions[:, 1], reverse_predictions[:, 0], reverse_predictions[:, 1]
+
+
+class MBARConvergence:
+    """Utility class to determine if MBAR has converged.
+
+    Useful if building up a u_kln over time and want to determine if the estimates have converged"""
+
+    def __init__(self, n_estimates: int, max_delta: float, slope_threshold: float = 1.0, kBT: float = DEFAULT_KT):
+        """
+
+        Parameters
+        ----------
+        n_estimates : int
+            The number of estimates to use to determine convergence. Must be at least 2
+
+        max_delta : float
+            The maximum difference between estimates before considering convergence, units in kJ/mol
+
+        slope_threshold : float
+            The threshold for the slope of the estimates. Must be greater than zero and at most 1.0.
+            Refer to `converged()` method for more details
+
+        kBT : float
+            The kBT to correct unitless energies to kJ/mol
+        """
+        assert max_delta > 0.0
+        assert n_estimates >= 2
+        assert 0.0 < slope_threshold <= 1.0
+        self._estimates = []
+        self._n_estimates = n_estimates
+        self._slope_threshold = slope_threshold
+        self._max_delta = max_delta
+        self._kBT = kBT
+        self._last_f_k: NDArray | None = None
+
+    def add_estimate_from_u_kln(self, u_kln: NDArray):
+        """Estimate dG from a u_kln"""
+        last_f_k = self._last_f_k
+        if last_f_k is not None:
+            assert len(last_f_k) == u_kln.shape[0]
+            if not np.all(np.isfinite(last_f_k)):
+                last_f_k = None
+        # Always perform a warm start
+        mbar = construct_mbar_from_u_kln(u_kln, initial_f_k=last_f_k)
+        df = mbar.compute_free_energy_differences(compute_uncertainty=False)[DG_KEY][0, -1]
+        self._last_f_k = mbar.f_k
+
+        self.add_estimate(df / self._kBT)
+
+    def add_estimate(self, dG: float):
+        """Add pre-computed dG (kJ/mol)"""
+        self._estimates.append(dG)
+        # Truncate off the older estimates
+        self._estimates = self._estimates[-self._n_estimates :]
+        assert len(self._estimates) <= self._n_estimates
+
+    def max_slope(self) -> float:
+        return self._max_delta / self._n_estimates
+
+    def max_difference(self) -> float:
+        return float(np.max(self._estimates) - np.min(self._estimates))
+
+    def converged(self) -> bool:
+        """Determine if the estimates have appeared to converged
+
+        Convergence is determined by the following:
+        * At least n_estimates collected, else False
+        * The difference between the largest and smallest estimate is less than max_delta, else False
+        * The average of absolute bootstrapped slopes is less than slope_threshold * max_slope (max_delta / n_estimates)
+
+        """
+        if len(self._estimates) < self._n_estimates:
+            return False
+        max_delta = self.max_difference()
+        if max_delta >= self._max_delta:
+            return False
+        max_slope = self.max_slope()
+        slope = self.bootstrap_slope()
+
+        return slope < max_slope * self._slope_threshold
+
+    def bootstrap_slope(self, n_bootstrap: int = 1000, seed: int = 2025) -> float:
+        rng = np.random.default_rng(seed)
+        n_estimates = len(self._estimates)
+        assert n_estimates > 0
+        estimates = np.array(self._estimates)
+        pairs = rng.choice(np.arange(n_estimates), size=(2, n_bootstrap))
+        slopes = (estimates[pairs[0]] - estimates[pairs[1]]) / np.abs(pairs[0] - pairs[1])
+        # Drop any pairs that are not finite, ie samples from the same position
+        finite_slopes = np.isfinite(slopes)
+        # Take the absolute slopes
+        average_slope = np.mean(np.abs(slopes[finite_slopes]))
+        return float(average_slope)

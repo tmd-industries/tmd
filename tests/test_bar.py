@@ -25,6 +25,7 @@ from tmd._vendored.pymbar.testsystems import ExponentialTestCase
 from tmd.fe.bar import (
     DG_ERR_KEY,
     DG_KEY,
+    MBARConvergence,
     bar,
     bar_with_pessimistic_uncertainty,
     bootstrap_bar,
@@ -288,3 +289,75 @@ def test_nan_bar_error(mock_energy_diff):
     dummy_ukln = np.ones(shape=(2, 2, 100))
     _, boot_df_err = bar_with_pessimistic_uncertainty(dummy_ukln)
     assert boot_df_err == 0.0
+
+
+@pytest.mark.parametrize("n_samples", [2000])
+@pytest.mark.parametrize("n_states", [2, 3, 4])
+def test_mbar_convergence(n_samples, n_states):
+    seed = 2025
+    _, u_kln, _ = ExponentialTestCase(rates=list(range(1, n_states + 1))).sample(
+        N_k=[n_samples] * n_states, mode="u_kln", seed=seed
+    )
+    assert u_kln.shape == (n_states, n_states, n_samples)
+
+    n_estimates = 10
+    max_delta = 0.1
+    slope_threshold = 0.5
+    convergence = MBARConvergence(n_estimates, max_delta, slope_threshold=slope_threshold)
+    # No samples, should not be converged
+    assert not convergence.converged()
+
+    # Incrementally add more samples
+    u_kln_stride = 10
+    u_kln_offset = 0
+    for i in range(n_estimates - 1):
+        u_kln_offset += u_kln_stride
+        convergence.add_estimate_from_u_kln(u_kln[:, :, :u_kln_offset])
+    assert len(convergence._estimates) == n_estimates - 1
+    # Still not enough samples
+    assert not convergence.converged()
+
+    u_kln_offset += u_kln_stride
+    convergence.add_estimate_from_u_kln(u_kln[:, :, :u_kln_offset])
+    assert not convergence.converged()
+
+    # Verify that the slope bootstrapping is deterministic
+    assert convergence.bootstrap_slope() == convergence.bootstrap_slope()
+
+    # Shouldn't be converged based on the slope
+    assert convergence.max_slope() * slope_threshold < convergence.bootstrap_slope()
+    while u_kln_offset < u_kln.shape[-1]:
+        u_kln_offset += u_kln_stride
+        convergence.add_estimate_from_u_kln(u_kln[:, :, :u_kln_offset])
+        if convergence.max_slope() * slope_threshold > convergence.bootstrap_slope():
+            assert convergence.converged()
+            break
+    assert convergence.converged()
+
+
+def test_mbar_convergence_slope_monotonic():
+    """Test that if the samples change by the slope each step, that the estimates are not considered converged"""
+    seed = 2025
+    n_estimates = 10
+    max_delta = 0.1
+    # Threshold should be exactly 1.0
+    slope_threshold = 1.0
+
+    rng = np.random.default_rng(seed)
+    initial_sample = rng.uniform(-100, 100)
+
+    # Verify that increasing or decreasing avoids this failure
+    for sign in [1, -1]:
+        convergence = MBARConvergence(n_estimates, max_delta, slope_threshold=slope_threshold)
+
+        max_slope = convergence.max_slope()
+        max_change = max_slope * initial_sample / n_estimates
+        samples = np.linspace(initial_sample, initial_sample + (sign * max_change), n_estimates)
+
+        # Make sure that the difference between samples is below the threshold
+        assert np.max(samples) - np.min(samples) < max_delta
+
+        for sample in samples:
+            convergence.add_estimate(sample)
+        assert not convergence.converged()
+        assert convergence.bootstrap_slope() >= max_slope
