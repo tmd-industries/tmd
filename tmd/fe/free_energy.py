@@ -805,7 +805,7 @@ def estimate_free_energy_bar(u_kln_by_component: NDArray, temperature: float, n_
 
     n_bootstrap: int
         Number of bootstrap iterations for Bar error estimation.
-        If n_bootstrap == 0, will return Bar uncertainity without bootstrapping.
+        If n_bootstrap == 0, will return Bar uncertainty without bootstrapping.
 
     Return
     ------
