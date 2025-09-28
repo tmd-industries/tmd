@@ -23,16 +23,16 @@ from numpy.typing import NDArray
 import tmd._vendored.pymbar as pymbar
 from tmd._vendored.pymbar.testsystems import ExponentialTestCase
 from tmd.fe.bar import (
-    DEFAULT_RELATIVE_TOLERANCE,
-    DEFAULT_SOLVER_PROTOCOL,
     DG_ERR_KEY,
     DG_KEY,
     bar,
     bar_with_pessimistic_uncertainty,
     bootstrap_bar,
     compute_fwd_and_reverse_df_over_time,
+    construct_mbar_from_u_kln,
     df_and_err_from_u_kln,
     df_from_u_kln,
+    pair_overlap_from_mbar,
     pair_overlap_from_ukln,
     ukln_to_ukn,
     works_from_ukln,
@@ -183,13 +183,8 @@ def test_df_from_u_kln_does_not_raise_on_incomplete_convergence():
 
     # pymbar raises an exception on incomplete convergence when computing covariances
     u_kn, N_k = ukln_to_ukn(u_kln)
-    mbar = pymbar.mbar.MBAR(
-        u_kn,
-        N_k,
-        maximum_iterations=1,
-        relative_tolerance=DEFAULT_RELATIVE_TOLERANCE,
-        solver_protocol=DEFAULT_SOLVER_PROTOCOL,
-    )
+    mbar = construct_mbar_from_u_kln(u_kln, maximum_iterations=1)
+
     with pytest.raises(pymbar.utils.ParameterError):
         _ = mbar.compute_free_energy_differences()
 
@@ -214,6 +209,10 @@ def test_pair_overlap_from_ukln():
     # identical distributions
     u_kln, _ = make_gaussian_ukln_example((0, 1), (0, 1))
     assert pair_overlap_from_ukln(u_kln) == pytest.approx(1.0)
+
+    # Verify that the two ways of computing pair overlap are identical
+    mbar = construct_mbar_from_u_kln(u_kln)
+    assert pair_overlap_from_ukln(u_kln) == pair_overlap_from_mbar(mbar)
 
     # non-overlapping
     u_kln, _ = make_gaussian_ukln_example((0, 0.01), (1, 0.01))
