@@ -18,7 +18,14 @@ Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 from rbfe_common import run_rbfe_leg
 
 from tmd.constants import DEFAULT_FF
-from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, WaterSamplingParams
+from tmd.fe.free_energy import (
+    EarlyTerminationParams,
+    HREXParams,
+    LocalMDParams,
+    MDParams,
+    RESTParams,
+    WaterSamplingParams,
+)
 from tmd.fe.rbfe import (
     DEFAULT_NUM_WINDOWS,
 )
@@ -82,6 +89,18 @@ def main():
         help="Number of steps to run with Local MD. Must be less than or equal to --steps_per_frame. If set to 0, no local MD is run",
     )
     parser.add_argument(
+        "--early_term_interval",
+        default=0,
+        type=int,
+        help="Interval to collect samples for early termination, if zero disables early termination",
+    )
+    parser.add_argument(
+        "--early_term_threshold",
+        default=0.25,
+        type=float,
+        help="Max difference in estimates before allowing termination",
+    )
+    parser.add_argument(
         "--store_trajectories",
         action="store_true",
         help="Store the trajectories of the edges. Can take up a large amount of space",
@@ -141,6 +160,11 @@ def main():
             hrex_params=HREXParams(
                 optimize_target_overlap=args.target_overlap,
                 rest_params=RESTParams(args.rest_max_temperature_scale, args.rest_temperature_scale_interpolation),
+                early_termination_params=EarlyTerminationParams(
+                    args.early_term_threshold, interval=args.early_term_interval
+                )
+                if args.early_term_interval > 0
+                else None,
             ),
             local_md_params=LocalMDParams(
                 args.local_md_steps,
