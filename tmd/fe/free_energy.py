@@ -29,8 +29,9 @@ from tmd.constants import BOLTZ
 from tmd.fe import model_utils, topology
 from tmd.fe.bar import (
     bar_with_pessimistic_uncertainty,
-    df_and_err_from_u_kln,
-    pair_overlap_from_ukln,
+    construct_mbar_from_u_kln,
+    df_and_err_from_mbar,
+    pair_overlap_from_mbar,
     works_from_ukln,
 )
 from tmd.fe.plots import (
@@ -827,20 +828,29 @@ def estimate_free_energy_bar(u_kln_by_component: NDArray, temperature: float, n_
 
     u_kln = u_kln_by_component.sum(0)
 
+    mbar = construct_mbar_from_u_kln(u_kln)
+
     if n_bootstrap > 0:
         df, df_err = bar_with_pessimistic_uncertainty(u_kln)  # reduced units
     else:
-        df, df_err = df_and_err_from_u_kln(u_kln)
+        df, df_err = df_and_err_from_mbar(mbar)
 
     kBT = BOLTZ * temperature
     dG, dG_err = df * kBT, df_err * kBT  # kJ/mol
 
-    overlap = pair_overlap_from_ukln(u_kln)
+    overlap = pair_overlap_from_mbar(mbar)
 
     # Componentwise calculations
-
     w_fwd_by_component, w_rev_by_component = jax.vmap(works_from_ukln)(u_kln_by_component)
-    dG_err_by_component = np.array([df_and_err_from_u_kln(u_kln)[1] * kBT for u_kln in u_kln_by_component])
+    dG_err_by_component_ = []
+    overlap_by_component_ = []
+    for u_kln in u_kln_by_component:
+        component_mbar = construct_mbar_from_u_kln(u_kln)
+        dG_err_by_component_.append(df_and_err_from_mbar(component_mbar)[1] * kBT)
+        overlap_by_component_.append(pair_overlap_from_mbar(component_mbar))
+
+    dG_err_by_component = np.array(dG_err_by_component_)
+    overlap_by_component = np.array(overlap_by_component_)
 
     # When forward and reverse works are identically zero (usually because a given energy term does not depend on
     # lambda, e.g. host-host nonbonded interactions), BAR error is undefined; we return 0.0 by convention.
@@ -849,8 +859,6 @@ def estimate_free_energy_bar(u_kln_by_component: NDArray, temperature: float, n_
         0.0,
         dG_err_by_component,
     )
-
-    overlap_by_component = np.array([pair_overlap_from_ukln(u_kln) for u_kln in u_kln_by_component])
 
     return BarResult(dG, dG_err, dG_err_by_component, overlap, overlap_by_component, u_kln_by_component)
 
