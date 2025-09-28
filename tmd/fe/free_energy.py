@@ -1402,7 +1402,9 @@ def generate_pair_bar_ulkns(
             for state_idx, p_us in zip(state_idxs, per_pot_us):
                 energies_by_frames_by_params[i, state_idx, j] = p_us
 
-    u_kln_by_component_by_lambda = np.empty((len(initial_states) - 1, len(unbound_impls), 2, 2, num_samples))
+    u_kln_by_component_by_lambda = np.empty(
+        (len(initial_states) - 1, len(unbound_impls), 2, 2, num_samples), dtype=np.float32
+    )
     for i, states in enumerate(zip(range(len(initial_states)), range(1, len(initial_states)))):
         assert len(states) == 2
         for j in range(len(unbound_impls)):
