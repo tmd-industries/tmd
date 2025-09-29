@@ -34,7 +34,6 @@ void __global__ k_harmonic_bond(const int B, // number of bonds
   while (b_idx < B) {
     int src_idx = bond_idxs[b_idx * 2 + 0];
     int dst_idx = bond_idxs[b_idx * 2 + 1];
-
     RealType dx[3];
     RealType d2ij = 0;
 #pragma unroll
