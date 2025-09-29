@@ -1105,8 +1105,8 @@ def plot_retrospective_comparison(
             ref_pred,
             0,  # No change in the experiment
             delta,
-            width=0.02,
-            head_width=0.08,
+            width=0.04,
+            head_width=0.12,
             color=color,
             length_includes_head=True,
             alpha=0.75,
