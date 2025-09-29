@@ -493,14 +493,9 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
             host_config.host_system.get_U_fns(), self.top, host_config.num_water_atoms, ff, host_config.omm_topology
         )
 
-        final_params = []
-        final_potentials = []
         combined_params, combined_potentials = self._get_system_params_and_potentials(ff_params, hgt, lamb)
-        for params, pot in zip(combined_params, combined_potentials):
-            final_params.append(params)
-            final_potentials.append(pot)
         combined_masses = self._combine(ligand_masses, np.array(host_config.masses))
-        return tuple(final_potentials), tuple(final_params), combined_masses
+        return combined_potentials, combined_params, combined_masses
 
     def prepare_vacuum_edge(self, ff: Forcefield) -> tuple[tuple[Potential, ...], tuple, NDArray]:
         """
@@ -519,8 +514,16 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
         """
         ff_params = ff.get_params()
         ligand_masses = get_mol_masses(self.mol)
-        final_params, final_potentials = self._get_system_params_and_potentials(ff_params, self.top, 0.0)
-        return final_potentials, final_params, ligand_masses
+        params, pots = self._get_system_params_and_potentials(ff_params, self.top, 0.0)
+        final_pots = []
+        final_params = []
+        for pot, param in zip(pots, params):
+            # Drop the Nonbonded potential in the vacuum case. Makes vacuum significantly slower than it needs to be
+            if isinstance(pot, Nonbonded):
+                continue
+            final_pots.append(pot)
+            final_params.append(param)
+        return tuple(final_pots), tuple(final_params), ligand_masses
 
     def prepare_combined_coords(self, host_coords: Optional[NDArray] = None) -> NDArray:
         """
