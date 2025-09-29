@@ -931,22 +931,22 @@ def plot_retrospective(
     exp_kcal : sequence of floats
         Experimental labels, expected to be in units of kcal
 
-    title: str
+    title : str
         Title for the plot
 
-    output_path: str | Path
+    output_path : str | Path
         Location to write out the plot to. Supports any format matplotlib does.
 
-    n_bootstrap: int
+    n_bootstrap : int
         The number of iterations of bootstrapping when generating confidence intervals for the statistics
 
-    is_relative: bool
+    is_relative : bool
         Whether the predictions and experimental values are absolute (ΔGs) or relative(ΔΔGs).
 
-    pred_label_prefix: str
+    pred_label_prefix : str
         Defaults to 'Pred'.
 
-    exp_label_prefix: str
+    exp_label_prefix : str
         Defaults to 'Exp'
 
     """
@@ -1006,6 +1006,161 @@ def plot_retrospective(
     ]
     for name, func in metrics.items():
         stats_text.append(f"{name} {func(pred_kcal_, exp_kcal_):.2f}, {get_ci_interval(func)}")
+    ax = plt.gca()
+    bbox = dict(
+        boxstyle="square",
+        facecolor="white",
+        edgecolor="black",
+    )
+    plt.text(
+        1.03, 0.6, "\n".join(stats_text), fontsize=9, bbox=bbox, transform=ax.transAxes, horizontalalignment="left"
+    )
+
+    plt.axline((min_axis, min_axis), slope=1, linestyle="--")
+    ax.set_aspect("equal", "box")
+    plt.savefig(str(output_path), bbox_inches="tight", dpi=150)
+    plt.clf()
+
+
+def plot_retrospective_comparison(
+    ref_pred_kcal: Sequence[float],
+    comp_pred_kcal: Sequence[float],
+    exp_kcal: Sequence[float],
+    title: str,
+    output_path: Path | str,
+    n_bootstrap: int = 10000,
+    is_relative: bool = False,
+    pred_label_prefix="Pred",
+    exp_label_prefix="Exp",
+    difference_threshold_kcal: float = 0.5,
+):
+    """Generate a plot comparing one set of predictions to another. Useful for investigating
+    protocol modifications. The statistics shown are of the comparison predictions.
+
+    Colors
+    ------
+    * red - Comparison prediction is worse and changed by more than difference_threshold_kcal
+    * green - Comparison prediction is better and changed by more than the difference_threshold_kcal
+    * gray - Comparison prediction changed less than difference_threshold_kcal
+
+    Parameters
+    ----------
+    ref_pred_kcal : sequence of floats
+        Reference predictions, expected to be in units of kcal
+
+    comp_pred_kcal : sequence of floats
+        Comparative predictions, expected to be in units of kcal
+
+    exp_kcal : sequence of floats
+        Experimental labels, expected to be in units of kcal
+
+    title : str
+        Title for the plot
+
+    output_path : str | Path
+        Location to write out the plot to. Supports any format matplotlib does.
+
+    n_bootstrap : int
+        The number of iterations of bootstrapping when generating confidence intervals for the statistics.
+
+    is_relative : bool
+        Whether the predictions and experimental values are absolute (ΔGs) or relative(ΔΔGs).
+
+    pred_label_prefix : str
+        Defaults to 'Pred'.
+
+    exp_label_prefix : str
+        Defaults to 'Exp'
+
+    difference_threshold_kcal : float
+        Difference in kcal for a prediction to be deemed significant, changes the coloring of the arrows.
+
+    """
+    assert len(ref_pred_kcal) == len(comp_pred_kcal) == len(exp_kcal), "Number of predictions and labels must match"
+    ref_pred_kcal_ = np.asarray(ref_pred_kcal)
+    comp_pred_kcal_ = np.asarray(comp_pred_kcal)
+    exp_kcal_ = np.asarray(exp_kcal)
+
+    assert len(ref_pred_kcal_) == len(comp_pred_kcal_) == len(exp_kcal_)
+
+    err_ref = exp_kcal_ - ref_pred_kcal
+    err_comp = exp_kcal_ - comp_pred_kcal_
+
+    for ref_pred, comp_pred, exp in zip(ref_pred_kcal_, comp_pred_kcal_, exp_kcal_):
+        err_ref = exp - ref_pred
+        err_comp = exp - comp_pred
+
+        delta = comp_pred - ref_pred
+
+        # Red if the comparison prediction got worse
+        color = "red"
+        if np.abs(delta) < difference_threshold_kcal:
+            # The change in error is insignificant
+            color = "gray"
+        elif np.abs(err_ref) > np.abs(err_comp) and np.abs(delta) > difference_threshold_kcal:
+            # The change in error is significantly worse
+            color = "green"
+        plt.arrow(
+            exp,
+            ref_pred,
+            0,  # No change in the experiment
+            delta,
+            width=0.02,
+            head_width=0.08,
+            color=color,
+            length_includes_head=True,
+            alpha=0.75,
+        )
+
+    prediction_type = "ΔG"
+    if is_relative:
+        prediction_type = "ΔΔG"
+    plt.xlabel(f"{exp_label_prefix.rstrip()} {prediction_type} (kcal/mol)")
+    plt.ylabel(f"{pred_label_prefix.rstrip()} {prediction_type} (kcal/mol)")
+
+    padding = 0.5
+    all_vals = np.concatenate([ref_pred_kcal_, comp_pred_kcal_, exp_kcal_])
+    min_axis = np.min(all_vals)
+    max_axis = np.max(all_vals)
+    start = min_axis - padding
+    end = max_axis + padding
+    plt.ylim(start, end)
+    plt.xlim(start, end)
+
+    # Add bands at 1 and 2 kcal
+    for offset in [1, 2]:
+        plt.fill_between(
+            [start, end], [start - offset, end - offset], [start + offset, end + offset], alpha=0.2, color="gray"
+        )
+
+    plt.title(title)
+
+    metrics = {
+        "MUE": mean_unsigned_error,
+        "RMSE": root_mean_square_error,
+    }
+    if not is_relative:
+        metrics.update(
+            {
+                "$R^2$": r_squared,
+                r"Kendall $\tau$": kendall_tau,
+                r"Spearman $\rho$": spearman_rho,
+            }
+        )
+
+    ci_bounds = [0.025, 0.975]
+
+    def get_ci_interval(statistic) -> str:
+        bootstraped_stats = bootstrap_statistic(comp_pred_kcal_, exp_kcal_, statistic, n_bootstrap=n_bootstrap)
+        lower_bound, upper_bound = np.quantile(bootstraped_stats, ci_bounds)
+        return f"[{lower_bound:.2f}, {upper_bound:.2f}]"
+
+    stats_text = [
+        f"N={len(exp_kcal_)}",
+        "Statistic, Value, 95% CI",
+    ]
+    for name, func in metrics.items():
+        stats_text.append(f"{name} {func(comp_pred_kcal_, exp_kcal_):.2f}, {get_ci_interval(func)}")
     ax = plt.gca()
     bbox = dict(
         boxstyle="square",
