@@ -373,11 +373,11 @@ class BaseTopology:
 
     def parameterize_proper_torsion(self, ff_params):
         params, idxs = self.ff.pt_handle.partial_parameterize(ff_params, self.mol)
-        return params, potentials.PeriodicTorsion(idxs)
+        return params, potentials.PeriodicTorsion(self.mol.GetNumAtoms(), idxs)
 
     def parameterize_improper_torsion(self, ff_params):
         params, idxs = self.ff.it_handle.partial_parameterize(ff_params, self.mol)
-        return params, potentials.PeriodicTorsion(idxs)
+        return params, potentials.PeriodicTorsion(self.mol.GetNumAtoms(), idxs)
 
     def setup_chiral_restraints(self, chiral_atom_restraint_k, chiral_bond_restraint_k):
         """

@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -527,6 +528,7 @@ def setup_end_state(
 
     """
 
+    num_atoms = mol_a.GetNumAtoms() + mol_b.GetNumAtoms() - len(core)
     all_dummy_angle_idxs_, all_dummy_angle_params_ = [], []
     all_dummy_improper_idxs_, all_dummy_improper_params_ = [], []
     for anchor, (nbr, dg) in anchored_dummy_groups.items():
@@ -581,7 +583,7 @@ def setup_end_state(
 
     mol_c_proper_idxs = np.array([canonicalize_bond(idxs) for idxs in mol_a_proper_idxs], dtype=np.int32)
     mol_c_proper_params = mol_a_proper_params
-    proper_potential = PeriodicTorsion(mol_c_proper_idxs.reshape(-1, 4)).bind(
+    proper_potential = PeriodicTorsion(num_atoms, mol_c_proper_idxs.reshape(-1, 4)).bind(
         np.array(mol_c_proper_params.reshape(-1, 3), dtype=np.float64)
     )
 
@@ -591,7 +593,7 @@ def setup_end_state(
     mol_c_improper_idxs = np.array(
         [canonicalize_improper_idxs(idxs) for idxs in mol_c_improper_idxs], np.int32
     ).reshape(-1, 4)
-    improper_potential = PeriodicTorsion(mol_c_improper_idxs).bind(
+    improper_potential = PeriodicTorsion(num_atoms, mol_c_improper_idxs).bind(
         np.array(mol_c_improper_params.reshape(-1, 3), dtype=np.float64)
     )
 
@@ -694,8 +696,6 @@ def setup_end_state(
                 f"Chiral Volume {int(c), int(i), int(j), int(k)} has disabled bonds {missing_bonds}, turning off.",
                 ChiralVolumeDisabledWarning,
             )
-
-    num_atoms = mol_a.GetNumAtoms() + mol_b.GetNumAtoms() - len(core)
 
     all_proper_dummy_chiral_atom_idxs = np.array(all_proper_dummy_chiral_atom_idxs_, np.int32).reshape(-1, 4)
     all_proper_dummy_chiral_atom_params = np.array(all_proper_dummy_chiral_atom_params_, np.float64)
@@ -1280,7 +1280,7 @@ class AlignedTorsion(AlignedPotential):
             self.src_params, self.dst_params, lamb, self.mins, self.maxes
         )
         params = jnp.array(params).T
-        return PeriodicTorsion(self.idxs).bind(params)
+        return PeriodicTorsion(self.num_atoms, self.idxs).bind(params)
 
 
 class AlignedChiralAtom(AlignedPotential):
@@ -2094,13 +2094,13 @@ class SingleTopology(AtomMapMixin):
             [host_system.proper.potential.idxs, guest_system.proper.potential.idxs + num_host_atoms]
         )
         combined_proper_params = jnp.concatenate([host_system.proper.params, guest_system.proper.params])
-        combined_proper = PeriodicTorsion(combined_proper_idxs).bind(combined_proper_params)
+        combined_proper = PeriodicTorsion(N, combined_proper_idxs).bind(combined_proper_params)
 
         combined_improper_idxs = np.concatenate(
             [host_system.improper.potential.idxs, guest_system.improper.potential.idxs + num_host_atoms]
         )
         combined_improper_params = jnp.concatenate([host_system.improper.params, guest_system.improper.params])
-        combined_improper = PeriodicTorsion(combined_improper_idxs).bind(combined_improper_params)
+        combined_improper = PeriodicTorsion(N, combined_improper_idxs).bind(combined_improper_params)
 
         host_nonbonded_all_pairs = self._parameterize_host_guest_nonbonded_ixn(host_system.nonbonded_all_pairs, lamb)
 

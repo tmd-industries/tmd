@@ -64,14 +64,15 @@
 namespace py = pybind11;
 using namespace tmd;
 
-void verify_bond_idxs(const py::array_t<int, py::array::c_style> &bond_idxs) {
+void verify_bond_idxs(const py::array_t<int, py::array::c_style> &bond_idxs,
+                      const int idxs_per_bond) {
   size_t bond_dims = bond_idxs.ndim();
   if (bond_dims != 2) {
     throw std::runtime_error("bond idxs dimensions must be 2");
   }
-  if (bond_idxs.shape(bond_dims - 1) != 2) {
-    throw std::runtime_error(
-        "bond idxs must have a shape that is 2 dimensional");
+  if (bond_idxs.shape(bond_dims - 1) != idxs_per_bond) {
+    throw std::runtime_error("bonds must be made of up " +
+                             std::to_string(idxs_per_bond) + " idxs");
   }
 }
 
@@ -2159,7 +2160,7 @@ void declare_harmonic_bond(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const int num_atoms,
                        const py::array_t<int, py::array::c_style> &bond_idxs) {
-             verify_bond_idxs(bond_idxs);
+             verify_bond_idxs(bond_idxs, 2);
              // Create a vector with all zeros
              std::vector<int> bond_system_idxs(bond_idxs.shape(0), 0);
              const int num_batches = 1;
@@ -2176,7 +2177,7 @@ void declare_harmonic_bond(py::module &m, const char *typestr) {
              std::vector<int> bond_system_idxs;
              int offset = 0;
              for (int i = 0; i < num_batches; i++) {
-               verify_bond_idxs(bond_idxs[i]);
+               verify_bond_idxs(bond_idxs[i], 2);
                const unsigned long bond_arr_size = bond_idxs[i].size();
                combined_bond_vec.resize(combined_bond_vec.size() +
                                         bond_arr_size);
@@ -2329,12 +2330,44 @@ void declare_periodic_torsion(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init(
-               [](const py::array_t<int, py::array::c_style> &torsion_idxs) {
+               [](const int num_atoms,
+                  const py::array_t<int, py::array::c_style> &torsion_idxs) {
+                 verify_bond_idxs(torsion_idxs, 4);
+                 // Create a vector with all zeros
+                 std::vector<int> system_idxs(torsion_idxs.shape(0), 0);
                  std::vector<int> vec_torsion_idxs =
                      py_array_to_vector(torsion_idxs);
-                 return new PeriodicTorsion<RealType>(vec_torsion_idxs);
+
+                 const int num_batches = 1;
+                 return new PeriodicTorsion<RealType>(
+                     num_batches, num_atoms, vec_torsion_idxs, system_idxs);
                }),
-           py::arg("torsion_idxs"))
+           py::arg("num_atoms"), py::arg("torsion_idxs"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &torsion_idxs) {
+             const int num_batches = torsion_idxs.size();
+             std::vector<int> combined_torsion_vec;
+             std::vector<int> system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_batches; i++) {
+               verify_bond_idxs(torsion_idxs[i], 4);
+               const unsigned long bond_arr_size = torsion_idxs[i].size();
+               combined_torsion_vec.resize(combined_torsion_vec.size() +
+                                           bond_arr_size);
+               std::memcpy(combined_torsion_vec.data() + offset,
+                           torsion_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               system_idxs.resize(system_idxs.size() +
+                                  torsion_idxs[i].shape(0));
+               std::fill(system_idxs.end() - torsion_idxs[i].shape(0),
+                         system_idxs.end(), i);
+             }
+             return new PeriodicTorsion<RealType>(
+                 num_batches, num_atoms, combined_torsion_vec, system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("torsion_idxs"))
       .def("get_idxs", [](Class &pot) -> py::array_t<int, py::array::c_style> {
         std::vector<int> output_idxs = pot.get_idxs_host();
         py::array_t<int, py::array::c_style> out_idx_buffer(

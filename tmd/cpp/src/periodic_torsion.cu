@@ -25,10 +25,13 @@ namespace tmd {
 
 template <typename RealType>
 PeriodicTorsion<RealType>::PeriodicTorsion(
-    const std::vector<int> &torsion_idxs // [A, 4]
+    const int num_batches, const int num_atoms,
+    const std::vector<int> &torsion_idxs, // [A, 4]
+    const std::vector<int> &system_idxs   // [A]
     )
-    : max_idxs_(torsion_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      nrg_accum_(1, cur_num_idxs_),
+    : num_batches_(num_batches), num_atoms_(num_atoms),
+      max_idxs_(torsion_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
+      nrg_accum_(num_batches_, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -45,6 +48,12 @@ PeriodicTorsion<RealType>::PeriodicTorsion(
   if (torsion_idxs.size() % IDXS_DIM != 0) {
     throw std::runtime_error("torsion_idxs.size() must be exactly " +
                              std::to_string(IDXS_DIM) + "*k");
+  }
+  if (system_idxs.size() != max_idxs_) {
+    throw std::runtime_error("system_idxs.size() != (torsion_idxs.size() / " +
+                             std::to_string(IDXS_DIM) + "), got " +
+                             std::to_string(system_idxs.size()) + " and " +
+                             std::to_string(max_idxs_));
   }
 
   for (int a = 0; a < cur_num_idxs_; a++) {
@@ -64,11 +73,17 @@ PeriodicTorsion<RealType>::PeriodicTorsion(
                        cudaMemcpyHostToDevice));
 
   cudaSafeMalloc(&d_u_buffer_, cur_num_idxs_ * sizeof(*d_u_buffer_));
+
+  cudaSafeMalloc(&d_system_idxs_, cur_num_idxs_ * sizeof(*d_system_idxs_));
+  gpuErrchk(cudaMemcpy(d_system_idxs_, &system_idxs[0],
+                       cur_num_idxs_ * sizeof(*d_system_idxs_),
+                       cudaMemcpyHostToDevice));
 };
 
 template <typename RealType> PeriodicTorsion<RealType>::~PeriodicTorsion() {
   gpuErrchk(cudaFree(d_torsion_idxs_));
   gpuErrchk(cudaFree(d_u_buffer_));
+  gpuErrchk(cudaFree(d_system_idxs_));
 };
 
 template <typename RealType>
@@ -77,7 +92,6 @@ void PeriodicTorsion<RealType>::execute_device(
     const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
-  assert(batches == 1);
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
   const int blocks = ceil_divide(cur_num_idxs_, tpb);
 
@@ -95,13 +109,15 @@ void PeriodicTorsion<RealType>::execute_device(
     kernel_idx |= d_u ? 1 << 2 : 0;
 
     kernel_ptrs_[kernel_idx]<<<blocks, tpb, 0, stream>>>(
-        cur_num_idxs_, d_x, d_box, d_p, d_torsion_idxs_, d_du_dx, d_du_dp,
+        num_atoms_, cur_num_idxs_, d_x, d_box, d_p, d_torsion_idxs_,
+        d_system_idxs_, d_du_dx, d_du_dp,
         d_u == nullptr ? nullptr : d_u_buffer_);
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
       // nullptr for the d_system_idxs as batch size is fixed to 1
-      nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, nullptr, d_u, stream);
+      nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, d_system_idxs_, d_u,
+                            stream);
     }
   }
 };
@@ -134,6 +150,10 @@ template <typename RealType> int *PeriodicTorsion<RealType>::get_idxs_device() {
 template <typename RealType>
 std::vector<int> PeriodicTorsion<RealType>::get_idxs_host() const {
   return device_array_to_vector<int>(cur_num_idxs_ * IDXS_DIM, d_torsion_idxs_);
+}
+
+template <typename RealType> int PeriodicTorsion<RealType>::batch_size() const {
+  return num_batches_;
 }
 
 template class PeriodicTorsion<double>;

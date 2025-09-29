@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,7 +30,7 @@ def test_get_potential_by_type():
     with pytest.raises(ValueError, match="Unable to find potential of type"):
         get_potential_by_type(pots, HarmonicBond)
 
-    pots.append(HarmonicBond(idxs=np.array([[0, 1]], dtype=np.int32)))
+    pots.append(HarmonicBond(2, idxs=np.array([[0, 1]], dtype=np.int32)))
     bonded = get_potential_by_type(pots, HarmonicBond)
     assert isinstance(bonded, Potential)
     assert isinstance(bonded, HarmonicBond)
@@ -48,7 +49,9 @@ def test_get_bound_potential_by_type():
         get_bound_potential_by_type(bps, HarmonicBond)
 
     bps.append(
-        BoundPotential(potential=HarmonicBond(idxs=np.array([[0, 1]], dtype=np.int32)), params=np.array([[0.0, 0.0]]))
+        BoundPotential(
+            potential=HarmonicBond(2, idxs=np.array([[0, 1]], dtype=np.int32)), params=np.array([[0.0, 0.0]])
+        )
     )
 
     bonded = get_bound_potential_by_type(bps, HarmonicBond)

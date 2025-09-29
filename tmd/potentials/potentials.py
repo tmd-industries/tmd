@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -100,6 +101,7 @@ class LogFlatBottomBond(Potential):
 
 @dataclass
 class PeriodicTorsion(Potential):
+    num_atoms: int
     idxs: NDArray[np.int32]
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
