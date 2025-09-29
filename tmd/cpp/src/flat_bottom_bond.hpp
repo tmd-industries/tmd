@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include "energy_accum.hpp"
 #include "potential.hpp"
 #include <array>
 #include <vector>
@@ -36,8 +37,7 @@ private:
   int *d_bond_idxs_;
   __int128 *d_u_buffer_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
   std::array<k_flat_bond_fn, 8> kernel_ptrs_;
 

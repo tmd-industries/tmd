@@ -16,6 +16,7 @@
 #pragma once
 
 #include "device_buffer.hpp"
+#include "energy_accum.hpp"
 #include "potential.hpp"
 #include "stream_manager.hpp"
 #include <memory>
@@ -34,8 +35,7 @@ private:
   DeviceBuffer<__int128> d_u_buffer_;
   StreamManager manager_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
 public:
   SummedPotential(

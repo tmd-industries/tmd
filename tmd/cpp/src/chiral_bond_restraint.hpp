@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +15,7 @@
 
 #pragma once
 
+#include "energy_accum.hpp"
 #include "potential.hpp"
 #include <array>
 #include <vector>
@@ -36,8 +38,7 @@ private:
   int *d_signs_;
   __int128 *d_u_buffer_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
   std::array<k_chiral_bond_fn, 8> kernel_ptrs_;
 

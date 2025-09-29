@@ -19,14 +19,13 @@
 #include "k_chiral_restraint.cuh"
 #include "kernel_utils.cuh"
 #include "math_utils.cuh"
-#include <cub/cub.cuh>
 #include <vector>
 
 namespace tmd {
 
 template <typename RealType>
 ChiralAtomRestraint<RealType>::ChiralAtomRestraint(const std::vector<int> &idxs)
-    : R_(idxs.size() / 4), sum_storage_bytes_(0),
+    : R_(idxs.size() / 4), nrg_accum_(1, R_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -49,18 +48,12 @@ ChiralAtomRestraint<RealType>::ChiralAtomRestraint(const std::vector<int> &idxs)
                        cudaMemcpyHostToDevice));
 
   cudaSafeMalloc(&d_u_buffer_, R_ * sizeof(*d_u_buffer_));
-
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_, d_u_buffer_,
-                                   d_u_buffer_, R_));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
 };
 
 template <typename RealType>
 ChiralAtomRestraint<RealType>::~ChiralAtomRestraint() {
   gpuErrchk(cudaFree(d_idxs_));
   gpuErrchk(cudaFree(d_u_buffer_));
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
 };
 
 template <typename RealType>
@@ -91,8 +84,8 @@ void ChiralAtomRestraint<RealType>::execute_device(
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                       d_u_buffer_, d_u, R_, stream));
+      // nullptr for the d_system_idxs as batch size is fixed to 1
+      nrg_accum_.sum_device(R_, d_u_buffer_, nullptr, d_u, stream);
     }
   }
 };

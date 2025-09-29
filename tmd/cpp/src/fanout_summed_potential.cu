@@ -17,7 +17,6 @@
 #include "fanout_summed_potential.hpp"
 #include "gpu_utils.cuh"
 #include "nonbonded_common.hpp"
-#include <cub/cub.cuh>
 #include <memory>
 
 namespace tmd {
@@ -27,19 +26,10 @@ FanoutSummedPotential<RealType>::FanoutSummedPotential(
     const std::vector<std::shared_ptr<Potential<RealType>>> potentials,
     const bool parallel)
     : potentials_(potentials), parallel_(parallel),
-      d_u_buffer_(potentials_.size()), sum_storage_bytes_(0) {
-
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_,
-                                   d_u_buffer_.data, d_u_buffer_.data,
-                                   potentials_.size()));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
-};
+      d_u_buffer_(potentials_.size()), nrg_accum_(1, potentials_.size()){};
 
 template <typename RealType>
-FanoutSummedPotential<RealType>::~FanoutSummedPotential() {
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
-};
+FanoutSummedPotential<RealType>::~FanoutSummedPotential(){};
 
 template <typename RealType>
 const std::vector<std::shared_ptr<Potential<RealType>>> &
@@ -82,9 +72,9 @@ void FanoutSummedPotential<RealType>::execute_device(
     }
   }
   if (d_u) {
-    gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                     d_u_buffer_.data, d_u, potentials_.size(),
-                                     stream));
+    // nullptr for the d_system_idxs as batch size is fixed to 1
+    nrg_accum_.sum_device(potentials_.size(), d_u_buffer_.data, nullptr, d_u,
+                          stream);
   }
 };
 

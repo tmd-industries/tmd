@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include "energy_accum.hpp"
 #include "hilbert_sort.hpp"
 #include "neighborlist.hpp"
 #include "nonbonded_common.hpp"
@@ -53,8 +54,7 @@ private:
   const NonbondedInteractionType interaction_type_;
   bool compute_col_grads_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
   std::array<k_nonbonded_fn, 32> kernel_ptrs_;
 

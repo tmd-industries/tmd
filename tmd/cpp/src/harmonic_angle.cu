@@ -19,7 +19,6 @@
 #include "k_harmonic_angle.cuh"
 #include "kernel_utils.cuh"
 #include "math_utils.cuh"
-#include <cub/cub.cuh>
 #include <vector>
 
 namespace tmd {
@@ -29,7 +28,7 @@ HarmonicAngle<RealType>::HarmonicAngle(
     const std::vector<int> &angle_idxs // [A, 3]
     )
     : max_idxs_(angle_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      sum_storage_bytes_(0),
+      nrg_accum_(1, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -63,17 +62,11 @@ HarmonicAngle<RealType>::HarmonicAngle(
                        cur_num_idxs_ * IDXS_DIM * sizeof(*d_angle_idxs_),
                        cudaMemcpyHostToDevice));
   cudaSafeMalloc(&d_u_buffer_, cur_num_idxs_ * sizeof(*d_u_buffer_));
-
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_, d_u_buffer_,
-                                   d_u_buffer_, cur_num_idxs_));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
 };
 
 template <typename RealType> HarmonicAngle<RealType>::~HarmonicAngle() {
   gpuErrchk(cudaFree(d_angle_idxs_));
   gpuErrchk(cudaFree(d_u_buffer_));
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
 };
 
 template <typename RealType>
@@ -104,9 +97,8 @@ void HarmonicAngle<RealType>::execute_device(
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                       d_u_buffer_, d_u, cur_num_idxs_,
-                                       stream));
+      // nullptr for the d_system_idxs as batch size is fixed to 1
+      nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, nullptr, d_u, stream);
     }
   }
 }

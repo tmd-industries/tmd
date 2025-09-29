@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,12 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "assert.h"
 #include "chiral_bond_restraint.hpp"
 #include "gpu_utils.cuh"
 #include "k_chiral_restraint.cuh"
 #include "kernel_utils.cuh"
 #include "math_utils.cuh"
-#include <cub/cub.cuh>
 #include <vector>
 
 namespace tmd {
@@ -25,7 +26,7 @@ namespace tmd {
 template <typename RealType>
 ChiralBondRestraint<RealType>::ChiralBondRestraint(
     const std::vector<int> &idxs, const std::vector<int> &signs)
-    : R_(idxs.size() / 4), sum_storage_bytes_(0),
+    : R_(idxs.size() / 4), nrg_accum_(1, R_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -63,11 +64,6 @@ ChiralBondRestraint<RealType>::ChiralBondRestraint(
                        cudaMemcpyHostToDevice));
 
   cudaSafeMalloc(&d_u_buffer_, R_ * sizeof(*d_u_buffer_));
-
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_, d_u_buffer_,
-                                   d_u_buffer_, R_));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
 };
 
 template <typename RealType>
@@ -75,7 +71,6 @@ ChiralBondRestraint<RealType>::~ChiralBondRestraint() {
   gpuErrchk(cudaFree(d_idxs_));
   gpuErrchk(cudaFree(d_signs_));
   gpuErrchk(cudaFree(d_u_buffer_));
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
 };
 
 template <typename RealType>
@@ -106,8 +101,8 @@ void ChiralBondRestraint<RealType>::execute_device(
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                       d_u_buffer_, d_u, R_, stream));
+      // nullptr for the d_system_idxs as batch size is fixed to 1
+      nrg_accum_.sum_device(R_, d_u_buffer_, nullptr, d_u, stream);
     }
   }
 };

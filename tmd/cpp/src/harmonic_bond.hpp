@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include "energy_accum.hpp"
 #include "potential.hpp"
 #include <array>
 #include <vector>
@@ -41,14 +42,10 @@ private:
 
   int *d_bond_idxs_;
   int *d_bond_system_idxs_; // Which system idx each bond is associated with
-  int *d_system_offsets_;   // Number of atoms in each system
 
-  int *d_system_idxs_unique_; // This should end up being len(num_systems)
-  int *d_reductions_out_;
   __int128 *d_u_buffer_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
   std::array<k_bonded_fn, 8> kernel_ptrs_;
 

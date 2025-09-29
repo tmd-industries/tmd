@@ -28,7 +28,7 @@ namespace tmd {
 template <typename RealType>
 NonbondedPairListPrecomputed<RealType>::NonbondedPairListPrecomputed(
     const std::vector<int> &idxs, const RealType beta, const RealType cutoff)
-    : B_(idxs.size() / 2), beta_(beta), cutoff_(cutoff), sum_storage_bytes_(0),
+    : B_(idxs.size() / 2), beta_(beta), cutoff_(cutoff), nrg_accum_(1, B_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -61,18 +61,12 @@ NonbondedPairListPrecomputed<RealType>::NonbondedPairListPrecomputed(
                        cudaMemcpyHostToDevice));
 
   cudaSafeMalloc(&d_u_buffer_, B_ * sizeof(*d_u_buffer_));
-
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_, d_u_buffer_,
-                                   d_u_buffer_, B_));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
 };
 
 template <typename RealType>
 NonbondedPairListPrecomputed<RealType>::~NonbondedPairListPrecomputed() {
   gpuErrchk(cudaFree(d_idxs_));
   gpuErrchk(cudaFree(d_u_buffer_));
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
 };
 
 template <typename RealType>
@@ -105,8 +99,8 @@ void NonbondedPairListPrecomputed<RealType>::execute_device(
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                       d_u_buffer_, d_u, B_, stream));
+      // nullptr for the d_system_idxs as batch size is fixed to 1
+      nrg_accum_.sum_device(B_, d_u_buffer_, nullptr, d_u, stream);
     }
   }
 };
