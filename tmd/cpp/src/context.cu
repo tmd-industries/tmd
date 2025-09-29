@@ -52,6 +52,11 @@ Context<RealType>::Context(
 
   std::vector<std::shared_ptr<Potential<RealType>>> pots;
   for (auto bp : bps_) {
+    // Defensive, should be removed later in favor of ensuring all batch sizes
+    // are identical
+    if (bp->potential->batch_size() != 1) {
+      throw std::runtime_error("Batch sizes of all potentials must be 1");
+    }
     pots.push_back(bp->potential);
   }
   // A no-op if running in vacuum or there are no NonbondedInteractionGroup
