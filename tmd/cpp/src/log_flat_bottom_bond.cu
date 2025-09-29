@@ -25,7 +25,7 @@ namespace tmd {
 
 template <typename RealType>
 LogFlatBottomBond<RealType>::LogFlatBottomBond(
-    const std::vector<int> &bond_idxs, RealType beta)
+    const int num_atoms, const std::vector<int> &bond_idxs, RealType beta)
     : max_idxs_(bond_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
       beta_(beta), nrg_accum_(1, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination

@@ -26,7 +26,7 @@ def test_get_potential_by_type():
     with pytest.raises(ValueError, match="Unable to find potential of type"):
         get_potential_by_type([], HarmonicBond)
 
-    pots = [HarmonicAngle(idxs=np.array([[0, 1, 2]], dtype=np.int32))]
+    pots = [HarmonicAngle(3, idxs=np.array([[0, 1, 2]], dtype=np.int32))]
     with pytest.raises(ValueError, match="Unable to find potential of type"):
         get_potential_by_type(pots, HarmonicBond)
 
@@ -42,7 +42,7 @@ def test_get_bound_potential_by_type():
 
     bps = [
         BoundPotential(
-            potential=HarmonicAngle(idxs=np.array([[0, 1, 2]], dtype=np.int32)), params=np.array([[0.0, 0.0]])
+            potential=HarmonicAngle(3, idxs=np.array([[0, 1, 2]], dtype=np.int32)), params=np.array([[0.0, 0.0]])
         )
     ]
     with pytest.raises(ValueError, match="Unable to find potential of type"):

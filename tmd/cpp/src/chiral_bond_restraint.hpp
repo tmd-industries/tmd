@@ -43,7 +43,8 @@ private:
   std::array<k_chiral_bond_fn, 8> kernel_ptrs_;
 
 public:
-  ChiralBondRestraint(const std::vector<int> &idxs, // [R, 4]
+  ChiralBondRestraint(const int num_atoms,
+                      const std::vector<int> &idxs, // [R, 4]
                       const std::vector<int> &signs // [R]
   );
 

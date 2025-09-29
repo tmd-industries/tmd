@@ -196,7 +196,7 @@ def test_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     # Shift half of the bond indices by a single box dimension to ensure testing PBCs
     x[bond_idxs[:, 1][: n_bonds // 2]] += np.diagonal(box)
 
-    potential = FlatBottomBond(bond_idxs)
+    potential = FlatBottomBond(n_particles, bond_idxs)
     test_impl = potential.to_gpu(precision)
 
     x = x.astype(precision)
@@ -207,8 +207,8 @@ def test_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     GradientTest().assert_differentiable_interface_consistency(x, params, box, test_impl)
 
     # test bitwise commutativity
-    test_potential = FlatBottomBond(bond_idxs)
-    test_potential_rev = FlatBottomBond(bond_idxs[:, ::-1])
+    test_potential = FlatBottomBond(n_particles, bond_idxs)
+    test_potential_rev = FlatBottomBond(n_particles, bond_idxs[:, ::-1])
 
     test_potential_impl = test_potential.to_gpu(precision).unbound_impl
     test_potential_rev_impl = test_potential_rev.to_gpu(precision).unbound_impl
@@ -254,14 +254,14 @@ def test_log_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3
     params = params.astype(precision)
     box = box.astype(precision)
 
-    potential = LogFlatBottomBond(bond_idxs, beta)
+    potential = LogFlatBottomBond(n_particles, bond_idxs, beta)
     test_impl = potential.to_gpu(precision)
     GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
     GradientTest().assert_differentiable_interface_consistency(x, params, box, test_impl)
 
     # test bitwise commutativity
-    test_potential = LogFlatBottomBond(bond_idxs, beta)
-    test_potential_rev = LogFlatBottomBond(bond_idxs[:, ::-1], beta)
+    test_potential = LogFlatBottomBond(n_particles, bond_idxs, beta)
+    test_potential_rev = LogFlatBottomBond(n_particles, bond_idxs[:, ::-1], beta)
 
     test_potential_impl = test_potential.to_gpu(precision).unbound_impl
     test_potential_rev_impl = test_potential_rev.to_gpu(precision).unbound_impl
@@ -346,7 +346,7 @@ def test_harmonic_angle(precision, rtol, n_particles=64, n_angles=25, dim=3):
 
     # specific to harmonic angle force
 
-    potential = HarmonicAngle(angle_idxs)
+    potential = HarmonicAngle(n_particles, angle_idxs)
 
     x = x.astype(precision)
     params = params.astype(precision)
@@ -361,8 +361,8 @@ def test_harmonic_angle(precision, rtol, n_particles=64, n_angles=25, dim=3):
     # even the angle computation itself is not guaranteed to be identical (let alone energies and forces).
     # this isn't a deal breaker, but was just a nice to have.
 
-    test_potential = HarmonicAngle(angle_idxs)
-    test_potential_rev = HarmonicAngle(angle_idxs[:, ::-1])
+    test_potential = HarmonicAngle(n_particles, angle_idxs)
+    test_potential_rev = HarmonicAngle(n_particles, angle_idxs[:, ::-1])
 
     test_potential_impl = test_potential.to_gpu(precision).unbound_impl
     test_potential_rev_impl = test_potential_rev.to_gpu(precision).unbound_impl
@@ -466,14 +466,14 @@ def test_chiral_atom_restraint(precision, rtol, n_particles=64, n_restraints=35,
     params = params.astype(precision)
     box = box.astype(precision)
 
-    potential = ChiralAtomRestraint(restr_idxs)
+    potential = ChiralAtomRestraint(n_particles, restr_idxs)
     test_impl = potential.to_gpu(precision)
     GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match=r"idxs.size\(\) must be exactly 4\*k!"):
         # wrong length
         bad_idxs = np.array([[0, 1, 2, 3, 4], [4, 4, 3, 2, 1]], dtype=np.int32)
-        bad_potential = ChiralAtomRestraint(bad_idxs)
+        bad_potential = ChiralAtomRestraint(n_particles, bad_idxs)
         bad_potential.to_gpu(precision)
 
 
@@ -496,7 +496,7 @@ def test_chiral_bond_restraint(precision, rtol, n_particles=64, n_restraints=35,
 
     box = np.eye(3) * 10
 
-    potential = ChiralBondRestraint(restr_idxs, signs)
+    potential = ChiralBondRestraint(n_particles, restr_idxs, signs)
 
     x = x.astype(precision)
     params = params.astype(precision)
@@ -504,16 +504,16 @@ def test_chiral_bond_restraint(precision, rtol, n_particles=64, n_restraints=35,
 
     GradientTest().compare_forces(x, params, box, potential, potential.to_gpu(precision), rtol)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match=r"idxs.size\(\) must be exactly 4\*R!"):
         # wrong length idxs
         bad_idxs = np.array([[0, 1, 2, 3, 4], [4, 4, 3, 2, 1]], dtype=np.int32)
         bad_signs = np.array([1, -1], dtype=np.int32)
-        bad_potential = ChiralBondRestraint(bad_idxs, bad_signs)
+        bad_potential = ChiralBondRestraint(n_particles, bad_idxs, bad_signs)
         bad_potential.to_gpu(precision).unbound_impl
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match=r"signs.size\(\) must be exactly R!"):
         # inconsistent lengths between idxs and signs
         bad_idxs = np.array([[0, 1, 2, 3], [4, 5, 3, 2]], dtype=np.int32)
         bad_signs = np.array([1, -1, 1], dtype=np.int32)
-        bad_potential = ChiralBondRestraint(bad_idxs, bad_signs)
+        bad_potential = ChiralBondRestraint(n_particles, bad_idxs, bad_signs)
         bad_potential.to_gpu(precision).unbound_impl

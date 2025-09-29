@@ -27,7 +27,8 @@ namespace tmd {
 
 template <typename RealType>
 NonbondedPairListPrecomputed<RealType>::NonbondedPairListPrecomputed(
-    const std::vector<int> &idxs, const RealType beta, const RealType cutoff)
+    const int num_atoms, const std::vector<int> &idxs, const RealType beta,
+    const RealType cutoff)
     : B_(idxs.size() / 2), beta_(beta), cutoff_(cutoff), nrg_accum_(1, B_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U

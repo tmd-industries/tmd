@@ -47,7 +47,8 @@ private:
 public:
   static const int IDXS_DIM = 2;
 
-  LogFlatBottomBond(const std::vector<int> &bond_idxs, RealType beta); // [B, 2]
+  LogFlatBottomBond(const int num_atoms, const std::vector<int> &bond_idxs,
+                    RealType beta); // [B, 2]
 
   ~LogFlatBottomBond();
 

@@ -45,7 +45,7 @@ private:
 public:
   static const int IDXS_DIM = 3;
 
-  HarmonicAngle(const std::vector<int> &angle_idxs);
+  HarmonicAngle(const int num_atoms, const std::vector<int> &angle_idxs);
 
   ~HarmonicAngle();
 

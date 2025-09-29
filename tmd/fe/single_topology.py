@@ -600,7 +600,7 @@ def setup_end_state(
     # canonicalize angles
     mol_c_angle_idxs_canon = np.array([canonicalize_bond(idxs) for idxs in mol_c_angle_idxs], dtype=np.int32)
     # Set the stable angle epsilon values to zero
-    angle_potential = HarmonicAngle(mol_c_angle_idxs_canon).bind(mol_c_angle_params)
+    angle_potential = HarmonicAngle(num_atoms, mol_c_angle_idxs_canon).bind(mol_c_angle_params)
 
     # dummy atoms do not have any nonbonded interactions, so we simply turn them off
     mol_c_nbpl_idxs_canon = np.array([canonicalize_bond(idxs) for idxs in mol_a_nbpl_idxs], dtype=np.int32)
@@ -714,8 +714,8 @@ def setup_end_state(
     mol_c_chiral_bond_idxs = canonicalize_bonds(mol_a_chiral_bond_idxs)
     mol_c_chiral_bond_signs = mol_a_chiral_bond.potential.signs
 
-    chiral_atom_potential = ChiralAtomRestraint(mol_c_chiral_atom_idxs).bind(mol_c_chiral_atom_params)
-    chiral_bond_potential = ChiralBondRestraint(mol_c_chiral_bond_idxs, mol_c_chiral_bond_signs).bind(
+    chiral_atom_potential = ChiralAtomRestraint(num_atoms, mol_c_chiral_atom_idxs).bind(mol_c_chiral_atom_params)
+    chiral_bond_potential = ChiralBondRestraint(num_atoms, mol_c_chiral_bond_idxs, mol_c_chiral_bond_signs).bind(
         mol_a_chiral_bond.params
     )
 
@@ -1271,7 +1271,7 @@ class AlignedAngle(AlignedPotential):
             self.src_params, self.dst_params, lamb, k_min, self.mins, self.maxes
         )
         params = jnp.array(params).T
-        return HarmonicAngle(self.idxs).bind(params)
+        return HarmonicAngle(self.num_atoms, self.idxs).bind(params)
 
 
 class AlignedTorsion(AlignedPotential):
@@ -1290,7 +1290,7 @@ class AlignedChiralAtom(AlignedPotential):
             self.src_params, self.dst_params, lamb, k_min, self.mins, self.maxes
         )
         params = jnp.array(params).reshape(-1)
-        return ChiralAtomRestraint(self.idxs).bind(params)
+        return ChiralAtomRestraint(self.num_atoms, self.idxs).bind(params)
 
 
 @dataclass
@@ -1303,7 +1303,7 @@ class AlignedNonbondedPairlist(AlignedPotential):
         # boundaries.
         params = batch_interpolate_nonbonded_pair_list_params(self.cutoff, self.src_params, self.dst_params, lamb)
         params = jnp.array(params)
-        return NonbondedPairListPrecomputed(self.idxs, self.beta, self.cutoff).bind(params)
+        return NonbondedPairListPrecomputed(self.num_atoms, self.idxs, self.beta, self.cutoff).bind(params)
 
 
 class SingleTopology(AtomMapMixin):
@@ -1838,9 +1838,9 @@ class SingleTopology(AtomMapMixin):
         assert src_system.chiral_bond
         assert dst_system.chiral_bond
         # (ytz): dead code, chiral bond not simulated in production
-        chiral_bond = ChiralBondRestraint(np.zeros((0, 4), dtype=np.int32), np.zeros((0,), dtype=np.int32)).bind(
-            np.zeros((0,), dtype=np.float64)
-        )
+        chiral_bond = ChiralBondRestraint(
+            self.get_num_atoms(), np.zeros((0, 4), dtype=np.int32), np.zeros((0,), dtype=np.int32)
+        ).bind(np.zeros((0,), dtype=np.float64))
 
         return GuestSystem(
             bond=bond,
@@ -2089,7 +2089,7 @@ class SingleTopology(AtomMapMixin):
             [host_system.angle.potential.idxs, guest_system.angle.potential.idxs + num_host_atoms]
         )
         combined_angle_params = jnp.concatenate([host_system.angle.params, guest_system.angle.params])
-        combined_angle = HarmonicAngle(combined_angle_idxs).bind(combined_angle_params)
+        combined_angle = HarmonicAngle(N, combined_angle_idxs).bind(combined_angle_params)
         combined_proper_idxs = np.concatenate(
             [host_system.proper.potential.idxs, guest_system.proper.potential.idxs + num_host_atoms]
         )

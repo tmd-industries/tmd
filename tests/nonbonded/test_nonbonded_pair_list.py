@@ -8,20 +8,14 @@ pytestmark = [pytest.mark.memcheck]
 
 
 def test_nonbonded_pair_list_invalid_pair_idxs():
-    with pytest.raises(RuntimeError) as e:
-        NonbondedPairList([0], [0], 2.0, 1.1).to_gpu(np.float32).unbound_impl
+    with pytest.raises(RuntimeError, match=r"pair_idxs.size\(\) must be even, but got 1"):
+        NonbondedPairList(4, [0], [0], 2.0, 1.1).to_gpu(np.float32).unbound_impl
 
-    assert "pair_idxs.size() must be even, but got 1" in str(e)
+    with pytest.raises(RuntimeError, match=r"illegal pair with src == dst: 0, 0"):
+        NonbondedPairList(4, [(0, 0)], [(1, 1)], 2.0, 1.1).to_gpu(np.float32).unbound_impl
 
-    with pytest.raises(RuntimeError) as e:
-        NonbondedPairList([(0, 0)], [(1, 1)], 2.0, 1.1).to_gpu(np.float32).unbound_impl
-
-    assert "illegal pair with src == dst: 0, 0" in str(e)
-
-    with pytest.raises(RuntimeError) as e:
-        NonbondedPairList([(0, 1)], [(1, 1), (2, 2)], 2.0, 1.1).to_gpu(np.float32).unbound_impl
-
-    assert "expected same number of pairs and scale tuples, but got 1 != 2" in str(e)
+    with pytest.raises(RuntimeError, match=r"expected same number of pairs and scale tuples, but got 1 != 2"):
+        NonbondedPairList(4, [(0, 1)], [(1, 1), (2, 2)], 2.0, 1.1).to_gpu(np.float32).unbound_impl
 
 
 @pytest.mark.parametrize("beta", [2.0])
@@ -52,7 +46,7 @@ def test_nonbonded_pair_list_correctness(
 
     rescale_mask = rng.uniform(0, 1, size=(num_pairs, 2)).astype(precision)
 
-    potential = NonbondedPairList(pair_idxs, rescale_mask, beta, cutoff)
+    potential = NonbondedPairList(num_atoms, pair_idxs, rescale_mask, beta, cutoff)
     params = example_nonbonded_potential.params
 
     for params_ in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):

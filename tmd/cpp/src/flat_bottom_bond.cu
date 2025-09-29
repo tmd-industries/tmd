@@ -23,7 +23,8 @@
 namespace tmd {
 
 template <typename RealType>
-FlatBottomBond<RealType>::FlatBottomBond(const std::vector<int> &bond_idxs)
+FlatBottomBond<RealType>::FlatBottomBond(const int num_atoms,
+                                         const std::vector<int> &bond_idxs)
     : max_idxs_(bond_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
       nrg_accum_(1, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination

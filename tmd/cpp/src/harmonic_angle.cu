@@ -25,7 +25,7 @@ namespace tmd {
 
 template <typename RealType>
 HarmonicAngle<RealType>::HarmonicAngle(
-    const std::vector<int> &angle_idxs // [A, 3]
+    const int num_atoms, const std::vector<int> &angle_idxs // [A, 3]
     )
     : max_idxs_(angle_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
       nrg_accum_(1, cur_num_idxs_),

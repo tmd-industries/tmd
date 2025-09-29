@@ -2209,10 +2209,12 @@ void declare_flat_bottom_bond(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("FlatBottomBond_") + typestr;
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const py::array_t<int, py::array::c_style> &bond_idxs) {
-             return new FlatBottomBond<RealType>(py_array_to_vector(bond_idxs));
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &bond_idxs) {
+             return new FlatBottomBond<RealType>(num_atoms,
+                                                 py_array_to_vector(bond_idxs));
            }),
-           py::arg("bond_idxs"))
+           py::arg("num_atoms"), py::arg("bond_idxs"))
       .def("get_num_bonds", &Class::num_bonds);
 }
 
@@ -2223,12 +2225,13 @@ void declare_log_flat_bottom_bond(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("LogFlatBottomBond_") + typestr;
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const py::array_t<int, py::array::c_style> &bond_idxs,
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &bond_idxs,
                        double beta) {
              return new LogFlatBottomBond<RealType>(
-                 py_array_to_vector(bond_idxs), beta);
+                 num_atoms, py_array_to_vector(bond_idxs), beta);
            }),
-           py::arg("bond_idxs"), py::arg("beta"))
+           py::arg("num_atoms"), py::arg("bond_idxs"), py::arg("beta"))
       .def("get_num_bonds", &Class::num_bonds);
 }
 
@@ -2240,12 +2243,14 @@ void declare_nonbonded_precomputed(py::module &m, const char *typestr) {
       std::string("NonbondedPairListPrecomputed_") + typestr;
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const py::array_t<int, py::array::c_style> &pair_idxs,
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &pair_idxs,
                        double beta, double cutoff) {
              return new NonbondedPairListPrecomputed<RealType>(
-                 py_array_to_vector(pair_idxs), beta, cutoff);
+                 num_atoms, py_array_to_vector(pair_idxs), beta, cutoff);
            }),
-           py::arg("pair_idxs"), py::arg("beta"), py::arg("cutoff"));
+           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("beta"),
+           py::arg("cutoff"));
 }
 
 template <typename RealType>
@@ -2256,10 +2261,12 @@ void declare_chiral_atom_restraint(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(
-          py::init([](const py::array_t<int, py::array::c_style> &idxs) {
-            return new ChiralAtomRestraint<RealType>(py_array_to_vector(idxs));
+          py::init([](const int num_atoms,
+                      const py::array_t<int, py::array::c_style> &idxs) {
+            return new ChiralAtomRestraint<RealType>(num_atoms,
+                                                     py_array_to_vector(idxs));
           }),
-          py::arg("idxs"),
+          py::arg("num_atoms"), py::arg("idxs"),
           R"pbdoc(Please refer to tmd.potentials.chiral_restraints for documentation on arguments)pbdoc");
 }
 
@@ -2271,12 +2278,13 @@ void declare_chiral_bond_restraint(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(
-          py::init([](const py::array_t<int, py::array::c_style> &idxs,
+          py::init([](const int num_atoms,
+                      const py::array_t<int, py::array::c_style> &idxs,
                       const py::array_t<int, py::array::c_style> &signs) {
-            return new ChiralBondRestraint<RealType>(py_array_to_vector(idxs),
-                                                     py_array_to_vector(signs));
+            return new ChiralBondRestraint<RealType>(
+                num_atoms, py_array_to_vector(idxs), py_array_to_vector(signs));
           }),
-          py::arg("idxs"), py::arg("signs"),
+          py::arg("num_atoms"), py::arg("idxs"), py::arg("signs"),
           R"pbdoc(Please refer to tmd.potentials.chiral_restraints for documentation on arguments)pbdoc");
 }
 
@@ -2287,11 +2295,12 @@ void declare_harmonic_angle(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("HarmonicAngle_") + typestr;
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const py::array_t<int, py::array::c_style> &angle_idxs) {
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &angle_idxs) {
              std::vector<int> vec_angle_idxs = py_array_to_vector(angle_idxs);
-             return new HarmonicAngle<RealType>(vec_angle_idxs);
+             return new HarmonicAngle<RealType>(num_atoms, vec_angle_idxs);
            }),
-           py::arg("angle_idxs"))
+           py::arg("num_atoms"), py::arg("angle_idxs"))
       .def("get_idxs", [](Class &pot) -> py::array_t<int, py::array::c_style> {
         std::vector<int> output_idxs = pot.get_idxs_host();
         py::array_t<int, py::array::c_style> out_idx_buffer(
@@ -2479,18 +2488,19 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(
-          py::init([](const py::array_t<int, py::array::c_style> &pair_idxs_i,
+          py::init([](const int num_atoms,
+                      const py::array_t<int, py::array::c_style> &pair_idxs_i,
                       const py::array_t<RealType, py::array::c_style> &scales_i,
                       const RealType beta, const RealType cutoff) {
             std::vector<int> pair_idxs = py_array_to_vector(pair_idxs_i);
 
             std::vector<RealType> scales = py_array_to_vector(scales_i);
 
-            return new NonbondedPairList<RealType, Negated>(pair_idxs, scales,
-                                                            beta, cutoff);
+            return new NonbondedPairList<RealType, Negated>(
+                num_atoms, pair_idxs, scales, beta, cutoff);
           }),
-          py::arg("pair_idxs_i"), py::arg("scales_i"), py::arg("beta"),
-          py::arg("cutoff"))
+          py::arg("num_atoms"), py::arg("pair_idxs_i"), py::arg("scales_i"),
+          py::arg("beta"), py::arg("cutoff"))
       .def("get_idxs",
            [](Class &pot) -> py::array_t<int, py::array::c_style> {
              std::vector<int> output_idxs = pot.get_idxs_host();

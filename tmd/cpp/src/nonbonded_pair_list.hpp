@@ -57,7 +57,8 @@ private:
 public:
   static const int IDXS_DIM = 2;
 
-  NonbondedPairList(const std::vector<int> &pair_idxs,   // [M, 2]
+  NonbondedPairList(const int num_atoms,
+                    const std::vector<int> &pair_idxs,   // [M, 2]
                     const std::vector<RealType> &scales, // [M, 2]
                     const RealType beta, const RealType cutoff);
 

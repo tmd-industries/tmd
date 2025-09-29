@@ -44,7 +44,8 @@ private:
 public:
   static const int IDXS_DIM = 2;
 
-  FlatBottomBond(const std::vector<int> &bond_idxs); // [B, 2]
+  FlatBottomBond(const int num_atoms,
+                 const std::vector<int> &bond_idxs); // [B, 2]
 
   ~FlatBottomBond();
 

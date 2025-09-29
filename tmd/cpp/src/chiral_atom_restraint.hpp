@@ -43,7 +43,8 @@ private:
   std::array<k_chiral_atom_fn, 8> kernel_ptrs_;
 
 public:
-  ChiralAtomRestraint(const std::vector<int> &idxs // [R, 4]
+  ChiralAtomRestraint(const int num_atoms,
+                      const std::vector<int> &idxs // [R, 4]
   );
 
   ~ChiralAtomRestraint();

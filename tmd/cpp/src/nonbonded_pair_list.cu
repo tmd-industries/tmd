@@ -26,8 +26,8 @@ namespace tmd {
 
 template <typename RealType, bool Negated>
 NonbondedPairList<RealType, Negated>::NonbondedPairList(
-    const std::vector<int> &pair_idxs,   // [M, 2]
-    const std::vector<RealType> &scales, // [M, 2]
+    const int num_atoms, const std::vector<int> &pair_idxs, // [M, 2]
+    const std::vector<RealType> &scales,                    // [M, 2]
     const RealType beta, const RealType cutoff)
     : max_idxs_(pair_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
       beta_(beta), cutoff_(cutoff), nrg_accum_(1, cur_num_idxs_),

@@ -24,7 +24,8 @@
 namespace tmd {
 
 template <typename RealType>
-ChiralAtomRestraint<RealType>::ChiralAtomRestraint(const std::vector<int> &idxs)
+ChiralAtomRestraint<RealType>::ChiralAtomRestraint(const int num_atoms,
+                                                   const std::vector<int> &idxs)
     : R_(idxs.size() / 4), nrg_accum_(1, R_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U

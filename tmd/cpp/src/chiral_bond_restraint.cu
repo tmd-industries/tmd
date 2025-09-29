@@ -25,7 +25,8 @@ namespace tmd {
 
 template <typename RealType>
 ChiralBondRestraint<RealType>::ChiralBondRestraint(
-    const std::vector<int> &idxs, const std::vector<int> &signs)
+    const int num_atoms, const std::vector<int> &idxs,
+    const std::vector<int> &signs)
     : R_(idxs.size() / 4), nrg_accum_(1, R_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U

@@ -45,7 +45,8 @@ private:
   std::array<k_nonbonded_precomputed_fn, 8> kernel_ptrs_;
 
 public:
-  NonbondedPairListPrecomputed(const std::vector<int> &pair_idxs, // [B, 2]
+  NonbondedPairListPrecomputed(const int num_atoms,
+                               const std::vector<int> &pair_idxs, // [B, 2]
                                const RealType beta, const RealType cutoff);
 
   ~NonbondedPairListPrecomputed();

@@ -8,15 +8,11 @@ pytestmark = [pytest.mark.memcheck]
 
 
 def test_nonbonded_precomputed_pair_list_invalid_pair_idxs():
-    with pytest.raises(RuntimeError) as e:
-        NonbondedPairListPrecomputed([0], 2.0, 1.1).to_gpu(np.float32).unbound_impl
+    with pytest.raises(RuntimeError, match=r"idxs.size\(\) must be exactly 2\*B"):
+        NonbondedPairListPrecomputed(1, [0], 2.0, 1.1).to_gpu(np.float32).unbound_impl
 
-    assert "idxs.size() must be exactly 2*B" in str(e)
-
-    with pytest.raises(RuntimeError) as e:
-        NonbondedPairListPrecomputed([(0, 0)], 2.0, 1.1).to_gpu(np.float32).unbound_impl
-
-    assert "illegal pair with src == dst: 0, 0" in str(e)
+    with pytest.raises(RuntimeError, match="illegal pair with src == dst: 0, 0"):
+        NonbondedPairListPrecomputed(1, [(0, 0)], 2.0, 1.1).to_gpu(np.float32).unbound_impl
 
 
 @pytest.mark.parametrize("beta", [2.0])
@@ -52,7 +48,7 @@ def test_nonbonded_pair_list_precomputed_correctness(
         1 + rng.uniform(0, 1, size=3) * 3
     )  # box should be fully ignored tbh (just like all other bonded forces)
 
-    potential = NonbondedPairListPrecomputed(pair_idxs, beta, cutoff)
+    potential = NonbondedPairListPrecomputed(num_atoms, pair_idxs, beta, cutoff)
 
     # delta_w positive by convention
     test_impl = potential.to_gpu(precision)
