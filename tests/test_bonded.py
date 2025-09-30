@@ -497,6 +497,27 @@ def test_chiral_atom_restraint(precision, rtol, n_particles=64, n_restraints=35,
         bad_potential = ChiralAtomRestraint(n_particles, bad_idxs)
         bad_potential.to_gpu(precision)
 
+    # Testing batching across multiple coords/params
+    num_batches = 3
+
+    coords = np.array([GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision)
+    batch_params = np.random.rand(num_batches, n_restraints).astype(precision)
+    restr_idxs = [restr_idxs] * num_batches
+
+    batch_pot = ChiralAtomRestraint(n_particles, restr_idxs)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.batch_size() == num_batches
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, [box] * num_batches, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_batches
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+    for i, (x, params) in enumerate(zip(coords, batch_params)):
+        ref_du_dx, ref_du_dp, ref_u = test_impl.unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
+
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_chiral_bond_restraint(precision, rtol, n_particles=64, n_restraints=35, dim=3):

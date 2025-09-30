@@ -1331,11 +1331,20 @@ void declare_potential(py::module &m, const char *typestr) {
               std::vector<py::array_t<RealType, py::array::c_style>> py_du_dp;
               int offset = 0;
               for (auto batch : params) {
-                py::array_t<RealType, py::array::c_style> batch_du_dp(
-                    {batch.shape(0), batch.shape(1)});
-                pot.du_dp_fixed_to_float(N, batch.size(), &du_dp[0] + offset,
-                                         batch_du_dp.mutable_data());
-                py_du_dp.push_back(batch_du_dp);
+                // There has to be a cleaner way to handle this
+                if (batch.ndim() == 2) {
+                  py::array_t<RealType, py::array::c_style> batch_du_dp(
+                      {batch.shape(0), batch.shape(1)});
+                  pot.du_dp_fixed_to_float(N, batch.size(), &du_dp[0] + offset,
+                                           batch_du_dp.mutable_data());
+                  py_du_dp.push_back(batch_du_dp);
+                } else {
+                  py::array_t<RealType, py::array::c_style> batch_du_dp(
+                      {batch.shape(0)});
+                  pot.du_dp_fixed_to_float(N, batch.size(), &du_dp[0] + offset,
+                                           batch_du_dp.mutable_data());
+                  py_du_dp.push_back(batch_du_dp);
+                }
                 offset += batch.size();
               }
               result[1] = py_du_dp;
@@ -2263,11 +2272,40 @@ void declare_chiral_atom_restraint(py::module &m, const char *typestr) {
       .def(
           py::init([](const int num_atoms,
                       const py::array_t<int, py::array::c_style> &idxs) {
-            return new ChiralAtomRestraint<RealType>(num_atoms,
-                                                     py_array_to_vector(idxs));
+            std::vector<int> system_idxs(idxs.shape(0), 0);
+            return new ChiralAtomRestraint<RealType>(
+                1, num_atoms, py_array_to_vector(idxs), system_idxs);
           }),
           py::arg("num_atoms"), py::arg("idxs"),
-          R"pbdoc(Please refer to tmd.potentials.chiral_restraints for documentation on arguments)pbdoc");
+          R"pbdoc(Please refer to tmd.potentials.chiral_restraints for documentation on arguments)pbdoc")
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &restraint_idxs) {
+             const int num_batches = restraint_idxs.size();
+             std::vector<int> combined_restraint_vec;
+             std::vector<int> restraint_system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_batches; i++) {
+               const unsigned long restraint_arr_size =
+                   restraint_idxs[i].size();
+               combined_restraint_vec.resize(combined_restraint_vec.size() +
+                                             restraint_arr_size);
+               std::memcpy(combined_restraint_vec.data() + offset,
+                           restraint_idxs[i].data(),
+                           restraint_arr_size * sizeof(int));
+               offset += restraint_arr_size;
+
+               restraint_system_idxs.resize(restraint_system_idxs.size() +
+                                            restraint_idxs[i].shape(0));
+               std::fill(restraint_system_idxs.end() -
+                             restraint_idxs[i].shape(0),
+                         restraint_system_idxs.end(), i);
+             }
+             return new ChiralAtomRestraint<RealType>(num_batches, num_atoms,
+                                                      combined_restraint_vec,
+                                                      restraint_system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("idxs"));
 }
 
 template <typename RealType>
