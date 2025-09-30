@@ -115,7 +115,6 @@ void PeriodicTorsion<RealType>::execute_device(
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      // nullptr for the d_system_idxs as batch size is fixed to 1
       nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, d_system_idxs_, d_u,
                             stream);
     }

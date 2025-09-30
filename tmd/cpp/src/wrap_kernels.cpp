@@ -2297,8 +2297,36 @@ void declare_harmonic_angle(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const int num_atoms,
                        const py::array_t<int, py::array::c_style> &angle_idxs) {
+             verify_bond_idxs(angle_idxs, 3);
+             std::vector<int> system_idxs(angle_idxs.shape(0), 0);
              std::vector<int> vec_angle_idxs = py_array_to_vector(angle_idxs);
-             return new HarmonicAngle<RealType>(num_atoms, vec_angle_idxs);
+             return new HarmonicAngle<RealType>(1, num_atoms, vec_angle_idxs,
+                                                system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("angle_idxs"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &angle_idxs) {
+             const int num_batches = angle_idxs.size();
+             std::vector<int> combined_angle_vec;
+             std::vector<int> angle_system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_batches; i++) {
+               verify_bond_idxs(angle_idxs[i], 3);
+               const unsigned long bond_arr_size = angle_idxs[i].size();
+               combined_angle_vec.resize(combined_angle_vec.size() +
+                                         bond_arr_size);
+               std::memcpy(combined_angle_vec.data() + offset,
+                           angle_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               angle_system_idxs.resize(angle_system_idxs.size() +
+                                        angle_idxs[i].shape(0));
+               std::fill(angle_system_idxs.end() - angle_idxs[i].shape(0),
+                         angle_system_idxs.end(), i);
+             }
+             return new HarmonicAngle<RealType>(
+                 num_batches, num_atoms, combined_angle_vec, angle_system_idxs);
            }),
            py::arg("num_atoms"), py::arg("angle_idxs"))
       .def("get_idxs", [](Class &pot) -> py::array_t<int, py::array::c_style> {

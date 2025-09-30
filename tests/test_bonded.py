@@ -374,6 +374,27 @@ def test_harmonic_angle(precision, rtol, n_particles=64, n_angles=25, dim=3):
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
 
+    # Testing batching across multiple coords/params
+    num_batches = 3
+
+    coords = np.array([GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision)
+    batch_params = np.random.rand(num_batches, n_angles, 3).astype(precision)
+    angle_idxs = [angle_idxs] * num_batches
+
+    batch_pot = HarmonicAngle(n_particles, angle_idxs)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.batch_size() == num_batches
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, [box] * num_batches, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_batches
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+    for i, (x, params) in enumerate(zip(coords, batch_params)):
+        ref_du_dx, ref_du_dp, ref_u = test_impl.unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
+
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_periodic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3):

@@ -24,18 +24,20 @@ namespace tmd {
 
 template <typename RealType> class HarmonicAngle : public Potential<RealType> {
 
-  typedef void (*k_angle_fn)(const int N, const RealType *__restrict__ coords,
-                             const RealType *__restrict__ box,
-                             const RealType *__restrict__ params,
-                             const int *__restrict__ idxs,
-                             unsigned long long *__restrict__ du_dx,
-                             unsigned long long *__restrict__ du_dp,
-                             __int128 *__restrict__ u_buffer);
+  typedef void (*k_angle_fn)(
+      const int N, const int A, const RealType *__restrict__ coords,
+      const RealType *__restrict__ box, const RealType *__restrict__ params,
+      const int *__restrict__ idxs, const int *__restrict__ system_idxs,
+      unsigned long long *__restrict__ du_dx,
+      unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
+  const int num_batches_;
+  const int num_atoms_;
   const int max_idxs_;
   int cur_num_idxs_;
-  int *d_angle_idxs_; // [max_idxs_, 3]
+  int *d_angle_idxs_;  // [max_idxs_, 3]
+  int *d_system_idxs_; // [max_idxs_]
   __int128 *d_u_buffer_;
 
   EnergyAccumulator nrg_accum_;
@@ -45,7 +47,10 @@ private:
 public:
   static const int IDXS_DIM = 3;
 
-  HarmonicAngle(const int num_atoms, const std::vector<int> &angle_idxs);
+  HarmonicAngle(const int num_batches, const int num_atoms,
+                const std::vector<int> &angle_idxs, // [A, 3]
+                const std::vector<int> &system_idxs // [A]
+  );
 
   ~HarmonicAngle();
 
@@ -55,6 +60,8 @@ public:
                               unsigned long long *d_du_dx,
                               unsigned long long *d_du_dp, __int128 *d_u,
                               cudaStream_t stream) override;
+
+  virtual int batch_size() const override;
 
   void set_idxs_device(const int num_idxs, const int *d_new_idxs,
                        cudaStream_t stream);
