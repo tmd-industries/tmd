@@ -33,6 +33,7 @@ from tmd.fe.bar import (
     construct_mbar_from_u_kln,
     df_and_err_from_mbar,
     pair_overlap_from_mbar,
+    sanitize_energies_for_bar,
     works_from_ukln,
 )
 from tmd.fe.plots import (
@@ -819,10 +820,6 @@ def sample(initial_state: InitialState, md_params: MDParams, max_buffer_frames: 
     )
 
 
-class IndeterminateEnergyWarning(UserWarning):
-    pass
-
-
 def estimate_free_energy_bar(u_kln_by_component: NDArray, temperature: float, n_bootstrap: int = 0) -> BarResult:
     """
     Estimate free energy difference for a pair of states given pre-generated samples.
@@ -847,19 +844,7 @@ def estimate_free_energy_bar(u_kln_by_component: NDArray, temperature: float, n_
     """
     assert n_bootstrap >= 0
 
-    # 1. We represent energies that we aren't able to evaluate (e.g. because of a fixed-point overflow in GPU potential code) with NaNs, but
-    # 2. pymbar.mbar.MBAR will fail with LinAlgError if there are NaNs in the input.
-    #
-    # To work around this, we replace any NaNs with np.inf prior to the MBAR calculation.
-    #
-    # This is reasonable because u(x) -> inf corresponds to probability(x) -> 0, so this in effect declares that these
-    # pathological states have zero weight.
-    if np.any(np.isnan(u_kln_by_component)):
-        warn(
-            "Encountered NaNs in u_kln matrix. Replacing each instance with inf prior to MBAR calculation",
-            IndeterminateEnergyWarning,
-        )
-        u_kln_by_component = np.where(np.isnan(u_kln_by_component), np.inf, u_kln_by_component)
+    u_kln_by_component = sanitize_energies_for_bar(u_kln_by_component)
 
     u_kln = u_kln_by_component.sum(0)
 
@@ -1287,13 +1272,7 @@ def verify_and_sanitize_potential_matrix(
     replica_energies = np.diagonal(U_kl[replica_idx_by_state])
     assert np.all(np.isfinite(replica_energies)), "Replicas have non-finite energies"
     assert np.all(np.abs(replica_energies) < abs_energy_threshold), "Energies larger in magnitude than tolerated"
-    if np.any(np.isnan(U_kl)):
-        warn(
-            "Encountered NaNs in potential matrix. Replacing each instance with inf",
-            IndeterminateEnergyWarning,
-        )
-        U_kl = np.where(np.isnan(U_kl), np.inf, U_kl)
-    return U_kl
+    return sanitize_energies_for_bar(U_kl)
 
 
 def assert_ensembles_compatible(state_a: InitialState, state_b: InitialState):
@@ -1637,7 +1616,9 @@ def run_sims_hrex(
         U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 
         # Re-order energies by state
-        iterated_u_kln[:, :, :, current_frame] = np.array(U_kl_raw[:, hrex.replica_idx_by_state]) / kBT
+        iterated_u_kln[:, :, :, current_frame] = (
+            sanitize_energies_for_bar(np.array(U_kl_raw[:, hrex.replica_idx_by_state])) / kBT
+        )
         log_q_kl = -U_kl / kBT
 
         replica_idx_by_state_by_iter.append(hrex.replica_idx_by_state)

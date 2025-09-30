@@ -29,11 +29,10 @@ from scipy.optimize import check_grad, minimize
 import tmd._vendored.pymbar as pymbar
 from tmd.constants import DEFAULT_TEMP, NBParamIdx
 from tmd.fe import free_energy, topology, utils
-from tmd.fe.bar import DEFAULT_SOLVER_PROTOCOL, ukln_to_ukn
+from tmd.fe.bar import DEFAULT_SOLVER_PROTOCOL, IndeterminateEnergyWarning, ukln_to_ukn
 from tmd.fe.free_energy import (
     BarResult,
     HREXSimulationResult,
-    IndeterminateEnergyWarning,
     InitialState,
     LocalMDParams,
     MDParams,

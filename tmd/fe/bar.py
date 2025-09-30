@@ -14,6 +14,7 @@
 
 import logging
 from typing import Optional
+from warnings import warn
 
 import jax
 import jax.numpy as jnp
@@ -33,6 +34,10 @@ DEFAULT_MAXIMUM_ITERATIONS = 1_000  # pymbar default 10_000
 DEFAULT_SOLVER_PROTOCOL = "robust"  # more stable in certain cases
 
 logger = logging.getLogger(__name__)
+
+
+class IndeterminateEnergyWarning(UserWarning):
+    pass
 
 
 def EXP(w_raw):
@@ -141,6 +146,26 @@ def ukln_to_ukn(u_kln: NDArray) -> tuple[NDArray, NDArray]:
     assert u_kn.shape == (k, l * n)
     N_k = n * np.ones(l)
     return u_kn, N_k
+
+
+def sanitize_energies_for_bar(energies: NDArray) -> NDArray:
+    """Utility for sanitizing arrays for use with BAR calculations.
+
+    1. We represent energies that we aren't able to evaluate (e.g. because of a fixed-point overflow in GPU potential code) with NaNs, but
+    2. pymbar.mbar.MBAR will fail with LinAlgError if there are NaNs in the input.
+
+    To work around this, we replace any NaNs with np.inf prior to the MBAR calculation.
+
+    This is reasonable because u(x) -> inf corresponds to probability(x) -> 0, so this in effect declares that these
+    pathological states have zero weight.
+    """
+    if np.any(np.isnan(energies)):
+        warn(
+            "Encountered NaNs in energy matrix. Replacing each instance with inf prior to MBAR calculation",
+            IndeterminateEnergyWarning,
+        )
+        energies = np.where(np.isnan(energies), np.inf, energies)
+    return energies
 
 
 def construct_mbar_from_u_kln(
