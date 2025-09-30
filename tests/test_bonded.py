@@ -109,7 +109,8 @@ def test_centroid_restraint_singularity():
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_harmonic_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     """Randomly connect pairs of particles, then validate the resulting HarmonicBond force"""
-    np.random.seed(125)  # TODO: where should this seed be set?
+    seed = 125
+    np.random.seed(seed)
 
     box = np.eye(3) * 10
     x = GradientTest().get_random_coords(n_particles, dim)
@@ -149,26 +150,31 @@ def test_harmonic_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
 
-    # Testing batching across multiple coords/params
-    num_batches = 3
+    if n_bonds > 0:
+        # Testing batching across multiple coords/params
+        num_batches = 3
 
-    coords = np.array([GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision)
-    batch_params = np.random.rand(num_batches, n_bonds, 2).astype(precision)
-    bond_idxs = [bond_idxs] * num_batches
+        coords = np.array(
+            [GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision
+        )
+        rng = np.random.default_rng(seed)
+        batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_batches)]
+        batch_params = [rng.uniform(0.0, 1.0, size=(len(idxs), 2)).astype(precision) for idxs in batch_bond_idxs]
 
-    batch_pot = HarmonicBond(n_particles, bond_idxs)
+        batch_pot = HarmonicBond(n_particles, batch_bond_idxs)
 
-    batch_impl = batch_pot.to_gpu(precision).unbound_impl
-    assert batch_impl.batch_size() == num_batches
-    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, [box] * num_batches, 1, 1, 1)
+        batch_impl = batch_pot.to_gpu(precision).unbound_impl
+        assert batch_impl.batch_size() == num_batches
+        batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, [box] * num_batches, 1, 1, 1)
 
-    assert batch_du_dx.shape[0] == num_batches
-    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
-    for i, (x, params) in enumerate(zip(coords, batch_params)):
-        ref_du_dx, ref_du_dp, ref_u = test_impl.unbound_impl.execute(x, params, box, 1, 1, 1)
-        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
-        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
-        np.testing.assert_array_equal(batch_u[i], ref_u)
+        assert batch_du_dx.shape[0] == num_batches
+        assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+        for i, (idxs, x, params) in enumerate(zip(batch_bond_idxs, coords, batch_params)):
+            potential = HarmonicBond(n_particles, idxs)
+            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+            np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+            np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+            np.testing.assert_array_equal(batch_u[i], ref_u)
 
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
@@ -328,7 +334,8 @@ def test_harmonic_angle_jax_impl(n_particles=64, n_angles=25, dim=3):
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_harmonic_angle(precision, rtol, n_particles=64, n_angles=25, dim=3):
     """Randomly connect triples of particles, then validate the resulting HarmonicAngle force"""
-    np.random.seed(125)
+    seed = 125
+    np.random.seed(seed)
 
     x = GradientTest().get_random_coords(n_particles, dim)
     box = np.eye(3) * 10
@@ -374,32 +381,38 @@ def test_harmonic_angle(precision, rtol, n_particles=64, n_angles=25, dim=3):
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
 
-    # Testing batching across multiple coords/params
-    num_batches = 3
+    if n_angles > 0:
+        # Testing batching across multiple coords/params
+        num_batches = 3
 
-    coords = np.array([GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision)
-    batch_params = np.random.rand(num_batches, n_angles, 3).astype(precision)
-    angle_idxs = [angle_idxs] * num_batches
+        coords = np.array(
+            [GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision
+        )
+        rng = np.random.default_rng(seed)
+        batch_angle_idxs = [rng.choice(angle_idxs, size=rng.integers(1, n_angles), axis=0) for _ in range(num_batches)]
+        batch_params = [rng.uniform(0.0, 1.0, size=(len(idxs), 3)).astype(precision) for idxs in batch_angle_idxs]
 
-    batch_pot = HarmonicAngle(n_particles, angle_idxs)
+        batch_pot = HarmonicAngle(n_particles, batch_angle_idxs)
 
-    batch_impl = batch_pot.to_gpu(precision).unbound_impl
-    assert batch_impl.batch_size() == num_batches
-    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, [box] * num_batches, 1, 1, 1)
+        batch_impl = batch_pot.to_gpu(precision).unbound_impl
+        assert batch_impl.batch_size() == num_batches
+        batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, [box] * num_batches, 1, 1, 1)
 
-    assert batch_du_dx.shape[0] == num_batches
-    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
-    for i, (x, params) in enumerate(zip(coords, batch_params)):
-        ref_du_dx, ref_du_dp, ref_u = test_impl.unbound_impl.execute(x, params, box, 1, 1, 1)
-        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
-        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
-        np.testing.assert_array_equal(batch_u[i], ref_u)
+        assert batch_du_dx.shape[0] == num_batches
+        assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+        for i, (idxs, x, params) in enumerate(zip(batch_angle_idxs, coords, batch_params)):
+            potential = HarmonicAngle(n_particles, idxs)
+            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+            np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+            np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+            np.testing.assert_array_equal(batch_u[i], ref_u)
 
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_periodic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3):
     """Randomly connect quadruples of particles, then validate the resulting PeriodicTorsion force"""
-    np.random.seed(125)
+    seed = 125
+    np.random.seed(seed)
 
     box = np.eye(3) * 10
     x = GradientTest().get_random_coords(n_particles, dim)
@@ -439,26 +452,33 @@ def test_periodic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3)
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
 
-    # Testing batching across multiple coords/params
-    num_batches = 3
+    if n_torsions > 0:
+        # Testing batching across multiple coords/params
+        num_batches = 3
 
-    coords = np.array([GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision)
-    batch_params = np.random.rand(num_batches, n_torsions, 3).astype(precision)
-    torsion_idxs = [torsion_idxs] * num_batches
+        coords = np.array(
+            [GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision
+        )
+        rng = np.random.default_rng(seed)
+        batch_torsion_idxs = [
+            rng.choice(torsion_idxs, size=rng.integers(1, n_torsions), axis=0) for _ in range(num_batches)
+        ]
+        batch_params = [rng.uniform(0.0, 1.0, size=(len(idxs), 3)).astype(precision) for idxs in batch_torsion_idxs]
 
-    batch_pot = PeriodicTorsion(n_particles, torsion_idxs)
+        batch_pot = PeriodicTorsion(n_particles, batch_torsion_idxs)
 
-    batch_impl = batch_pot.to_gpu(precision).unbound_impl
-    assert batch_impl.batch_size() == num_batches
-    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, [box] * num_batches, 1, 1, 1)
+        batch_impl = batch_pot.to_gpu(precision).unbound_impl
+        assert batch_impl.batch_size() == num_batches
+        batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, [box] * num_batches, 1, 1, 1)
 
-    assert batch_du_dx.shape[0] == num_batches
-    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
-    for i, (x, params) in enumerate(zip(coords, batch_params)):
-        ref_du_dx, ref_du_dp, ref_u = test_impl.unbound_impl.execute(x, params, box, 1, 1, 1)
-        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
-        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
-        np.testing.assert_array_equal(batch_u[i], ref_u)
+        assert batch_du_dx.shape[0] == num_batches
+        assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+        for i, (idxs, x, params) in enumerate(zip(batch_torsion_idxs, coords, batch_params)):
+            potential = PeriodicTorsion(n_particles, idxs)
+            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+            np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+            np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+            np.testing.assert_array_equal(batch_u[i], ref_u)
 
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
@@ -472,7 +492,8 @@ def test_empty_potentials(precision, rtol):
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_chiral_atom_restraint(precision, rtol, n_particles=64, n_restraints=35, dim=3):
     """Randomly connect 4 particles, then validate the resulting forces"""
-    np.random.seed(125)  # TODO: where should this seed be set?
+    seed = 125
+    np.random.seed(seed)
 
     x = GradientTest().get_random_coords(n_particles, dim)
     params = np.random.rand(n_restraints)
@@ -501,10 +522,13 @@ def test_chiral_atom_restraint(precision, rtol, n_particles=64, n_restraints=35,
     num_batches = 3
 
     coords = np.array([GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision)
-    batch_params = np.random.rand(num_batches, n_restraints).astype(precision)
-    restr_idxs = [restr_idxs] * num_batches
+    rng = np.random.default_rng(seed)
+    batch_restraint_idxs = [
+        rng.choice(restr_idxs, size=rng.integers(1, n_restraints), axis=0) for _ in range(num_batches)
+    ]
+    batch_params = [rng.uniform(0.0, 1.0, size=len(idxs)).astype(precision) for idxs in batch_restraint_idxs]
 
-    batch_pot = ChiralAtomRestraint(n_particles, restr_idxs)
+    batch_pot = ChiralAtomRestraint(n_particles, batch_restraint_idxs)
 
     batch_impl = batch_pot.to_gpu(precision).unbound_impl
     assert batch_impl.batch_size() == num_batches
@@ -512,8 +536,9 @@ def test_chiral_atom_restraint(precision, rtol, n_particles=64, n_restraints=35,
 
     assert batch_du_dx.shape[0] == num_batches
     assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
-    for i, (x, params) in enumerate(zip(coords, batch_params)):
-        ref_du_dx, ref_du_dp, ref_u = test_impl.unbound_impl.execute(x, params, box, 1, 1, 1)
+    for i, (idxs, x, params) in enumerate(zip(batch_restraint_idxs, coords, batch_params)):
+        potential = ChiralAtomRestraint(n_particles, idxs)
+        ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
         np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
         np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
         np.testing.assert_array_equal(batch_u[i], ref_u)
@@ -523,7 +548,8 @@ def test_chiral_atom_restraint(precision, rtol, n_particles=64, n_restraints=35,
 def test_chiral_bond_restraint(precision, rtol, n_particles=64, n_restraints=35, dim=3):
     """Randomly connect 4 particles, then validate the resulting forces. Also test
     that scrambling the sign is sufficient"""
-    np.random.seed(125)  # TODO: where should this seed be set?
+    seed = 125
+    np.random.seed(seed)
 
     x = GradientTest().get_random_coords(n_particles, dim)
     params = np.random.rand(n_restraints)
