@@ -25,9 +25,10 @@ namespace tmd {
 
 template <typename RealType>
 ChiralBondRestraint<RealType>::ChiralBondRestraint(
-    const int num_atoms, const std::vector<int> &idxs,
-    const std::vector<int> &signs)
-    : R_(idxs.size() / 4), nrg_accum_(1, R_),
+    const int num_batches, const int num_atoms, const std::vector<int> &idxs,
+    const std::vector<int> &signs, const std::vector<int> &system_idxs)
+    : num_batches_(num_batches), num_atoms_(num_atoms), R_(idxs.size() / 4),
+      nrg_accum_(num_batches_, R_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -65,12 +66,17 @@ ChiralBondRestraint<RealType>::ChiralBondRestraint(
                        cudaMemcpyHostToDevice));
 
   cudaSafeMalloc(&d_u_buffer_, R_ * sizeof(*d_u_buffer_));
+  cudaSafeMalloc(&d_system_idxs_, R_ * sizeof(*d_system_idxs_));
+
+  gpuErrchk(cudaMemcpy(d_system_idxs_, &system_idxs[0],
+                       R_ * sizeof(*d_system_idxs_), cudaMemcpyHostToDevice));
 };
 
 template <typename RealType>
 ChiralBondRestraint<RealType>::~ChiralBondRestraint() {
   gpuErrchk(cudaFree(d_idxs_));
   gpuErrchk(cudaFree(d_signs_));
+  gpuErrchk(cudaFree(d_system_idxs_));
   gpuErrchk(cudaFree(d_u_buffer_));
 };
 
@@ -80,7 +86,6 @@ void ChiralBondRestraint<RealType>::execute_device(
     const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
-  assert(batches == 1);
   if (P != R_) {
     throw std::runtime_error(
         "ChiralBondRestraint::execute_device(): expected P == R, got P=" +
@@ -97,16 +102,20 @@ void ChiralBondRestraint<RealType>::execute_device(
     kernel_idx |= d_u ? 1 << 2 : 0;
 
     kernel_ptrs_[kernel_idx]<<<blocks, tpb, 0, stream>>>(
-        R_, d_x, d_p, d_idxs_, d_signs_, d_du_dx, d_du_dp,
-        d_u == nullptr ? nullptr : d_u_buffer_);
+        num_atoms_, R_, d_x, d_p, d_idxs_, d_signs_, d_system_idxs_, d_du_dx,
+        d_du_dp, d_u == nullptr ? nullptr : d_u_buffer_);
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      // nullptr for the d_system_idxs as batch size is fixed to 1
-      nrg_accum_.sum_device(R_, d_u_buffer_, nullptr, d_u, stream);
+      nrg_accum_.sum_device(R_, d_u_buffer_, d_system_idxs_, d_u, stream);
     }
   }
 };
+
+template <typename RealType>
+int ChiralBondRestraint<RealType>::batch_size() const {
+  return num_batches_;
+}
 
 template class ChiralBondRestraint<double>;
 template class ChiralBondRestraint<float>;

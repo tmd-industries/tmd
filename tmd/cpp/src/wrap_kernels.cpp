@@ -2319,11 +2319,52 @@ void declare_chiral_bond_restraint(py::module &m, const char *typestr) {
           py::init([](const int num_atoms,
                       const py::array_t<int, py::array::c_style> &idxs,
                       const py::array_t<int, py::array::c_style> &signs) {
+            std::vector<int> system_idxs(idxs.shape(0), 0);
             return new ChiralBondRestraint<RealType>(
-                num_atoms, py_array_to_vector(idxs), py_array_to_vector(signs));
+                1, num_atoms, py_array_to_vector(idxs),
+                py_array_to_vector(signs), system_idxs);
           }),
           py::arg("num_atoms"), py::arg("idxs"), py::arg("signs"),
-          R"pbdoc(Please refer to tmd.potentials.chiral_restraints for documentation on arguments)pbdoc");
+          R"pbdoc(Please refer to tmd.potentials.chiral_restraints for documentation on arguments)pbdoc")
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &restraint_idxs,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &signs) {
+             const int num_batches = restraint_idxs.size();
+             std::vector<int> combined_restraint_vec;
+             std::vector<int> combined_signs_vec;
+             std::vector<int> restraint_system_idxs;
+             int offset = 0;
+             int sign_offset = 0;
+             for (int i = 0; i < num_batches; i++) {
+               const unsigned long restraint_arr_size =
+                   restraint_idxs[i].size();
+               const unsigned long sign_arr_size = signs[i].size();
+               combined_restraint_vec.resize(combined_restraint_vec.size() +
+                                             restraint_arr_size);
+               std::memcpy(combined_restraint_vec.data() + offset,
+                           restraint_idxs[i].data(),
+                           restraint_arr_size * sizeof(int));
+
+               combined_signs_vec.resize(combined_signs_vec.size() +
+                                         sign_arr_size);
+               std::memcpy(combined_signs_vec.data() + sign_offset,
+                           signs[i].data(), sign_arr_size * sizeof(int));
+               offset += restraint_arr_size;
+               sign_offset += sign_arr_size;
+
+               restraint_system_idxs.resize(restraint_system_idxs.size() +
+                                            restraint_idxs[i].shape(0));
+               std::fill(restraint_system_idxs.end() -
+                             restraint_idxs[i].shape(0),
+                         restraint_system_idxs.end(), i);
+             }
+             return new ChiralBondRestraint<RealType>(
+                 num_batches, num_atoms, combined_restraint_vec,
+                 combined_signs_vec, restraint_system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("idxs"), py::arg("signs"));
 }
 
 template <typename RealType>

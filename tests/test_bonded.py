@@ -585,3 +585,28 @@ def test_chiral_bond_restraint(precision, rtol, n_particles=64, n_restraints=35,
         bad_signs = np.array([1, -1, 1], dtype=np.int32)
         bad_potential = ChiralBondRestraint(n_particles, bad_idxs, bad_signs)
         bad_potential.to_gpu(precision).unbound_impl
+
+    # Testing batching across multiple coords/params
+    num_batches = 3
+
+    coords = np.array([GradientTest().get_random_coords(n_particles, dim) for _ in range(num_batches)], dtype=precision)
+    rng = np.random.default_rng(seed)
+    batch_restraint_idxs = [
+        rng.choice(restr_idxs, size=rng.integers(1, n_restraints), axis=0) for _ in range(num_batches)
+    ]
+    batch_params = [rng.uniform(0.0, 1.0, size=len(idxs)).astype(precision) for idxs in batch_restraint_idxs]
+    batch_signs = [rng.choice([-1, 1], size=len(idxs), replace=True).astype(np.int32) for idxs in batch_restraint_idxs]
+    batch_pot = ChiralBondRestraint(n_particles, batch_restraint_idxs, batch_signs)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.batch_size() == num_batches
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, [box] * num_batches, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_batches
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+    for i, (idxs, signs, x, params) in enumerate(zip(batch_restraint_idxs, batch_signs, coords, batch_params)):
+        potential = ChiralBondRestraint(n_particles, idxs, signs)
+        ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
