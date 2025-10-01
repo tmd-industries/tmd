@@ -193,8 +193,8 @@ class NonbondedInteractionGroup(Potential):
 @dataclass
 class NonbondedPairList(Potential):
     num_atoms: int
-    idxs: NDArray[np.int32]
-    rescale_mask: NDArray[np.float64]
+    idxs: NDArray[np.int32] | list[NDArray[np.int32]]
+    rescale_mask: NDArray[np.float64] | list[NDArray[np.float64]]
     beta: float
     cutoff: float
 
@@ -208,8 +208,8 @@ class NonbondedPairList(Potential):
 @dataclass
 class NonbondedExclusions(Potential):
     num_atoms: int
-    idxs: NDArray[np.int32]
-    rescale_mask: NDArray[np.float64]
+    idxs: NDArray[np.int32] | list[NDArray[np.int32]]
+    rescale_mask: NDArray[np.float64] | list[NDArray[np.float64]]
     beta: float
     cutoff: float
 
@@ -233,7 +233,7 @@ class NonbondedPairListPrecomputed(Potential):
     """
 
     num_atoms: int
-    idxs: NDArray[np.int32]
+    idxs: NDArray[np.int32] | list[NDArray[np.int32]]
     beta: float
     cutoff: float
 

@@ -34,10 +34,12 @@ void __device__ __forceinline__ accumulate(unsigned long long *__restrict acc,
 template <typename RealType, bool Negated, bool COMPUTE_U, bool COMPUTE_DU_DX,
           bool COMPUTE_DU_DP>
 void __global__ k_nonbonded_pair_list(
+    const int N,
     const int M, // number of pairs
     const RealType *__restrict__ coords, const RealType *__restrict__ params,
     const RealType *__restrict__ box,
     const int *__restrict__ pair_idxs,   // [M, 2] pair-list of atoms
+    const int *__restrict__ system_idxs, // [M]
     const RealType *__restrict__ scales, // [M]
     const RealType beta, const RealType cutoff,
     unsigned long long *__restrict__ du_dx,
@@ -54,7 +56,11 @@ void __global__ k_nonbonded_pair_list(
     return;
   }
 
-  int atom_i_idx = pair_idxs[pair_idx * 2 + 0];
+  const int system_idx = system_idxs[pair_idx];
+  const int coord_offset = system_idx * N;
+  const int box_offset = system_idx * 9;
+
+  const int atom_i_idx = pair_idxs[pair_idx * 2 + 0] + coord_offset;
 
   RealType ci_x = coords[atom_i_idx * 3 + 0];
   RealType ci_y = coords[atom_i_idx * 3 + 1];
@@ -80,7 +86,7 @@ void __global__ k_nonbonded_pair_list(
   unsigned long long g_epsi = 0;
   unsigned long long g_wi = 0;
 
-  int atom_j_idx = pair_idxs[pair_idx * 2 + 1];
+  const int atom_j_idx = pair_idxs[pair_idx * 2 + 1] + coord_offset;
 
   RealType cj_x = coords[atom_j_idx * 3 + 0];
   RealType cj_y = coords[atom_j_idx * 3 + 1];
@@ -111,9 +117,9 @@ void __global__ k_nonbonded_pair_list(
   RealType charge_scale = scales[pair_idx * 2 + 0];
   RealType lj_scale = scales[pair_idx * 2 + 1];
 
-  RealType box_x = box[0 * 3 + 0];
-  RealType box_y = box[1 * 3 + 1];
-  RealType box_z = box[2 * 3 + 2];
+  RealType box_x = box[box_offset + (0 * 3 + 0)];
+  RealType box_y = box[box_offset + (1 * 3 + 1)];
+  RealType box_z = box[box_offset + (2 * 3 + 2)];
 
   RealType inv_box_x = rcp_rn(box_x);
   RealType inv_box_y = rcp_rn(box_y);

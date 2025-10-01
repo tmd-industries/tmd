@@ -2662,12 +2662,51 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
             std::vector<int> pair_idxs = py_array_to_vector(pair_idxs_i);
 
             std::vector<RealType> scales = py_array_to_vector(scales_i);
-
+            std::vector<int> system_idxs(pair_idxs_i.shape(0), 0);
+            const int num_batches = 1;
             return new NonbondedPairList<RealType, Negated>(
-                num_atoms, pair_idxs, scales, beta, cutoff);
+                num_batches, num_atoms, pair_idxs, scales, system_idxs, beta,
+                cutoff);
           }),
           py::arg("num_atoms"), py::arg("pair_idxs_i"), py::arg("scales_i"),
           py::arg("beta"), py::arg("cutoff"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &pair_idxs,
+                       const std::vector<
+                           py::array_t<RealType, py::array::c_style>> &scales,
+                       const RealType beta, const RealType cutoff) {
+             const int num_batches = pair_idxs.size();
+             std::vector<int> combined_pair_idxs;
+             std::vector<RealType> combined_scales;
+             std::vector<int> system_idxs;
+             int offset = 0;
+             int scale_offset = 0;
+             for (int i = 0; i < num_batches; i++) {
+               const unsigned long pair_idxs_arr_size = pair_idxs[i].size();
+               const unsigned long sign_arr_size = scales[i].size();
+               combined_pair_idxs.resize(combined_pair_idxs.size() +
+                                         pair_idxs_arr_size);
+               std::memcpy(combined_pair_idxs.data() + offset,
+                           pair_idxs[i].data(),
+                           pair_idxs_arr_size * sizeof(int));
+
+               combined_scales.resize(combined_scales.size() + sign_arr_size);
+               std::memcpy(combined_scales.data() + scale_offset,
+                           scales[i].data(), sign_arr_size * sizeof(RealType));
+               offset += pair_idxs_arr_size;
+               scale_offset += sign_arr_size;
+
+               system_idxs.resize(system_idxs.size() + pair_idxs[i].shape(0));
+               std::fill(system_idxs.end() - pair_idxs[i].shape(0),
+                         system_idxs.end(), i);
+             }
+             return new NonbondedPairList<RealType, Negated>(
+                 num_batches, num_atoms, combined_pair_idxs, combined_scales,
+                 system_idxs, beta, cutoff);
+           }),
+           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("scales"),
+           py::arg("beta"), py::arg("cutoff"))
       .def("get_idxs",
            [](Class &pot) -> py::array_t<int, py::array::c_style> {
              std::vector<int> output_idxs = pot.get_idxs_host();
