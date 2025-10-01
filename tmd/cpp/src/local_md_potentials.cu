@@ -225,7 +225,7 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
   if (!freeze_reference) {
     frozen_restraint_ = std::shared_ptr<LogFlatBottomBond<RealType>>(
         new LogFlatBottomBond<RealType>(
-            N, default_bonds,
+            1, N, default_bonds, system_idxs,
             1 / (temperature * static_cast<RealType>(BOLTZ))));
     bound_frozen_restraint_ = std::shared_ptr<BoundPotential<RealType>>(
         new BoundPotential<RealType>(frozen_restraint_, default_params, 3));

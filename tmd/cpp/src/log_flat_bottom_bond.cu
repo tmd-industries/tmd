@@ -25,9 +25,12 @@ namespace tmd {
 
 template <typename RealType>
 LogFlatBottomBond<RealType>::LogFlatBottomBond(
-    const int num_atoms, const std::vector<int> &bond_idxs, RealType beta)
-    : max_idxs_(bond_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      beta_(beta), nrg_accum_(1, cur_num_idxs_),
+    const int num_batches, const int num_atoms,
+    const std::vector<int> &bond_idxs, const std::vector<int> &system_idxs,
+    const RealType beta)
+    : num_batches_(num_batches), num_atoms_(num_atoms),
+      max_idxs_(bond_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
+      beta_(beta), nrg_accum_(num_batches_, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -51,6 +54,12 @@ LogFlatBottomBond<RealType>::LogFlatBottomBond(
                              std::to_string(IDXS_DIM) + "*k!");
   }
 
+  if (system_idxs.size() != max_idxs_) {
+    throw std::runtime_error("system_idxs.size() != (bond_idxs.size() / " +
+                             std::to_string(IDXS_DIM) + "), got " +
+                             std::to_string(system_idxs.size()) + " and " +
+                             std::to_string(max_idxs_));
+  }
   static_assert(IDXS_DIM == 2);
   for (int b = 0; b < cur_num_idxs_; b++) {
     auto src = bond_idxs[b * IDXS_DIM + 0];
@@ -71,11 +80,17 @@ LogFlatBottomBond<RealType>::LogFlatBottomBond(
                        cur_num_idxs_ * IDXS_DIM * sizeof(*d_bond_idxs_),
                        cudaMemcpyHostToDevice));
   cudaSafeMalloc(&d_u_buffer_, cur_num_idxs_ * sizeof(*d_u_buffer_));
+  cudaSafeMalloc(&d_system_idxs_, cur_num_idxs_ * sizeof(*d_system_idxs_));
+
+  gpuErrchk(cudaMemcpy(d_system_idxs_, &system_idxs[0],
+                       cur_num_idxs_ * sizeof(*d_system_idxs_),
+                       cudaMemcpyHostToDevice));
 };
 
 template <typename RealType> LogFlatBottomBond<RealType>::~LogFlatBottomBond() {
   gpuErrchk(cudaFree(d_bond_idxs_));
   gpuErrchk(cudaFree(d_u_buffer_));
+  gpuErrchk(cudaFree(d_system_idxs_));
 };
 
 template <typename RealType>
@@ -84,7 +99,6 @@ void LogFlatBottomBond<RealType>::execute_device(
     const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
-  assert(batches == 1);
   const int num_params_per_bond = 3;
   int expected_P = num_params_per_bond * cur_num_idxs_;
 
@@ -104,13 +118,14 @@ void LogFlatBottomBond<RealType>::execute_device(
     kernel_idx |= d_u ? 1 << 2 : 0;
 
     kernel_ptrs_[kernel_idx]<<<blocks, tpb, 0, stream>>>(
-        cur_num_idxs_, d_x, d_box, d_p, d_bond_idxs_, beta_, d_du_dx, d_du_dp,
+        num_atoms_, cur_num_idxs_, d_x, d_box, d_p, d_bond_idxs_,
+        d_system_idxs_, beta_, d_du_dx, d_du_dp,
         d_u == nullptr ? nullptr : d_u_buffer_);
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      // nullptr for the d_system_idxs as batch size is fixed to 1
-      nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, nullptr, d_u, stream);
+      nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, d_system_idxs_, d_u,
+                            stream);
     }
   }
 };
@@ -128,6 +143,11 @@ void LogFlatBottomBond<RealType>::set_bonds_device(const int num_bonds,
                             num_bonds * IDXS_DIM * sizeof(*d_bond_idxs_),
                             cudaMemcpyDeviceToDevice, stream));
   cur_num_idxs_ = num_bonds;
+}
+
+template <typename RealType>
+int LogFlatBottomBond<RealType>::batch_size() const {
+  return num_batches_;
 }
 
 template class LogFlatBottomBond<double>;

@@ -271,7 +271,8 @@ def test_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_log_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     """Randomly connect pairs of particles, then validate the resulting LogFlatBottomBond force"""
-    np.random.seed(2022)
+    seed = 2022
+    np.random.seed(seed)
 
     # TODO(deboggle) : reduce code duplication between HarmonicBond, FlatBottomBond, and LogFlatBottomBond
     box = np.eye(3) * 10
@@ -318,6 +319,38 @@ def test_log_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3
     np.testing.assert_array_equal(test_u, test_u_rev)
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
+
+    # Testing batching across multiple coords/params
+    num_batches = 3
+
+    rng = np.random.default_rng(seed)
+
+    coords = np.array(
+        [
+            shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+            for i in range(num_batches)
+        ],
+        dtype=precision,
+    )
+    batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_batches)]
+
+    batch_params = [rng.choice(params, size=len(idxs), replace=True).astype(precision) for idxs in batch_bond_idxs]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_batches)]
+
+    batch_pot = LogFlatBottomBond(n_particles, batch_bond_idxs, beta)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.batch_size() == num_batches
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_batches
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+    for i, (idxs, x, box, params) in enumerate(zip(batch_bond_idxs, coords, batch_boxes, batch_params)):
+        potential = LogFlatBottomBond(n_particles, idxs, beta)
+        ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
 
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
