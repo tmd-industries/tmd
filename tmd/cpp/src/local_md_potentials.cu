@@ -215,8 +215,9 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
     default_bonds[i * 2 + 1] = i + 1;
   }
   std::vector<RealType> default_params(N_ * 3);
+  std::vector<int> system_idxs(N_, 0);
   free_restraint_ = std::shared_ptr<FlatBottomBond<RealType>>(
-      new FlatBottomBond<RealType>(N, default_bonds));
+      new FlatBottomBond<RealType>(1, N, default_bonds, system_idxs));
   // Construct a bound potential with 0 params
   bound_free_restraint_ = std::shared_ptr<BoundPotential<RealType>>(
       new BoundPotential<RealType>(free_restraint_, default_params, 3));

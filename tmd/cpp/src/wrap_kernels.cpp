@@ -2220,8 +2220,38 @@ void declare_flat_bottom_bond(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const int num_atoms,
                        const py::array_t<int, py::array::c_style> &bond_idxs) {
-             return new FlatBottomBond<RealType>(num_atoms,
-                                                 py_array_to_vector(bond_idxs));
+             verify_bond_idxs(bond_idxs, 2);
+             // Create a vector with all zeros
+             std::vector<int> bond_system_idxs(bond_idxs.shape(0), 0);
+             const int num_batches = 1;
+             return new FlatBottomBond<RealType>(num_batches, num_atoms,
+                                                 py_array_to_vector(bond_idxs),
+                                                 bond_system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("bond_idxs"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &bond_idxs) {
+             const int num_batches = bond_idxs.size();
+             std::vector<int> combined_bond_vec;
+             std::vector<int> bond_system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_batches; i++) {
+               verify_bond_idxs(bond_idxs[i], 2);
+               const unsigned long bond_arr_size = bond_idxs[i].size();
+               combined_bond_vec.resize(combined_bond_vec.size() +
+                                        bond_arr_size);
+               std::memcpy(combined_bond_vec.data() + offset,
+                           bond_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               bond_system_idxs.resize(bond_system_idxs.size() +
+                                       bond_idxs[i].shape(0));
+               std::fill(bond_system_idxs.end() - bond_idxs[i].shape(0),
+                         bond_system_idxs.end(), i);
+             }
+             return new FlatBottomBond<RealType>(
+                 num_batches, num_atoms, combined_bond_vec, bond_system_idxs);
            }),
            py::arg("num_atoms"), py::arg("bond_idxs"))
       .def("get_num_bonds", &Class::num_bonds);

@@ -25,16 +25,20 @@ namespace tmd {
 template <typename RealType> class FlatBottomBond : public Potential<RealType> {
 
   typedef void (*k_flat_bond_fn)(
-      const int N, const RealType *__restrict__ coords,
+      const int N, const int B, const RealType *__restrict__ coords,
       const RealType *__restrict__ box, const RealType *__restrict__ params,
-      const int *__restrict__ idxs, unsigned long long *__restrict__ du_dx,
+      const int *__restrict__ idxs, const int *__restrict__ system_idxs,
+      unsigned long long *__restrict__ du_dx,
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
+  const int num_batches_;
+  const int num_atoms_;
   const int max_idxs_;
   int cur_num_idxs_;
 
   int *d_bond_idxs_;
+  int *d_system_idxs_; // Which system each bond is associated with
   __int128 *d_u_buffer_;
 
   EnergyAccumulator nrg_accum_;
@@ -44,8 +48,10 @@ private:
 public:
   static const int IDXS_DIM = 2;
 
-  FlatBottomBond(const int num_atoms,
-                 const std::vector<int> &bond_idxs); // [B, 2]
+  FlatBottomBond(const int num_batches, const int num_atoms,
+                 const std::vector<int> &bond_idxs,  // [B, 2]
+                 const std::vector<int> &system_idxs // [B]
+  );
 
   ~FlatBottomBond();
 
@@ -60,6 +66,8 @@ public:
 
   void set_bonds_device(const int num_bonds, const int *d_bonds,
                         const cudaStream_t stream);
+
+  virtual int batch_size() const override;
 };
 
 } // namespace tmd
