@@ -27,9 +27,11 @@ namespace tmd {
 
 template <typename RealType>
 NonbondedPairListPrecomputed<RealType>::NonbondedPairListPrecomputed(
-    const int num_atoms, const std::vector<int> &idxs, const RealType beta,
+    const int num_batches, const int num_atoms, const std::vector<int> &idxs,
+    const std::vector<int> &system_idxs, const RealType beta,
     const RealType cutoff)
-    : B_(idxs.size() / 2), beta_(beta), cutoff_(cutoff), nrg_accum_(1, B_),
+    : num_batches_(num_batches), num_atoms_(num_atoms), B_(idxs.size() / 2),
+      beta_(beta), cutoff_(cutoff), nrg_accum_(num_batches_, B_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -47,6 +49,12 @@ NonbondedPairListPrecomputed<RealType>::NonbondedPairListPrecomputed(
     throw std::runtime_error("idxs.size() must be exactly 2*B!");
   }
 
+  if (system_idxs.size() != B_) {
+    throw std::runtime_error(
+        "system_idxs.size() != (pair_idxs.size() / 2), got " +
+        std::to_string(system_idxs.size()) + " and " + std::to_string(B_));
+  }
+
   for (int b = 0; b < B_; b++) {
     auto src = idxs[b * 2 + 0];
     auto dst = idxs[b * 2 + 1];
@@ -62,11 +70,17 @@ NonbondedPairListPrecomputed<RealType>::NonbondedPairListPrecomputed(
                        cudaMemcpyHostToDevice));
 
   cudaSafeMalloc(&d_u_buffer_, B_ * sizeof(*d_u_buffer_));
+
+  cudaSafeMalloc(&d_system_idxs_, B_ * sizeof(*d_system_idxs_));
+
+  gpuErrchk(cudaMemcpy(d_system_idxs_, &system_idxs[0],
+                       B_ * sizeof(*d_system_idxs_), cudaMemcpyHostToDevice));
 };
 
 template <typename RealType>
 NonbondedPairListPrecomputed<RealType>::~NonbondedPairListPrecomputed() {
   gpuErrchk(cudaFree(d_idxs_));
+  gpuErrchk(cudaFree(d_system_idxs_));
   gpuErrchk(cudaFree(d_u_buffer_));
 };
 
@@ -76,7 +90,6 @@ void NonbondedPairListPrecomputed<RealType>::execute_device(
     const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
-  assert(batches == 1);
   if (P != PARAMS_PER_PAIR * B_) {
     throw std::runtime_error(
         "NonbondedPairListPrecomputed::execute_device(): expected P == " +
@@ -95,13 +108,13 @@ void NonbondedPairListPrecomputed<RealType>::execute_device(
     kernel_idx |= d_u ? 1 << 2 : 0;
 
     kernel_ptrs_[kernel_idx]<<<blocks, tpb, 0, stream>>>(
-        B_, d_x, d_p, d_box, d_idxs_, beta_, cutoff_ * cutoff_, d_du_dx,
-        d_du_dp, d_u == nullptr ? nullptr : d_u_buffer_);
+        num_atoms_, B_, d_x, d_p, d_box, d_idxs_, d_system_idxs_, beta_,
+        cutoff_ * cutoff_, d_du_dx, d_du_dp,
+        d_u == nullptr ? nullptr : d_u_buffer_);
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      // nullptr for the d_system_idxs as batch size is fixed to 1
-      nrg_accum_.sum_device(B_, d_u_buffer_, nullptr, d_u, stream);
+      nrg_accum_.sum_device(B_, d_u_buffer_, d_system_idxs_, d_u, stream);
     }
   }
 };
@@ -136,6 +149,11 @@ void NonbondedPairListPrecomputed<RealType>::du_dp_fixed_to_float(
         FIXED_TO_FLOAT_DU_DP<RealType, FIXED_EXPONENT_DU_DW>(du_dp[idx_w]);
   }
 };
+
+template <typename RealType>
+int NonbondedPairListPrecomputed<RealType>::batch_size() const {
+  return num_batches_;
+}
 
 template class NonbondedPairListPrecomputed<double>;
 template class NonbondedPairListPrecomputed<float>;

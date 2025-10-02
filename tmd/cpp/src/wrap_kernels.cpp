@@ -2314,9 +2314,38 @@ void declare_nonbonded_precomputed(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const int num_atoms,
                        const py::array_t<int, py::array::c_style> &pair_idxs,
-                       double beta, double cutoff) {
+                       const double beta, const double cutoff) {
+             std::vector<int> system_idxs(pair_idxs.shape(0), 0);
+             const int num_batches = 1;
              return new NonbondedPairListPrecomputed<RealType>(
-                 num_atoms, py_array_to_vector(pair_idxs), beta, cutoff);
+                 num_batches, num_atoms, py_array_to_vector(pair_idxs),
+                 system_idxs, beta, cutoff);
+           }),
+           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("beta"),
+           py::arg("cutoff"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &pair_idxs,
+                       const double beta, const double cutoff) {
+             const int num_batches = pair_idxs.size();
+             std::vector<int> combined_pair_idxs;
+             std::vector<int> system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_batches; i++) {
+               const unsigned long bond_arr_size = pair_idxs[i].size();
+               combined_pair_idxs.resize(combined_pair_idxs.size() +
+                                         bond_arr_size);
+               std::memcpy(combined_pair_idxs.data() + offset,
+                           pair_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               system_idxs.resize(system_idxs.size() + pair_idxs[i].shape(0));
+               std::fill(system_idxs.end() - pair_idxs[i].shape(0),
+                         system_idxs.end(), i);
+             }
+             return new NonbondedPairListPrecomputed<RealType>(
+                 num_batches, num_atoms, combined_pair_idxs, system_idxs, beta,
+                 cutoff);
            }),
            py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("beta"),
            py::arg("cutoff"));

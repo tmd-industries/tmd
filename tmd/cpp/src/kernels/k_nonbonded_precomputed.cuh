@@ -26,25 +26,31 @@ static const int PARAMS_PER_PAIR = PARAMS_PER_ATOM;
 template <typename RealType, bool COMPUTE_U, bool COMPUTE_DU_DX,
           bool COMPUTE_DU_DP>
 void __global__ k_nonbonded_precomputed(
+    const int N,                         // Number of atoms in each system
     const int M,                         // number of pairs
     const RealType *__restrict__ coords, // [N, 3] coordinates
     const RealType *__restrict__ params, // [M, 4] q_ij, s_ij, e_ij, w_offset_ij
     const RealType *__restrict__ box,    // box vectors
     const int *__restrict__ pair_idxs,   // [M, 2] pair-list of atoms
+    const int *__restrict__ system_idxs, // [M] Which system the pair is from
     const RealType beta, const RealType cutoff_squared,
     unsigned long long *__restrict__ du_dx,
     unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer) {
 
-  const RealType box_x = box[0 * 3 + 0];
-  const RealType box_y = box[1 * 3 + 1];
-  const RealType box_z = box[2 * 3 + 2];
-
-  const RealType inv_box_x = rcp_rn(box_x);
-  const RealType inv_box_y = rcp_rn(box_y);
-  const RealType inv_box_z = rcp_rn(box_z);
-
   int pair_idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (pair_idx < M) {
+
+    const int system_idx = system_idxs[pair_idx];
+    const int coord_offset = system_idx * N;
+    const int box_offset = system_idx * 9;
+
+    const RealType box_x = box[box_offset + 0 * 3 + 0];
+    const RealType box_y = box[box_offset + 1 * 3 + 1];
+    const RealType box_z = box[box_offset + 2 * 3 + 2];
+
+    const RealType inv_box_x = rcp_rn(box_x);
+    const RealType inv_box_y = rcp_rn(box_y);
+    const RealType inv_box_z = rcp_rn(box_z);
 
     int params_ij_idx = pair_idx * PARAMS_PER_PAIR;
     RealType q_ij = params[params_ij_idx + PARAM_OFFSET_CHARGE];
@@ -57,8 +63,8 @@ void __global__ k_nonbonded_precomputed(
     RealType g_eps_ij = 0;
     RealType g_dw_ij = 0;
 
-    int atom_i_idx = pair_idxs[pair_idx * 2 + 0];
-    int atom_j_idx = pair_idxs[pair_idx * 2 + 1];
+    const int atom_i_idx = pair_idxs[pair_idx * 2 + 0] + coord_offset;
+    const int atom_j_idx = pair_idxs[pair_idx * 2 + 1] + coord_offset;
 
     RealType ci_x = coords[atom_i_idx * 3 + 0];
     RealType ci_y = coords[atom_i_idx * 3 + 1];
