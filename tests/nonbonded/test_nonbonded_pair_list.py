@@ -8,7 +8,7 @@ pytestmark = [pytest.mark.memcheck]
 
 
 def test_nonbonded_pair_list_invalid_pair_idxs():
-    with pytest.raises(RuntimeError, match=r"pair_idxs.size\(\) must be even, but got 1"):
+    with pytest.raises(RuntimeError, match=r"idxs dimensions must be 2"):
         NonbondedPairList(4, [0], [0], 2.0, 1.1).to_gpu(np.float32).unbound_impl
 
     with pytest.raises(RuntimeError, match=r"illegal pair with src == dst: 0, 0"):

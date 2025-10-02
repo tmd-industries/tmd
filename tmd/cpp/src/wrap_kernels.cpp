@@ -68,11 +68,11 @@ void verify_bond_idxs(const py::array_t<int, py::array::c_style> &bond_idxs,
                       const int idxs_per_bond) {
   size_t bond_dims = bond_idxs.ndim();
   if (bond_dims != 2) {
-    throw std::runtime_error("bond idxs dimensions must be 2");
+    throw std::runtime_error("idxs dimensions must be 2");
   }
   if (bond_idxs.shape(bond_dims - 1) != idxs_per_bond) {
-    throw std::runtime_error("bonds must be made of up " +
-                             std::to_string(idxs_per_bond) + " idxs");
+    throw std::runtime_error("idxs must be of length " +
+                             std::to_string(idxs_per_bond));
   }
 }
 
@@ -2267,6 +2267,7 @@ void declare_log_flat_bottom_bond(py::module &m, const char *typestr) {
       .def(py::init([](const int num_atoms,
                        const py::array_t<int, py::array::c_style> &bond_idxs,
                        const double beta) {
+             verify_bond_idxs(bond_idxs, 2);
              std::vector<int> bond_system_idxs(bond_idxs.shape(0), 0);
              const int num_batches = 1;
              return new LogFlatBottomBond<RealType>(
@@ -2315,6 +2316,7 @@ void declare_nonbonded_precomputed(py::module &m, const char *typestr) {
       .def(py::init([](const int num_atoms,
                        const py::array_t<int, py::array::c_style> &pair_idxs,
                        const double beta, const double cutoff) {
+             verify_bond_idxs(pair_idxs, 2);
              std::vector<int> system_idxs(pair_idxs.shape(0), 0);
              const int num_batches = 1;
              return new NonbondedPairListPrecomputed<RealType>(
@@ -2332,6 +2334,7 @@ void declare_nonbonded_precomputed(py::module &m, const char *typestr) {
              std::vector<int> system_idxs;
              int offset = 0;
              for (int i = 0; i < num_batches; i++) {
+               verify_bond_idxs(pair_idxs[i], 2);
                const unsigned long bond_arr_size = pair_idxs[i].size();
                combined_pair_idxs.resize(combined_pair_idxs.size() +
                                          bond_arr_size);
@@ -2361,6 +2364,7 @@ void declare_chiral_atom_restraint(py::module &m, const char *typestr) {
       .def(
           py::init([](const int num_atoms,
                       const py::array_t<int, py::array::c_style> &idxs) {
+            verify_bond_idxs(idxs, 4);
             std::vector<int> system_idxs(idxs.shape(0), 0);
             return new ChiralAtomRestraint<RealType>(
                 1, num_atoms, py_array_to_vector(idxs), system_idxs);
@@ -2375,6 +2379,7 @@ void declare_chiral_atom_restraint(py::module &m, const char *typestr) {
              std::vector<int> restraint_system_idxs;
              int offset = 0;
              for (int i = 0; i < num_batches; i++) {
+               verify_bond_idxs(restraint_idxs[i], 4);
                const unsigned long restraint_arr_size =
                    restraint_idxs[i].size();
                combined_restraint_vec.resize(combined_restraint_vec.size() +
@@ -2408,6 +2413,7 @@ void declare_chiral_bond_restraint(py::module &m, const char *typestr) {
           py::init([](const int num_atoms,
                       const py::array_t<int, py::array::c_style> &idxs,
                       const py::array_t<int, py::array::c_style> &signs) {
+            verify_bond_idxs(idxs, 4);
             std::vector<int> system_idxs(idxs.shape(0), 0);
             return new ChiralBondRestraint<RealType>(
                 1, num_atoms, py_array_to_vector(idxs),
@@ -2427,6 +2433,7 @@ void declare_chiral_bond_restraint(py::module &m, const char *typestr) {
              int offset = 0;
              int sign_offset = 0;
              for (int i = 0; i < num_batches; i++) {
+               verify_bond_idxs(restraint_idxs[i], 4);
                const unsigned long restraint_arr_size =
                    restraint_idxs[i].size();
                const unsigned long sign_arr_size = signs[i].size();
@@ -2514,7 +2521,7 @@ void declare_centroid_restraint(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const py::array_t<int, py::array::c_style> &group_a_idxs,
                        const py::array_t<int, py::array::c_style> &group_b_idxs,
-                       double kb, double b0) {
+                       const double kb, const double b0) {
              std::vector<int> vec_group_a_idxs =
                  py_array_to_vector(group_a_idxs);
              std::vector<int> vec_group_b_idxs =
@@ -2688,6 +2695,7 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
                       const py::array_t<int, py::array::c_style> &pair_idxs_i,
                       const py::array_t<RealType, py::array::c_style> &scales_i,
                       const RealType beta, const RealType cutoff) {
+            verify_bond_idxs(pair_idxs_i, 2);
             std::vector<int> pair_idxs = py_array_to_vector(pair_idxs_i);
 
             std::vector<RealType> scales = py_array_to_vector(scales_i);
@@ -2712,6 +2720,7 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
              int offset = 0;
              int scale_offset = 0;
              for (int i = 0; i < num_batches; i++) {
+               verify_bond_idxs(pair_idxs[i], 2);
                const unsigned long pair_idxs_arr_size = pair_idxs[i].size();
                const unsigned long sign_arr_size = scales[i].size();
                combined_pair_idxs.resize(combined_pair_idxs.size() +

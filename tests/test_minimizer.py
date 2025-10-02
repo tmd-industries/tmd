@@ -607,7 +607,7 @@ def test_minimizer_toy_system():
     )
     beta = 2.0
     cutoff = 1.2
-    pairlist = NonbondedPairList(2, [0, 1], [1.0, 1.0], beta, cutoff)
+    pairlist = NonbondedPairList(2, [[0, 1]], [[1.0, 1.0]], beta, cutoff)
 
     # Small delta in coordinate space that results in failure
     dx = 0.04

@@ -599,7 +599,7 @@ def test_chiral_atom_restraint(precision, rtol, n_particles=64, n_restraints=35,
     test_impl = potential.to_gpu(precision)
     GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
 
-    with pytest.raises(RuntimeError, match=r"idxs.size\(\) must be exactly 4\*k!"):
+    with pytest.raises(RuntimeError, match="idxs must be of length 4"):
         # wrong length
         bad_idxs = np.array([[0, 1, 2, 3, 4], [4, 4, 3, 2, 1]], dtype=np.int32)
         bad_potential = ChiralAtomRestraint(n_particles, bad_idxs)
@@ -666,7 +666,7 @@ def test_chiral_bond_restraint(precision, rtol, n_particles=64, n_restraints=35,
 
     GradientTest().compare_forces(x, params, box, potential, potential.to_gpu(precision), rtol)
 
-    with pytest.raises(RuntimeError, match=r"idxs.size\(\) must be exactly 4\*R!"):
+    with pytest.raises(RuntimeError, match="idxs must be of length 4"):
         # wrong length idxs
         bad_idxs = np.array([[0, 1, 2, 3, 4], [4, 4, 3, 2, 1]], dtype=np.int32)
         bad_signs = np.array([1, -1], dtype=np.int32)
