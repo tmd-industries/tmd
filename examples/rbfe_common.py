@@ -183,6 +183,8 @@ def run_rbfe_leg(
     if isinstance(res, HREXSimulationResult):
         summary_data["bisected_windows"] = len(res.intermediate_results[-1].initial_states)
         summary_data["normalized_kl_divergence"] = res.hrex_diagnostics.normalized_kl_divergence
+        if res.hrex_diagnostics.mbar_estimates is not None:
+            summary_data["mbar_estimates"] = res.hrex_diagnostics.mbar_estimates
 
     np.savez_compressed(file_client.full_path(leg_path / "results.npz"), **summary_data)
 

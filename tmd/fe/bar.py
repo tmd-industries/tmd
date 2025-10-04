@@ -490,6 +490,10 @@ class MBARConvergence:
         self._kBT = kBT
         self._last_f_k: NDArray | None = None
 
+    def estimates(self) -> list[float]:
+        """Return copy of all estimates collected"""
+        return self._estimates.copy()
+
     def add_estimate_from_u_kln(self, u_kln: NDArray):
         """Estimate dG from a u_kln"""
         last_f_k = self._last_f_k
@@ -507,15 +511,17 @@ class MBARConvergence:
     def add_estimate(self, dG: float):
         """Add pre-computed dG (kJ/mol)"""
         self._estimates.append(dG)
-        # Truncate off the older estimates
-        self._estimates = self._estimates[-self._n_estimates :]
-        assert len(self._estimates) <= self._n_estimates
 
     def max_slope(self) -> float:
         return self._max_delta / self._n_estimates
 
+    def last_n_estimates(self) -> list[float]:
+        """Return the samples, the most recent n estimate) that are currently considered when evaluating termination"""
+        return self._estimates[-self._n_estimates :]
+
     def max_difference(self) -> float:
-        return float(np.max(self._estimates) - np.min(self._estimates))
+        estimates = self.last_n_estimates()
+        return float(np.max(estimates) - np.min(estimates))
 
     def converged(self) -> bool:
         """Determine if the estimates have appeared to converged
@@ -537,14 +543,15 @@ class MBARConvergence:
         return slope < max_slope * self._slope_threshold
 
     def bootstrap_slope(self, n_bootstrap: int = 1000, seed: int = 2025) -> float:
+        """Bootstrap the absolute mean slope of the samples"""
         rng = np.random.default_rng(seed)
-        n_estimates = len(self._estimates)
+        estimates = np.array(self.last_n_estimates())
+        n_estimates = len(estimates)
         assert n_estimates > 0
-        estimates = np.array(self._estimates)
         pairs = rng.choice(np.arange(n_estimates), size=(2, n_bootstrap))
+        valid_pair_idxs = np.argwhere(pairs[0] - pairs[1] != 0).reshape(-1)
+        pairs = pairs[:, valid_pair_idxs]
         slopes = (estimates[pairs[0]] - estimates[pairs[1]]) / np.abs(pairs[0] - pairs[1])
-        # Drop any pairs that are not finite, ie samples from the same position
-        finite_slopes = np.isfinite(slopes)
         # Take the absolute slopes
-        average_slope = np.mean(np.abs(slopes[finite_slopes]))
+        average_slope = np.mean(np.abs(slopes))
         return float(average_slope)

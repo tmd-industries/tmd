@@ -1707,7 +1707,11 @@ def run_sims_hrex(
         for u_kln_by_component in neighbor_ulkns_by_component
     ]
 
-    hrex_diagnostics = HREXDiagnostics(replica_idx_by_state_by_iter, fraction_accepted_by_pair_by_iter)
+    hrex_diagnostics = HREXDiagnostics(
+        replica_idx_by_state_by_iter,
+        fraction_accepted_by_pair_by_iter,
+        None if convergence is None else convergence.estimates(),
+    )
     ws_diagnostics: WaterSamplingDiagnostics | None = None
     if md_params.water_sampling_params is not None:
         ws_diagnostics = WaterSamplingDiagnostics(np.array(water_sampler_proposals_by_state_by_iter, dtype=np.int32))
