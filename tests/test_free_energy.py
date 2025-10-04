@@ -63,9 +63,11 @@ from tmd.md import builders
 from tmd.md.hrex import HREX, HREXDiagnostics, ReplicaIdx
 from tmd.md.states import CoordsVelBox
 from tmd.potentials import (
+    HarmonicAngle,
     HarmonicBond,
     Nonbonded,
     NonbondedPairListPrecomputed,
+    PeriodicTorsion,
     SummedPotential,
     make_summed_potential,
 )
@@ -262,6 +264,12 @@ def test_absolute_vacuum():
     unbound_potentials, sys_params, masses = afe.prepare_vacuum_edge(ff)
     assert np.all(masses == utils.get_mol_masses(mol))
     np.testing.assert_array_almost_equal(afe.prepare_combined_coords(), utils.get_romol_conf(mol))
+    assert set(type(pot) for pot in unbound_potentials) == {
+        HarmonicBond,
+        HarmonicAngle,
+        PeriodicTorsion,
+        NonbondedPairListPrecomputed,
+    }
 
 
 @pytest.mark.nocuda

@@ -26,6 +26,7 @@ from tmd.fe.plots import (
     plot_forward_and_reverse_ddg,
     plot_forward_and_reverse_dg,
     plot_retrospective,
+    plot_retrospective_comparison,
     plot_water_proposals_by_state,
     plot_work,
 )
@@ -140,9 +141,10 @@ def test_plot_water_sampling_proposals():
 @pytest.mark.parametrize("mle_corrected", [False, True])
 def test_plot_retrospective(is_relative, plot_format, mle_corrected):
     rng = np.random.default_rng(2025)
-    pred = rng.uniform(-12, -8, size=25)
-    exp = rng.uniform(-12, -8, size=25)
-    pred_err = rng.uniform(0.01, 0.5, size=25)
+    n = 25
+    pred = rng.uniform(-12, -8, size=n)
+    exp = rng.uniform(-12, -8, size=n)
+    pred_err = rng.uniform(0.01, 0.5, size=n)
 
     output_path = f"retrospective_plot_test.{plot_format}"
     if is_relative:
@@ -162,4 +164,37 @@ def test_plot_retrospective(is_relative, plot_format, mle_corrected):
         is_relative=is_relative,
         pred_label_prefix=pred_label,
         pred_kcal_errs=pred_err,
+    )
+
+
+@pytest.mark.parametrize("is_relative", [True, False])
+@pytest.mark.parametrize("plot_format", ["svg", "png"])
+@pytest.mark.parametrize("mle_corrected", [False, True])
+def test_plot_retrospective_comparison(is_relative, plot_format, mle_corrected):
+    rng = np.random.default_rng(2025)
+
+    n = 25
+
+    pred = rng.uniform(-12, -8, size=n)
+    comp_pred = rng.uniform(-12, -8, size=n)
+    exp = rng.uniform(-12, -8, size=n)
+
+    output_path = f"retrospective_plot_test.{plot_format}"
+    if is_relative:
+        output_path = "relative_" + output_path
+        if mle_corrected:
+            output_path = "mle_corrected_" + output_path
+
+    pred_label = "Pred"
+    if mle_corrected and is_relative:
+        pred_label = "Pred MLE corrected"
+    plot_retrospective_comparison(
+        pred,
+        comp_pred,
+        exp,
+        "dummy_title",
+        output_path,
+        n_bootstrap=5,
+        is_relative=is_relative,
+        pred_label_prefix=pred_label,
     )

@@ -27,6 +27,9 @@ from tmd._vendored.pymbar.utils import kln_to_kn
 
 DG_KEY = "Delta_f"
 DG_ERR_KEY = "dDelta_f"
+DEFAULT_RELATIVE_TOLERANCE = 1e-6  # pymbar default 1e-7
+DEFAULT_MAXIMUM_ITERATIONS = 1_000  # pymbar default 10_000
+DEFAULT_SOLVER_PROTOCOL = "robust"  # more stable in certain cases
 
 logger = logging.getLogger(__name__)
 
@@ -139,21 +142,32 @@ def ukln_to_ukn(u_kln: NDArray) -> tuple[NDArray, NDArray]:
     return u_kn, N_k
 
 
-DEFAULT_RELATIVE_TOLERANCE = 1e-6  # pymbar default 1e-7
-DEFAULT_MAXIMUM_ITERATIONS = 1_000  # pymbar default 10_000
-DEFAULT_SOLVER_PROTOCOL = "robust"  # more stable in certain cases
+def construct_mbar_from_u_kln(
+    u_kln: NDArray,
+    initial_f_k: Optional[NDArray] = None,
+    maximum_iterations: int = DEFAULT_MAXIMUM_ITERATIONS,
+    relative_tolerance: float = DEFAULT_RELATIVE_TOLERANCE,
+    solver_protocol: str = DEFAULT_SOLVER_PROTOCOL,
+):
+    """Construct an MBAR object given an u_kln
 
-
-def df_and_err_from_u_kln(u_kln: NDArray, maximum_iterations: int = DEFAULT_MAXIMUM_ITERATIONS) -> tuple[float, float]:
-    """Compute free energy difference and uncertainty given a 2-state u_kln matrix."""
+    This is useful when wanting to compute multiple MBAR properties (overlap, dG, etc) from a single u_kln,
+    as the construction can be quite expensive.
+    """
     u_kn, N_k = ukln_to_ukn(u_kln)
     mbar = pymbar.mbar.MBAR(
         u_kn,
         N_k,
+        initial_f_k=initial_f_k,
         maximum_iterations=maximum_iterations,
-        relative_tolerance=DEFAULT_RELATIVE_TOLERANCE,
-        solver_protocol=DEFAULT_SOLVER_PROTOCOL,
+        relative_tolerance=relative_tolerance,
+        solver_protocol=solver_protocol,
     )
+    return mbar
+
+
+def df_and_err_from_mbar(mbar: pymbar.mbar.MBAR) -> tuple[float, float]:
+    """Compute free energy difference and uncertainty given an MBAR object"""
     try:
         results = mbar.compute_free_energy_differences()
         df, ddf = results[DG_KEY], results[DG_ERR_KEY]
@@ -165,25 +179,23 @@ def df_and_err_from_u_kln(u_kln: NDArray, maximum_iterations: int = DEFAULT_MAXI
         return df[0, -1], np.nan
 
 
+def df_and_err_from_u_kln(u_kln: NDArray, maximum_iterations: int = DEFAULT_MAXIMUM_ITERATIONS) -> tuple[float, float]:
+    """Compute free energy difference and uncertainty given a k-state u_kln matrix."""
+    mbar = construct_mbar_from_u_kln(u_kln, maximum_iterations=maximum_iterations)
+    return df_and_err_from_mbar(mbar)
+
+
 def df_from_u_kln(
     u_kln: NDArray, initial_f_k: Optional[NDArray] = None, maximum_iterations: int = DEFAULT_MAXIMUM_ITERATIONS
 ) -> float:
-    """Compute free energy difference given a 2-state u_kln matrix."""
-    u_kn, N_k = ukln_to_ukn(u_kln)
-    mbar = pymbar.mbar.MBAR(
-        u_kn,
-        N_k,
-        initial_f_k=initial_f_k,
-        maximum_iterations=maximum_iterations,
-        relative_tolerance=DEFAULT_RELATIVE_TOLERANCE,
-        solver_protocol=DEFAULT_SOLVER_PROTOCOL,
-    )
+    """Compute free energy difference given a K-state u_kln matrix."""
+    mbar = construct_mbar_from_u_kln(u_kln, initial_f_k=initial_f_k, maximum_iterations=maximum_iterations)
     df = mbar.compute_free_energy_differences(compute_uncertainty=False)[DG_KEY]
     return df[0, -1]
 
 
 def bootstrap_bar(
-    u_kln: NDArray, n_bootstrap: int = 100, maximum_iterations: int = DEFAULT_MAXIMUM_ITERATIONS
+    u_kln: NDArray, n_bootstrap: int = 100, maximum_iterations: int = DEFAULT_MAXIMUM_ITERATIONS, seed: int = 2022
 ) -> tuple[float, float, NDArray]:
     """Given a 2-state u_kln matrix, subsample u_kln with replacement and re-run df_from_u_kln many times
 
@@ -195,6 +207,8 @@ def bootstrap_bar(
         number of bootstrap samples
     maximum_iterations : int
         maximum number of solver iterations to use for each sample
+    seed : int
+        Seed for bootstrapping
 
     Returns
     -------
@@ -212,14 +226,13 @@ def bootstrap_bar(
     * TODO[deboggle] -- Use pymbar4 bootstrapping and remove this
     * TODO[performance] -- multiprocessing, if needed?
     """
+    k, l, n = u_kln.shape
+    assert k == l == 2
 
     full_bar_result, full_bar_err = df_and_err_from_u_kln(u_kln, maximum_iterations=maximum_iterations)
 
-    _, _, n = u_kln.shape
-
     bootstrap_samples = []
 
-    seed = 2022
     rng = np.random.default_rng(seed)
 
     for _ in range(n_bootstrap):
@@ -335,6 +348,15 @@ def df_from_ukln_by_lambda(ukln_by_lambda: NDArray) -> tuple[float, float]:
     return np.sum(win_dfs), np.linalg.norm(win_errs)  # type: ignore
 
 
+def pair_overlap_from_mbar(mbar: pymbar.mbar.MBAR) -> float:
+    """Compute the pair overlap from an MBAR object. Must be a 2-state MBAR object"""
+    assert len(mbar.N_k) == 2
+    overlap = 2 * mbar.compute_overlap()["matrix"][0, 1]  # type: ignore
+
+    overlap = np.clip(overlap, 0.0, 1.0)
+    return overlap
+
+
 def pair_overlap_from_ukln(
     u_kln: NDArray, maximum_iterations=DEFAULT_MAXIMUM_ITERATIONS, relative_tolerance=DEFAULT_RELATIVE_TOLERANCE
 ) -> float:
@@ -355,20 +377,10 @@ def pair_overlap_from_ukln(
     """
     l, k, _ = u_kln.shape
     assert l == k == 2
-    u_kn, N_k = ukln_to_ukn(u_kln)
-    overlap = (
-        2
-        * pymbar.MBAR(
-            u_kn,
-            N_k,
-            maximum_iterations=maximum_iterations,
-            relative_tolerance=relative_tolerance,
-            solver_protocol=DEFAULT_SOLVER_PROTOCOL,
-        ).compute_overlap()["matrix"][0, 1]
-    )  # type: ignore
-
-    overlap = np.clip(overlap, 0.0, 1.0)
-    return overlap
+    mbar = construct_mbar_from_u_kln(
+        u_kln, maximum_iterations=maximum_iterations, relative_tolerance=relative_tolerance
+    )
+    return pair_overlap_from_mbar(mbar)
 
 
 def compute_fwd_and_reverse_df_over_time(

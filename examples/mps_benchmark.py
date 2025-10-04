@@ -13,15 +13,19 @@ import time
 from datetime import datetime
 
 from tmd import constants
+from tmd.fe import atom_mapping
 from tmd.fe.free_energy import (
+    HREXParams,
+    InitialState,
     LocalMDParams,
     MDParams,
+    run_sims_hrex,
     sample_with_context_iter,
 )
 from tmd.fe.model_utils import apply_hmr
 from tmd.fe.rbfe import setup_in_env
 from tmd.fe.single_topology import SingleTopology
-from tmd.fe.utils import get_romol_conf
+from tmd.fe.utils import get_romol_conf, read_sdf
 from tmd.ff import Forcefield
 from tmd.lib import Context, LangevinIntegrator, MonteCarloBarostat
 from tmd.md import builders
@@ -46,27 +50,49 @@ class MDSystemData:
     baro: MonteCarloBarostat
     params: MDParams
     ligand_idxs: NDArray
+    hrex: bool
+    hrex_states: int
 
 
 def run_steps(system_data):
     bps = []
 
-    for potential in system_data.pots:
-        bps.append(potential.to_gpu(precision=np.float32).bound_impl)  # get the bound implementation
-
-    movers = [system_data.baro.impl(bps)]
-
-    ctxt = Context(
-        system_data.x0,
-        np.zeros_like(system_data.x0),
-        system_data.box0,
-        system_data.intg.impl(),
-        bps,
-        movers=movers,
-    )
-    start = time.perf_counter()
-    for _ in sample_with_context_iter(ctxt, system_data.params, constants.DEFAULT_TEMP, system_data.ligand_idxs, 1):
-        pass
+    if not system_data.hrex:
+        for potential in system_data.pots:
+            bps.append(potential.to_gpu(precision=np.float32).bound_impl)  # get the bound implementation
+        movers = [system_data.baro.impl(bps)]
+        ctxt = Context(
+            system_data.x0,
+            np.zeros_like(system_data.x0),
+            system_data.box0,
+            system_data.intg.impl(),
+            bps,
+            movers=movers,
+        )
+        start = time.perf_counter()
+        for _ in sample_with_context_iter(
+            ctxt, system_data.params, system_data.intg.temperature, system_data.ligand_idxs, 1
+        ):
+            pass
+    else:
+        states = [
+            InitialState(
+                system_data.pots,
+                system_data.intg,
+                system_data.baro,
+                system_data.x0,
+                np.zeros_like(system_data.x0),
+                system_data.box0,
+                lamb,
+                system_data.ligand_idxs,
+                protein_idxs=np.empty(0, dtype=np.int32),
+                interacting_atoms=system_data.ligand_idxs,
+            )
+            for lamb in np.linspace(0.0, 1.0, system_data.hrex_states)
+        ]
+        assert len(states) == system_data.hrex_states
+        start = time.perf_counter()
+        run_sims_hrex(states, system_data.params, print_diagnostics_interval=None)
 
     return time.perf_counter() - start
 
@@ -76,10 +102,11 @@ def main():
     parser.add_argument("--processes", nargs="+", type=int, default=[1, 4, 8])
     parser.add_argument("--local_md", action="store_true")
     parser.add_argument("--local_md_k", default=10_000.0, type=float)
-    parser.add_argument("--local_md_rad", default=2.0, type=float)
+    parser.add_argument("--local_md_rad", default=1.2, type=float)
+    parser.add_argument("--local_md_steps", default=400, type=int)
     parser.add_argument("--local_md_free_reference", action="store_true", default=False)
-    parser.add_argument("--steps", default=2000, type=int)
-    parser.add_argument("--frames", default=10, type=int)
+    parser.add_argument("--steps", default=400, type=int)
+    parser.add_argument("--frames", default=100, type=int)
     parser.add_argument("--output_suffix", default=None)
     parser.add_argument(
         "--active_thread_percentage",
@@ -87,7 +114,9 @@ def main():
         type=float,
         help="Specify CUDA_MPS_ACTIVE_THREAD_PERCENTAGE for each MPS worker",
     )
-    parser.add_argument("--system", default="dhfr", choices=["dhfr", "hif2a-rbfe", "hif2a"])
+    parser.add_argument("--hrex", action="store_true", help="Run HREX on N states")
+    parser.add_argument("--hrex_states", type=int, default=8, help="Number of HREX states")
+    parser.add_argument("--system", default="dhfr", choices=["dhfr", "hif2a-rbfe", "hif2a", "pfkfb3-rbfe"])
     args = parser.parse_args()
 
     output_suffix = args.output_suffix
@@ -118,11 +147,23 @@ def main():
             25,  # Run Barostat every 25 steps if not running local MD
             seed,
         )
-    elif args.system == "hif2a-rbfe":
-        mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
+    elif args.system.endswith("-rbfe"):
+        if args.system == "hif2a-rbfe":
+            mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
 
-        with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_solv_equil.pdb") as protein_path:
-            host_config = builders.load_pdb_system(str(protein_path), ff.protein_ff, ff.water_ff, box_margin=0.1)
+            with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_solv_equil.pdb") as protein_path:
+                host_config = builders.load_pdb_system(str(protein_path), ff.protein_ff, ff.water_ff, box_margin=0.1)
+        else:
+            with path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf") as ligands_path:
+                mols = read_sdf(ligands_path)
+                # Select the first two mols, not important
+                mol_a = mols[0]
+                mol_b = mols[1]
+            core = atom_mapping.get_cores(mol_a, mol_b, **constants.DEFAULT_ATOM_MAPPING_KWARGS)[0]
+            with path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "6hvi_prepared.pdb") as protein_path:
+                host_config = builders.build_protein_system(
+                    str(protein_path), ff.protein_ff, ff.water_ff, box_margin=0.1
+                )
 
         lamb = 0.0
 
@@ -195,11 +236,11 @@ def main():
 
     md_params = MDParams(
         n_eq_steps=0,
-        n_frames=args.frames,
+        n_frames=args.frames if not args.hrex else args.frames // args.hrex_states,
         steps_per_frame=args.steps,
         seed=seed,
         local_md_params=LocalMDParams(
-            local_steps=args.steps,
+            local_steps=args.local_md_steps,
             k=args.local_md_k,
             min_radius=args.local_md_rad,
             max_radius=args.local_md_rad,
@@ -207,17 +248,11 @@ def main():
         )
         if args.local_md
         else None,
+        hrex_params=HREXParams(),
     )
 
     state = MDSystemData(
-        x0,
-        box0,
-        np.array(hmr_masses),
-        host_fns,
-        intg,
-        baro,
-        md_params,
-        ligand_idxs,
+        x0, box0, np.array(hmr_masses), host_fns, intg, baro, md_params, ligand_idxs, args.hrex, args.hrex_states
     )
 
     ns_per_day_results = []
@@ -225,12 +260,18 @@ def main():
         pool = CUDAMPSPoolClient(1, workers_per_gpu=proc, active_thread_usage_per_worker=args.active_thread_percentage)
         subset_xs = xs[:proc]
         subset_boxes = boxes[:proc]
-        futures = [pool.submit(run_steps, replace(state, x0=x, box0=box)) for x, box in zip(subset_xs, subset_boxes)]
+        futures = [
+            pool.submit(run_steps, replace(state, x0=x, box0=box, params=replace(md_params, seed=md_params.seed + i)))
+            for i, (x, box) in enumerate(zip(subset_xs, subset_boxes))
+        ]
         results = [fut.result() for fut in futures]
-        steps_per_second = (args.steps * args.frames) / np.array(results)
+        frames_run = md_params.steps_per_frame * md_params.n_frames
+        if args.hrex:
+            frames_run *= args.hrex_states
+        steps_per_second = frames_run / np.array(results)
         total_steps_per_second = np.sum(steps_per_second)
         ns_per_day = total_steps_per_second * SECONDS_PER_DAY * dt * 1e-3
-        print(f"{proc} Proccess: {ns_per_day} Ns per day")
+        print(f"{proc} Process: {ns_per_day} Ns per day")
         ns_per_day_results.append(ns_per_day)
 
     plt.plot(args.processes, ns_per_day_results)
@@ -239,6 +280,7 @@ def main():
     plt.title(
         f"{args.system} MPS\nPeak {max(ns_per_day_results):.1f}ns/day"
         + (f"\nLocal MD Rad {args.local_md_rad}" if args.local_md else "")
+        + (f"\n{args.hrex_states} HREX Windows" if args.hrex else "")
     )
     plt.tight_layout()
     plt.savefig(f"{args.system}_ns_per_day{output_suffix}.png", dpi=150)
@@ -247,7 +289,11 @@ def main():
     plt.plot(args.processes, np.array(ns_per_day_results) / ns_per_day_results[0])
     plt.ylabel("Factor improvement")
     plt.xlabel("Processes")
-    plt.title(f"{args.system} MPS" + (f"\nLocal MD Rad {args.local_md_rad}" if args.local_md else ""))
+    plt.title(
+        f"{args.system} MPS"
+        + (f"\nLocal MD Rad {args.local_md_rad}" if args.local_md else "")
+        + (f"\n{args.hrex_states} HREX Windows" if args.hrex else "")
+    )
     plt.tight_layout()
     plt.savefig(f"{args.system}_factor_improvement{output_suffix}.png", dpi=150)
     plt.clf()
