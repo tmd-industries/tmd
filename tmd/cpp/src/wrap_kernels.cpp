@@ -390,15 +390,56 @@ void declare_context(py::module &m, const char *typestr) {
                   std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
                   std::optional<std::vector<std::shared_ptr<Mover<RealType>>>>
                       movers) {
-                 int N = x0.shape()[0];
-                 int D = x0.shape()[1];
-                 verify_coords_and_box(x0, box0);
-                 if (N != v0.shape()[0]) {
-                   throw std::runtime_error("v0 N != x0 N");
+                 if (bps.size() == 0) {
+                   throw std::runtime_error(
+                       "must provide at least one bound potential");
                  }
-
-                 if (D != v0.shape()[1]) {
-                   throw std::runtime_error("v0 D != x0 D");
+                 const int batch_size = bps[0]->potential->batch_size();
+                 if (batch_size < 1) {
+                   throw std::runtime_error(
+                       "batch size of potentials must be at least 1");
+                 }
+                 for (auto bp : bps) {
+                   int bp_batch_size = bp->potential->batch_size();
+                   if (bp_batch_size != batch_size) {
+                     throw std::runtime_error(
+                         "all bound potentials must have potentials with the "
+                         "same batch size: Expected " +
+                         std::to_string(batch_size) + ", got " +
+                         std::to_string(bp_batch_size));
+                   }
+                 }
+                 if (intg->batch_size() != batch_size) {
+                   throw std::runtime_error(
+                       "integrator batch size (" +
+                       std::to_string(intg->batch_size()) +
+                       ") does not match bound potential batch size (" +
+                       std::to_string(batch_size) + ")");
+                 }
+                 int N, D;
+                 if (batch_size == 1) {
+                   N = x0.shape()[0];
+                   D = x0.shape()[1];
+                   verify_coords_and_box(x0, box0);
+                   if (N != v0.shape()[0]) {
+                     throw std::runtime_error("v0 N != x0 N");
+                   }
+                   if (D != v0.shape()[1]) {
+                     throw std::runtime_error("v0 D != x0 D");
+                   }
+                 } else {
+                   if (x0.shape()[0] != batch_size) {
+                     throw std::runtime_error(
+                         "x0 batch size != bound potential batch size");
+                   }
+                   N = x0.shape()[1];
+                   D = x0.shape()[2];
+                   if (N != v0.shape()[1]) {
+                     throw std::runtime_error("v0 N != x0 N");
+                   }
+                   if (D != v0.shape()[2]) {
+                     throw std::runtime_error("v0 D != x0 D");
+                   }
                  }
 
                  std::vector<std::shared_ptr<Mover<RealType>>> v_movers(0);
@@ -411,8 +452,9 @@ void declare_context(py::module &m, const char *typestr) {
                    }
                  }
 
-                 return new Context<RealType>(N, x0.data(), v0.data(),
-                                              box0.data(), intg, bps, v_movers);
+                 return new Context<RealType>(batch_size, N, x0.data(),
+                                              v0.data(), box0.data(), intg, bps,
+                                              v_movers);
                }),
            py::arg("x0"), py::arg("v0"), py::arg("box"), py::arg("integrator"),
            py::arg("bps"), py::arg("movers") = py::none())
@@ -444,10 +486,15 @@ void declare_context(py::module &m, const char *typestr) {
             // computed to be able to allocate the buffers up front to avoid
             // allocating memory twice
             const int n_samples = n_steps / x_interval;
-            py::array_t<RealType, py::array::c_style> out_x_buffer(
-                {n_samples, N, D});
-            py::array_t<RealType, py::array::c_style> box_buffer(
-                {n_samples, D, D});
+            std::vector<int> out_x_shape({n_samples, N, D});
+            std::vector<int> out_box_shape({n_samples, D, D});
+            if (ctxt.batch_size() > 1) {
+              out_x_shape.insert(out_x_shape.begin() + 1, ctxt.batch_size());
+              out_box_shape.insert(out_box_shape.begin() + 1,
+                                   ctxt.batch_size());
+            }
+            py::array_t<RealType, py::array::c_style> out_x_buffer(out_x_shape);
+            py::array_t<RealType, py::array::c_style> box_buffer(out_box_shape);
             auto res = py::make_tuple(out_x_buffer, box_buffer);
             ctxt.multiple_steps(n_steps, n_samples, out_x_buffer.mutable_data(),
                                 box_buffer.mutable_data());
@@ -512,10 +559,15 @@ void declare_context(py::module &m, const char *typestr) {
             // computed to be able to allocate the buffers up front to avoid
             // allocating memory twice
             const int n_samples = n_steps / x_interval;
-            py::array_t<RealType, py::array::c_style> out_x_buffer(
-                {n_samples, N, D});
-            py::array_t<RealType, py::array::c_style> box_buffer(
-                {n_samples, D, D});
+            std::vector<int> out_x_shape({n_samples, N, D});
+            std::vector<int> out_box_shape({n_samples, D, D});
+            if (ctxt.batch_size() > 1) {
+              out_x_shape.insert(out_x_shape.begin() + 1, ctxt.batch_size());
+              out_box_shape.insert(out_box_shape.begin() + 1,
+                                   ctxt.batch_size());
+            }
+            py::array_t<RealType, py::array::c_style> out_x_buffer(out_x_shape);
+            py::array_t<RealType, py::array::c_style> box_buffer(out_box_shape);
             auto res = py::make_tuple(out_x_buffer, box_buffer);
 
             ctxt.multiple_steps_local(
@@ -621,10 +673,15 @@ void declare_context(py::module &m, const char *typestr) {
             // computed to be able to allocate the buffers up front to avoid
             // allocating memory twice
             const int n_samples = n_steps / x_interval;
-            py::array_t<RealType, py::array::c_style> out_x_buffer(
-                {n_samples, N, D});
-            py::array_t<RealType, py::array::c_style> box_buffer(
-                {n_samples, D, D});
+            std::vector<int> out_x_shape({n_samples, N, D});
+            std::vector<int> out_box_shape({n_samples, D, D});
+            if (ctxt.batch_size() > 1) {
+              out_x_shape.insert(out_x_shape.begin() + 1, ctxt.batch_size());
+              out_box_shape.insert(out_box_shape.begin() + 1,
+                                   ctxt.batch_size());
+            }
+            py::array_t<RealType, py::array::c_style> out_x_buffer(out_x_shape);
+            py::array_t<RealType, py::array::c_style> box_buffer(out_box_shape);
             auto res = py::make_tuple(out_x_buffer, box_buffer);
 
             ctxt.multiple_steps_local_selection(
@@ -847,7 +904,8 @@ void declare_integrator(py::module &m, const char *typestr) {
   using Class = Integrator<RealType>;
   std::string pyclass_name = std::string("Integrator_") + typestr;
   py::class_<Class, std::shared_ptr<Class>>(
-      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr());
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def("batch_size", &Class::batch_size);
 }
 
 template <typename RealType>
@@ -858,9 +916,19 @@ void declare_langevin_integrator(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Integrator<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const py::array_t<RealType, py::array::c_style> &masses,
-                       RealType temperature, RealType dt, RealType friction,
-                       int seed) {
-             return new Class(masses.size(), masses.data(), temperature, dt,
+                       const RealType temperature, const RealType dt,
+                       const RealType friction, const int seed) {
+             int batch_size = 1;
+             int N = masses.size();
+             if (masses.ndim() == 2) {
+               batch_size = masses.shape(0);
+               N = masses.shape(1);
+             } else if (masses.ndim() != 1) {
+               throw std::runtime_error(
+                   "masses must be either 1 or 2d dimensional, got " +
+                   std::to_string(masses.ndim()) + " dimensions");
+             }
+             return new Class(batch_size, N, masses.data(), temperature, dt,
                               friction, seed);
            }),
            py::arg("masses"), py::arg("temperature"), py::arg("dt"),
@@ -876,7 +944,17 @@ void declare_velocity_verlet_integrator(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](RealType dt,
                        const py::array_t<RealType, py::array::c_style> &cbs) {
-             return new VelocityVerletIntegrator<RealType>(cbs.size(), dt,
+             int batch_size = 1;
+             int N = cbs.size();
+             if (cbs.ndim() == 2) {
+               batch_size = cbs.shape(0);
+               N = cbs.shape(1);
+             } else if (cbs.ndim() != 1) {
+               throw std::runtime_error(
+                   "cbs must be either 1 or 2d dimensional, got " +
+                   std::to_string(cbs.ndim()) + " dimensions");
+             }
+             return new VelocityVerletIntegrator<RealType>(batch_size, N, dt,
                                                            cbs.data());
            }),
            py::arg("dt"), py::arg("cbs"));
@@ -1388,7 +1466,8 @@ void declare_potential(py::module &m, const char *typestr) {
 
             return py_du_dx;
           },
-          py::arg("coords"), py::arg("params"), py::arg("box"));
+          py::arg("coords"), py::arg("params"), py::arg("box"))
+      .def("batch_size", &Class::batch_size);
 }
 
 template <typename RealType>
@@ -1402,8 +1481,8 @@ void declare_bound_potential(py::module &m, const char *typestr) {
           py::init([](std::shared_ptr<Potential<RealType>> potential,
                       const py::array_t<RealType, py::array::c_style> &params) {
             int params_dim = 1; // Has to be at least one
-            if (params.ndim() == 2) {
-              params_dim = params.shape()[1];
+            if (params.ndim() >= 2) {
+              params_dim = params.shape()[params.ndim() - 1];
             }
             return new BoundPotential<RealType>(
                 potential, py_array_to_vector(params), params_dim);
@@ -1426,29 +1505,49 @@ void declare_bound_potential(py::module &m, const char *typestr) {
              const py::array_t<RealType, py::array::c_style> &coords,
              const py::array_t<RealType, py::array::c_style> &box,
              bool compute_du_dx, bool compute_u) -> py::tuple {
-            const long unsigned int N = coords.shape()[0];
-            const long unsigned int D = coords.shape()[1];
-            verify_coords_and_box(coords, box);
-
+            long unsigned int N;
+            long unsigned int D;
+            if (coords.ndim() == 2) {
+              N = coords.shape()[0];
+              D = coords.shape()[1];
+              verify_coords_and_box(coords, box);
+            } else if (coords.ndim() == 3) {
+              N = coords.shape(1);
+              D = coords.shape(2);
+              // for (int i = 0; i  < coords.shape(0); i++) {
+              //   verify_coords_and_box(coords[i], box[i]);
+              // }
+            } else {
+              // Should always fail at this stage
+              verify_coords_and_box(coords, box);
+              throw std::runtime_error(
+                  "BoundPotential::execute failed for unknown reason");
+            }
+            const int batch_size = bp.potential->batch_size();
             // initialize with fixed garbage values for debugging convenience
             // (these should be overwritten by `execute_host`)
             std::vector<unsigned long long> du_dx;
             if (compute_du_dx) {
-              du_dx.assign(N * D, 9999);
+              du_dx.assign(batch_size * N * D, 9999);
             }
             std::vector<__int128> u;
             if (compute_u) {
-              u.assign(1, 9999);
+              u.assign(batch_size, 9999);
             }
 
-            bp.execute_host(1, N, coords.data(), box.data(),
+            bp.execute_host(batch_size, N, coords.data(), box.data(),
                             compute_du_dx ? &du_dx[0] : nullptr,
                             compute_u ? &u[0] : nullptr);
 
             auto result = py::make_tuple(py::none(), py::none());
 
             if (compute_du_dx) {
-              py::array_t<RealType, py::array::c_style> py_du_dx({N, D});
+              std::vector<long unsigned int> du_dx_shape = {N, D};
+              if (batch_size > 1) {
+                du_dx_shape.insert(du_dx_shape.begin(),
+                                   static_cast<long unsigned int>(batch_size));
+              }
+              py::array_t<RealType, py::array::c_style> py_du_dx(du_dx_shape);
               if (compute_du_dx) {
                 for (unsigned int i = 0; i < du_dx.size(); i++) {
                   py_du_dx.mutable_data()[i] =
@@ -1458,8 +1557,11 @@ void declare_bound_potential(py::module &m, const char *typestr) {
               result[0] = py_du_dx;
             }
             if (compute_u) {
-              RealType u_sum = convert_energy_to_fp(u[0]);
-              result[1] = u_sum;
+              py::array_t<RealType, py::array::c_style> py_u({batch_size});
+              for (unsigned int i = 0; i < py_u.size(); i++) {
+                py_u.mutable_data()[i] = convert_energy_to_fp(u[i]);
+              }
+              result[1] = py_u;
             }
 
             return result;

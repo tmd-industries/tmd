@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,6 +24,8 @@ from common import GradientTest, prepare_nb_system
 
 from tmd import constants
 from tmd.fe.model_utils import apply_hmr
+from tmd.fe.topology import BaseTopology
+from tmd.fe.utils import get_mol_masses, get_romol_conf
 from tmd.ff import Forcefield
 from tmd.integrator import langevin_coefficients
 from tmd.lib import Context, LangevinIntegrator, MonteCarloBarostat, VelocityVerletIntegrator, custom_ops
@@ -30,10 +33,14 @@ from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.enhanced import get_solvent_phase_system
 from tmd.md.minimizer import check_force_norm, replace_conformer_with_minimized
 from tmd.potentials import (
+    BoundPotential,
+    ChiralAtomRestraint,
     HarmonicAngle,
     HarmonicBond,
     Nonbonded,
     NonbondedInteractionGroup,
+    NonbondedPairList,
+    NonbondedPairListPrecomputed,
     PeriodicTorsion,
     make_summed_potential,
 )
@@ -316,6 +323,9 @@ def test_context_validation_of_bound_pots():
 
     verlet = VelocityVerletIntegrator(dt, masses)
 
+    with pytest.raises(RuntimeError, match="must provide at least one bound potential"):
+        Context(coords, v0, box, verlet.impl(), [])
+
     coords = coords.astype(np.float32)
     v0 = v0.astype(np.float32)
     box = box.astype(np.float32)
@@ -472,6 +482,115 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
 
     with pytest.raises(RuntimeError, match="store_x_interval must be greater than or equal to zero"):
         ctxt.multiple_steps_local_selection(100, 1, np.array([2], dtype=np.int32), store_x_interval=-1)
+
+
+@pytest.mark.memcheck
+@pytest.mark.parametrize("precision", [np.float32, np.float64])
+@pytest.mark.parametrize("seed", [2025])
+@pytest.mark.parametrize("batch_size", [1, 2, 128])
+def test_vacuum_batch_simulation(precision, seed, batch_size):
+    rng = np.random.default_rng(seed)
+
+    dt = 2.5e-3
+
+    mol, _ = get_biphenyl()
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    # Minimize the starting pose
+    replace_conformer_with_minimized(mol, ff)
+
+    bt = BaseTopology(mol, ff)
+    guest_system = bt.setup_end_state()
+
+    masses = get_mol_masses(mol)
+
+    masses = apply_hmr(masses, get_bond_list(guest_system.bond.potential)).astype(precision)
+
+    box0 = np.eye(3) * 10.0
+
+    x0 = get_romol_conf(mol)
+    batch_coords = [x0.astype(precision)]
+    batch_boxes = [box0.astype(precision)]
+    assert batch_size >= 1
+    while len(batch_coords) < batch_size:
+        batch_coords.append(np.array(x0 + rng.uniform(-1e-3, 1e-3, size=x0.shape), dtype=precision))
+        batch_boxes.append(np.array(box0 * rng.uniform(0.8, 1.2), dtype=precision))
+
+    batch_v0 = [np.zeros_like(coords) for coords in batch_coords]
+
+    verlet = VelocityVerletIntegrator(dt, [masses for _ in range(batch_size)])
+
+    batch_pots = []
+    for pot in guest_system.get_U_fns():
+        unbound_pot = pot.potential
+        # TBD: Implement a `pot.combine(other_pot) method
+        if isinstance(unbound_pot, (HarmonicBond, HarmonicAngle, PeriodicTorsion, ChiralAtomRestraint)):
+            klass = type(unbound_pot)
+            unbound_batch = klass(unbound_pot.num_atoms, [unbound_pot.idxs for _ in range(batch_size)])
+            params = [pot.params for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        elif isinstance(unbound_pot, NonbondedPairList):
+            klass = type(unbound_pot)
+            unbound_batch = klass(
+                unbound_pot.num_atoms,
+                [unbound_pot.idxs for _ in range(batch_size)],
+                [unbound_pot.rescale_mask for _ in range(batch_size)],
+                unbound_pot.beta,
+                unbound_pot.cutoff,
+            )
+            params = [pot.params for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        elif isinstance(unbound_pot, NonbondedPairListPrecomputed):
+            klass = type(unbound_pot)
+            unbound_batch = klass(
+                unbound_pot.num_atoms,
+                [unbound_pot.idxs for _ in range(batch_size)],
+                unbound_pot.beta,
+                unbound_pot.cutoff,
+            )
+            params = [pot.params for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        else:
+            assert False, str(type(unbound_pot))
+
+    for pot in batch_pots:
+        assert pot.potential.to_gpu(precision).unbound_impl.batch_size() == batch_size
+        bp = pot.to_gpu(precision).bound_impl
+        # print("running")
+        du_dx, u = bp.execute(np.stack(batch_coords), np.stack(batch_boxes))
+
+        # Sanity check
+        assert np.all(np.isfinite(du_dx))
+        assert np.all(np.isfinite(u))
+        if batch_size > 1:
+            assert du_dx.shape == (batch_size, len(x0), 3)
+            assert u.shape == (batch_size,)
+            assert all([np.all(du_dx[0] == du_dx_batch for du_dx_batch in du_dx)])
+            assert all([np.all(u[0] == u_batch for u_batch in u)])
+        else:
+            assert du_dx.shape == (len(x0), 3)
+            assert u.shape == (batch_size,)
+
+    ctxt = Context(
+        np.stack(batch_coords).squeeze(),
+        np.stack(batch_v0).squeeze(),
+        np.stack(batch_boxes).squeeze(),
+        verlet.impl(precision),
+        [bp.to_gpu(precision).bound_impl for bp in batch_pots],
+        precision=precision,
+    )
+    xs, boxes = ctxt.multiple_steps(400)
+    assert np.all(np.isfinite(xs))
+    assert np.all(np.isfinite(boxes))
+    if batch_size > 1:
+        assert xs.shape == (1, batch_size, len(x0), 3)
+        assert boxes.shape == (1, batch_size, 3, 3)
+        # Each batch should be slightly different
+        for x_batch in xs.reshape(batch_size, len(x0), 3)[1:]:
+            assert np.all(xs[0, 0] != x_batch)
+
+    else:
+        assert xs.shape == (1, len(x0), 3)
+        assert boxes.shape == (1, 3, 3)
 
 
 @pytest.mark.memcheck
@@ -735,11 +854,6 @@ def test_local_md_initialization(freeze_reference):
     intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
 
     steps = 10
-
-    # Construct context with no potentials, should fail to initialize.
-    ctxt = Context(coords, v0, box, intg.impl(), [])
-    with pytest.raises(RuntimeError, match="must have exactly one NonbondedInteractionGroup potential"):
-        ctxt.setup_local_md(constants.DEFAULT_TEMP, freeze_reference)
 
     ctxt = Context(coords, v0, box, intg.impl(), bps * 2)
 
