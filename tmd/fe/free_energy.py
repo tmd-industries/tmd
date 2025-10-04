@@ -1654,7 +1654,7 @@ def run_sims_hrex(
             convergence.add_estimate_from_u_kln(iterated_u_kln.sum(0)[:, :, : current_frame + 1])
             if convergence.converged():
                 print(
-                    f"HREX terminating early after {current_frame + 1} frames estimates converging, max change in estimates is {convergence.max_difference():.2f}"
+                    f"HREX terminating after {current_frame + 1} frames, the MBAR estimates converged.  The max difference in the last {md_params.hrex_params.early_termination_params.num_samples} estimates is {convergence.max_difference():.2f} kJ/mol"
                 )
                 break
 
