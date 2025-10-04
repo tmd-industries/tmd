@@ -33,6 +33,8 @@ template <typename RealType> struct BoundPotential {
   DeviceBuffer<RealType> d_p;
   std::shared_ptr<Potential<RealType>> potential;
 
+  int batch_size() const;
+
   std::vector<RealType> get_params() const;
 
   void set_params(const std::vector<RealType> &params);

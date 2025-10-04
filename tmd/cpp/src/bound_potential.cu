@@ -26,7 +26,7 @@ BoundPotential<RealType>::BoundPotential(
     const std::vector<RealType> &params, const int params_dim)
     : size(params.size()), params_dim(params_dim), d_p(size),
       potential(potential) {
-  assert(this->size % this->params_dim == 0);
+  assert(this->params_dim == 0 || this->size % this->params_dim == 0);
   set_params(params);
 }
 
@@ -38,6 +38,10 @@ void BoundPotential<RealType>::execute_device(
   this->potential->execute_device(batches, N, this->size, d_x,
                                   this->size > 0 ? this->d_p.data : nullptr,
                                   d_box, d_du_dx, d_du_dp, d_u, stream);
+}
+
+template <typename RealType> int BoundPotential<RealType>::batch_size() const {
+  return this->potential->batch_size();
 }
 
 template <typename RealType>

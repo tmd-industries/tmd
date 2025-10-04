@@ -19,7 +19,7 @@ import numpy as np
 
 Array: TypeAlias = jax.Array | np.ndarray
 Conf: TypeAlias = Array
-Params: TypeAlias = Array
+Params: TypeAlias = Array | list[Array]
 Box: TypeAlias = Array
 
 PotentialFxn = Callable[[Conf, Params, Box], float | jax.Array]

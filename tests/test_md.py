@@ -23,6 +23,8 @@ from common import GradientTest, prepare_nb_system
 
 from tmd import constants
 from tmd.fe.model_utils import apply_hmr
+from tmd.fe.topology import BaseTopology
+from tmd.fe.utils import get_mol_masses, get_romol_conf
 from tmd.ff import Forcefield
 from tmd.integrator import langevin_coefficients
 from tmd.lib import Context, LangevinIntegrator, MonteCarloBarostat, VelocityVerletIntegrator, custom_ops
@@ -30,10 +32,14 @@ from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.enhanced import get_solvent_phase_system
 from tmd.md.minimizer import check_force_norm, replace_conformer_with_minimized
 from tmd.potentials import (
+    BoundPotential,
+    ChiralAtomRestraint,
     HarmonicAngle,
     HarmonicBond,
     Nonbonded,
     NonbondedInteractionGroup,
+    NonbondedPairList,
+    NonbondedPairListPrecomputed,
     PeriodicTorsion,
     make_summed_potential,
 )
@@ -472,6 +478,99 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
 
     with pytest.raises(RuntimeError, match="store_x_interval must be greater than or equal to zero"):
         ctxt.multiple_steps_local_selection(100, 1, np.array([2], dtype=np.int32), store_x_interval=-1)
+
+
+@pytest.mark.memcheck
+@pytest.mark.parametrize("precision", [np.float32, np.float64])
+@pytest.mark.parametrize("seed", [2025])
+@pytest.mark.parametrize("batch_size", [1, 2, 128])
+def test_vacuum_batch_simulation(precision, seed, batch_size):
+    rng = np.random.default_rng(seed)
+
+    # dt = 2.5e-3
+
+    mol, _ = get_biphenyl()
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    # Minimize the starting pose
+    replace_conformer_with_minimized(mol, ff)
+
+    bt = BaseTopology(mol, ff)
+    guest_system = bt.setup_end_state()
+
+    masses = get_mol_masses(mol)
+
+    masses = apply_hmr(masses, get_bond_list(guest_system.bond.potential)).astype(precision)
+
+    box0 = np.eye(3) * 10.0
+
+    x0 = get_romol_conf(mol)
+    batch_coords = [x0.astype(precision)]
+    batch_boxes = [box0.astype(precision)]
+    assert batch_size >= 1
+    while len(batch_coords) < batch_size:
+        batch_coords.append(np.array(x0 + rng.uniform(-1e-3, 1e-3, size=x0.shape), dtype=precision))
+        batch_boxes.append(np.array(box0 * rng.uniform(0.8, 1.2), dtype=precision))
+
+    # batch_v0 = [np.zeros_like(coords) for coords in batch_coords]
+
+    # verlet = VelocityVerletIntegrator(dt, [masses for _ in range(batch_size)])
+
+    batch_pots = []
+    for pot in guest_system.get_U_fns():
+        unbound_pot = pot.potential
+        if isinstance(unbound_pot, (HarmonicBond, HarmonicAngle, PeriodicTorsion, ChiralAtomRestraint)):
+            klass = type(unbound_pot)
+            unbound_batch = klass(unbound_pot.num_atoms, [unbound_pot.idxs for _ in range(batch_size)])
+            params = [pot.params for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        elif isinstance(unbound_pot, NonbondedPairList):
+            klass = type(unbound_pot)
+            unbound_batch = klass(
+                unbound_pot.num_atoms,
+                [unbound_pot.idxs for _ in range(batch_size)],
+                [unbound_pot.rescale_mask for _ in range(batch_size)],
+                unbound_pot.beta,
+                unbound_pot.cutoff,
+            )
+            params = [pot.params for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        elif isinstance(unbound_pot, NonbondedPairListPrecomputed):
+            klass = type(unbound_pot)
+            unbound_batch = klass(
+                unbound_pot.num_atoms,
+                [unbound_pot.idxs for _ in range(batch_size)],
+                unbound_pot.beta,
+                unbound_pot.cutoff,
+            )
+            params = [pot.params for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        else:
+            assert False, str(type(unbound_pot))
+
+    for pot in batch_pots:
+        assert pot.potential.to_gpu(precision).unbound_impl.batch_size() == batch_size
+        bp = pot.to_gpu(precision).bound_impl
+        # print("running")
+        du_dx, u = bp.execute(np.stack(batch_coords), np.stack(batch_boxes))
+
+        if batch_size > 1:
+            assert du_dx.shape == (batch_size, len(x0), 3)
+            assert u.shape == (batch_size,)
+        else:
+            assert du_dx.shape == (len(x0), 3)
+            assert u.shape == (batch_size,)
+        # Sanity check
+        assert np.all(np.isfinite(du_dx))
+        assert np.all(np.isfinite(u))
+
+        # for _ in range(batch_size):
+
+    # ctxt = BatchContext(batch_coords, batch_v0, batch_boxes, verlet.impl(precision), bps)
+
+    # xs, boxes = ctxt.multiple_steps(100)
+
+    # assert xs.shape == (1, batch_size, *x0.shape)
+    # assert boxes.shape(1, batch_size, *box0.shape)
 
 
 @pytest.mark.memcheck
