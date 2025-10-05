@@ -1050,7 +1050,7 @@ def run_sims_bisection(
         context.set_v_t(initial_state.v0)
         context.set_box(initial_state.box0)
         for bp, state_bp in zip(bound_potentials, initial_state.potentials):
-            bp.set_params(state_bp.params)
+            bp.set_params(state_bp.params)  # type: ignore
         for mover in context.get_movers():
             mover.set_step(0)
             if isinstance(mover, WATER_SAMPLER_MOVERS):
@@ -1061,7 +1061,7 @@ def run_sims_bisection(
             replace(md_params, seed=rng.integers(np.iinfo(np.int32).max)),
             temperature,
             initial_state.ligand_idxs,
-            max_buffer_frames=100
+            max_buffer_frames=100,
         )
         return traj
 
