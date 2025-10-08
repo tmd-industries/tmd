@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +15,7 @@
 
 #pragma once
 
+#include "cublas_v2.h"
 #include "curand.h"
 #include "curand_kernel.h"
 #include "exceptions.hpp"
@@ -75,6 +77,28 @@ curandStatus_t templateCurandUniform(curandGenerator_t generator,
 curandStatus_t templateCurandUniform(curandGenerator_t generator,
                                      double *outputPtr, size_t n);
 
+cublasStatus_t templateCublasNorm2(cublasHandle_t handle, size_t n, float *input_ptr, size_t stride, float *output_ptr);
+
+cublasStatus_t
+templateCublasNorm2(cublasHandle_t handle, size_t n, double *input_ptr, size_t stride, double *output_ptr);
+
+cublasStatus_t templateCublasDot(
+    cublasHandle_t handle,
+    size_t n,
+    float *input_ptr_x,
+    size_t x_stride,
+    float *input_ptr_y,
+    size_t y_stride,
+    float *output_ptr);
+cublasStatus_t templateCublasDot(
+    cublasHandle_t handle,
+    size_t n,
+    double *input_ptr_x,
+    size_t x_stride,
+    double *input_ptr_y,
+    size_t y_stride,
+    double *output_ptr);
+
 #define gpuErrchk(ans)                                                         \
   {                                                                            \
     gpuAssert((ans), __FILE__, __LINE__);                                      \
@@ -117,6 +141,18 @@ inline void curandAssert(curandStatus_t code, const char *file, int line,
     if (abort)
       exit(code);
   }
+}
+
+#define cublasErrchk(ans)                                                                                              \
+    {                                                                                                                  \
+        cublasAssert((ans), __FILE__, __LINE__);                                                                       \
+    }
+inline void cublasAssert(cublasStatus_t code, const char *file, int line, bool abort = true) {
+    if (code != CUBLAS_STATUS_SUCCESS) {
+        fprintf(stderr, "CUBLAS failure, code: %d %s %d\n", code, file, line);
+        if (abort)
+            exit(code);
+    }
 }
 
 /* cudaSafeMalloc is equivalent to gpuErrchk(cudaMalloc(...)) except that it
