@@ -542,7 +542,7 @@ def test_run_rbfe_legs_local(
             n_frames=n_frames,
             n_windows=n_windows,
             forcefield=DEFAULT_FF,
-            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}",
+            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}_{local_steps}",
             local_md_steps=local_steps,
             local_md_radius=2.0,
         )
