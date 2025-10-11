@@ -22,12 +22,19 @@ from rdkit import Chem
 
 from tmd.constants import DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, ONE_4PI_EPS0, NBParamIdx
 from tmd.fe.free_energy import HostConfig
-from tmd.fe.utils import get_romol_conf, read_sdf, set_romol_conf
+from tmd.fe.utils import get_romol_conf, read_sdf, read_sdf_mols_by_name, set_romol_conf
 from tmd.ff import sanitize_water_ff
 from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
-from tmd.md.builders import build_protein_system, build_water_system
+from tmd.md.builders import (
+    WATER_RESIDUE_NAME,
+    build_protein_system,
+    build_water_system,
+    get_box_from_coords,
+    strip_units,
+)
 from tmd.md.minimizer import check_force_norm
 from tmd.potentials import Nonbonded
+from tmd.potentials.jax_utils import idxs_within_cutoff
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 from tmd.utils import path_to_internal_file
 
@@ -378,3 +385,42 @@ def test_build_protein_system():
     host_atoms_with_moved_ligands = moved_host_config.conf.shape[0] - moved_host_config.num_water_atoms
     assert num_host_atoms == host_atoms_with_moved_ligands
     assert compute_box_volume(host_config.box) < compute_box_volume(moved_host_config.box)
+
+
+@pytest.mark.nocuda
+def test_build_protein_system_removal_of_clashy_waters_in_pdb():
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "ligands.sdf") as sdf_path:
+        mols_by_name = read_sdf_mols_by_name(sdf_path)
+    mol_a = mols_by_name["43"]
+    mol_b = mols_by_name["44"]
+
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "cdk8_structure.pdb") as pdb_path:
+        host_pdbfile = str(pdb_path)
+    pdb_obj = app.PDBFile(host_pdbfile)
+    pdb_coords = strip_units(pdb_obj.positions)
+
+    box = get_box_from_coords(pdb_coords)
+
+    mols = [mol_a, mol_b]
+    ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
+
+    cutoff = 0.2
+
+    clashy_idxs = idxs_within_cutoff(pdb_coords, ligand_coords, box, cutoff=cutoff)
+    assert len(clashy_idxs) >= 1
+    clash_set = set(clashy_idxs.tolist())
+    clashy_residues = [res for res in pdb_obj.topology.residues() for atom in res.atoms() if atom.index in clash_set]
+    assert all(res.name == WATER_RESIDUE_NAME for res in clashy_residues)
+
+    host_config = build_protein_system(host_pdbfile, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, mols=mols, box_margin=0.1)
+    from tmd.fe.cif_writer import CIFWriter
+
+    writer = CIFWriter([host_config.omm_topology, *mols], "jank.cif")
+    writer.write_frame(np.concatenate([host_config.conf, ligand_coords]) * 10.0)
+    writer.close()
+
+    clashy_idxs = idxs_within_cutoff(host_config.conf, ligand_coords, host_config.box, cutoff=cutoff)
+    clashy_residues = [
+        res for res in host_config.omm_topology.residues() for atom in res.atoms() if atom.index in clashy_idxs
+    ]
+    assert len(clashy_idxs) == 0

@@ -71,7 +71,6 @@ def replace_clashy_waters(
     modeller: app.Modeller,
     host_coords: NDArray[np.float64],
     box: NDArray[np.float64],
-    water_idxs: NDArray[np.int_],
     mols: list[Chem.Mol],
     host_ff: app.ForceField,
     water_ff: str,
@@ -91,9 +90,6 @@ def replace_clashy_waters(
     box: NDArray[np.float64]
         Box to evaluate PBCs under
 
-    water_idxs: NDArray[int]
-        The indices of all of the water atoms in the system.
-
     mols: list[Mol]
         List of molecules to determine which waters are clashy
 
@@ -109,13 +105,21 @@ def replace_clashy_waters(
     if len(mols) == 0:
         return
 
-    water_coords = host_coords[water_idxs]
-    ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
-    clashy_idxs = idxs_within_cutoff(water_coords, ligand_coords, box, cutoff=clash_distance)
+    def get_clashy_idxs():
+        water_idxs = np.concatenate(
+            [[a.index for a in res.atoms()] for res in modeller.topology.residues() if res.name == WATER_RESIDUE_NAME]
+        )
+        water_coords = strip_units(modeller.positions)[water_idxs]
+        ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
+        idxs = idxs_within_cutoff(water_coords, ligand_coords, box, cutoff=clash_distance)
+        if len(idxs) > 0:
+            # Offset the clashy idxs with the first atom idx, else could be pointing at non-water atoms
+            idxs += np.min(water_idxs)
+        return idxs
+
+    clashy_idxs = get_clashy_idxs()
     if len(clashy_idxs) == 0:
         return
-    # Offset the clashy idxs with the first atom idx, else could be pointing at non-water atoms
-    clashy_idxs += np.min(water_idxs)
 
     def get_waters_to_delete():
         all_atoms = list(modeller.topology.atoms())
@@ -126,21 +130,37 @@ def replace_clashy_waters(
                 waters_to_delete.add(atom.residue)
         return waters_to_delete
 
-    # First add back in the number of waters that are clashy. Then delete the clashy waters.
-    # Done in this order so that additional waters being added will be at the boundaries, if added after deleting
-    # addSolvent fills the void intended for the mols. Need to end up with the same number of waters as originally
-    num_system_atoms = host_coords.shape[0]
-    clashy_waters = get_waters_to_delete()
-    combined_templates = get_ion_residue_templates(modeller)
-    # First add back in the number of waters that are clashy and we know we need to delete
-    modeller.addSolvent(
-        host_ff,
-        numAdded=len(clashy_waters),
-        neutralize=False,
-        model=sanitize_water_ff(water_ff),
-        residueTemplates=combined_templates,
+    # Have to repeatedly loop, as the waters added may clash.
+    # TBD: Msys/Vipar this nonsense away. The trouble is the ligand has to be parameterized to be added to OpenMM
+    waters_to_add = len(get_waters_to_delete())
+    max_iterations = 10
+    iteration = 0
+    # Have to add in the all of the non-clashy waters before removing the clashy waters. Otherwise removing the clashy waters
+    # then adding will add more clashy waters.
+    # Need to end up with the same number of waters at the end
+    while iteration < max_iterations:
+        num_system_atoms = host_coords.shape[0]
+        clashy_waters = get_waters_to_delete()
+        combined_templates = get_ion_residue_templates(modeller)
+        # First add back in the number of waters that are clashy and we know we need to delete
+        modeller.addSolvent(
+            host_ff,
+            numAdded=waters_to_add,
+            neutralize=False,
+            model=sanitize_water_ff(water_ff),
+            residueTemplates=combined_templates,
+        )
+        clashy_waters = get_waters_to_delete()
+        updated_clashy_idxs = get_clashy_idxs()
+        # If the number of
+        if len(clashy_idxs) == len(updated_clashy_idxs):
+            break
+        waters_to_add = (len(updated_clashy_idxs) - len(clashy_idxs)) // 3
+        clashy_idxs = updated_clashy_idxs
+        iteration += 1
+    assert iteration < max_iterations, (
+        f"Builder would have taken more than {max_iterations} to replace clashy waters. Investigate"
     )
-    clashy_waters = get_waters_to_delete()
     modeller.delete(list(clashy_waters))
     assert num_system_atoms == modeller.getTopology().getNumAtoms()
 
@@ -380,9 +400,7 @@ def build_protein_system(
     solvated_host_coords = strip_units(modeller.positions)
 
     if mols is not None:
-        # Only look at waters that we have added, ignored the waters provided in the PDB
-        water_idxs = np.arange(host_coords.shape[0], solvated_host_coords.shape[0])
-        replace_clashy_waters(modeller, solvated_host_coords, box, water_idxs, mols, host_ff, water_ff)
+        replace_clashy_waters(modeller, solvated_host_coords, box, mols, host_ff, water_ff)
         solvated_host_coords = strip_units(modeller.positions)
 
     num_water_atoms = solvated_host_coords.shape[0] - num_host_atoms
@@ -493,9 +511,7 @@ def build_water_system(
 
     if mols is not None:
         solvated_host_coords = get_host_coords()
-
-        water_idxs = np.arange(solvated_host_coords.shape[0])
-        replace_clashy_waters(modeller, solvated_host_coords, box.astype(np.float64), water_idxs, mols, ff, water_ff)
+        replace_clashy_waters(modeller, solvated_host_coords, box.astype(np.float64), mols, ff, water_ff)
 
     solvated_host_coords = get_host_coords()
 
