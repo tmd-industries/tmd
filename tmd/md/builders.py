@@ -121,10 +121,10 @@ def replace_clashy_waters(
     if len(clashy_idxs) == 0:
         return
 
-    def get_waters_to_delete():
+    def get_waters_to_delete(idxs):
         all_atoms = list(modeller.topology.atoms())
         waters_to_delete = set()
-        for idx in clashy_idxs:
+        for idx in idxs:
             atom = all_atoms[idx]
             if atom.residue.name == WATER_RESIDUE_NAME:
                 waters_to_delete.add(atom.residue)
@@ -132,7 +132,7 @@ def replace_clashy_waters(
 
     # Have to repeatedly loop, as the waters added may clash.
     # TBD: Msys/Vipar this nonsense away. The trouble is the ligand has to be parameterized to be added to OpenMM
-    waters_to_add = len(get_waters_to_delete())
+    waters_to_add = len(get_waters_to_delete(clashy_idxs))
     max_iterations = 10
     iteration = 0
     # Have to add in the all of the non-clashy waters before removing the clashy waters. Otherwise removing the clashy waters
@@ -140,7 +140,7 @@ def replace_clashy_waters(
     # Need to end up with the same number of waters at the end
     while iteration < max_iterations:
         num_system_atoms = host_coords.shape[0]
-        clashy_waters = get_waters_to_delete()
+        clashy_waters = get_waters_to_delete(clashy_idxs)
         combined_templates = get_ion_residue_templates(modeller)
         # First add back in the number of waters that are clashy and we know we need to delete
         modeller.addSolvent(
@@ -150,12 +150,13 @@ def replace_clashy_waters(
             model=sanitize_water_ff(water_ff),
             residueTemplates=combined_templates,
         )
-        clashy_waters = get_waters_to_delete()
+        clashy_waters = get_waters_to_delete(clashy_idxs)
         updated_clashy_idxs = get_clashy_idxs()
         # If the number of
         if len(clashy_idxs) == len(updated_clashy_idxs):
             break
-        waters_to_add = (len(updated_clashy_idxs) - len(clashy_idxs)) // 3
+        waters_to_add = len(get_waters_to_delete(updated_clashy_idxs)) - len(get_waters_to_delete(clashy_idxs))
+        assert waters_to_add >= 1
         clashy_idxs = updated_clashy_idxs
         iteration += 1
     assert iteration < max_iterations, (
