@@ -24,9 +24,10 @@ from tmd.ff import Forcefield
 from tmd.integrator import VelocityVerletIntegrator
 from tmd.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
+from tmd.md.builders import build_water_system
 from tmd.md.enhanced import get_solvent_phase_system
 from tmd.md.local_resampling import local_resampling_move
-from tmd.potentials import HarmonicBond
+from tmd.potentials import HarmonicBond, PeriodicTorsion
 from tmd.potentials.jax_utils import delta_r
 from tmd.potentials.potential import get_potential_by_type
 from tmd.testsystems.ligands import get_biphenyl
@@ -295,3 +296,37 @@ def test_local_md_particle_density(freeze_reference, k):
     assert_no_drift(
         (x0[-1], boxes[-1]), local_move, num_particles_near_ligand, n_local_resampling_iterations=100, threshold=0.08
     )
+
+
+@pytest.mark.parametrize("seed", [2025])
+def test_local_md_bulk_solvent(seed):
+    """Tests a bug where empty potentials would cause local MD failures"""
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    host_config = build_water_system(4.0, ff.water_ff, box_margin=0.1)
+    pots = host_config.host_system.get_U_fns()
+
+    for pot in pots:
+        # No torsions in solvent
+        if isinstance(pot.potential, PeriodicTorsion):
+            assert len(pot.params) == 0
+
+    dt = 1.5e-3
+    friction = 1.0
+    temperature = constants.DEFAULT_TEMP
+
+    rng = np.random.default_rng(seed)
+
+    local_idx = rng.choice(np.arange(len(host_config.conf), dtype=np.int32))
+
+    intg = LangevinIntegrator(temperature, dt, friction, host_config.masses, seed)
+
+    ctxt = custom_ops.Context_f32(
+        host_config.conf,
+        np.zeros_like(host_config.conf),
+        host_config.box,
+        intg.impl(),
+        [bp.to_gpu(np.float32).bound_impl for bp in pots],
+    )
+    xs, boxes = ctxt.multiple_steps_local(200, np.array([local_idx], dtype=np.int32))
+    np.testing.assert_array_equal(host_config.box, boxes[-1])
+    np.testing.assert_equal(xs[-1, local_idx, :], host_config.conf[local_idx])

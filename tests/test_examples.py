@@ -290,6 +290,21 @@ def test_water_sampling_mc_buckyball(batch_size, insertion_type, last_frame_sha)
         assert hash_file(last_frame) == last_frame_sha
 
 
+def verify_leg_results_hashes(leg_dir: Path, expected_hash: str):
+    result_path = leg_dir / "results.npz"
+    assert result_path.is_file()
+    results = dict(np.load(result_path))
+    with NamedTemporaryFile(suffix=".npz") as temp:
+        # The time changes, so need to remove prior to hashing
+        results.pop("time")
+        np.savez(temp.name, **results)
+        results_hash = hash_file(temp.name)
+    endstate_0_hash = hash_file(leg_dir / "lambda0_traj.npz")
+    endstate_1_hash = hash_file(leg_dir / "lambda1_traj.npz")
+    # Load the results, so we can see what changed
+    assert (results_hash, endstate_0_hash, endstate_1_hash) == expected_hash, results
+
+
 @pytest.mark.fixed_output
 @pytest.mark.parametrize(
     "leg, n_windows, n_frames, n_eq_steps",
@@ -407,25 +422,12 @@ def test_run_rbfe_legs(
                 assert len(traj_data["coords"]) == n_frames
                 assert len(traj_data["boxes"]) == n_frames
 
-        def verify_leg_results_hashes(output_dir: Path):
-            leg_dir = output_dir / leg
-            results = dict(np.load(leg_dir / "results.npz"))
-            with NamedTemporaryFile(suffix=".npz") as temp:
-                # The time changes, so need to remove prior to hashing
-                results.pop("time")
-                np.savez(temp.name, **results)
-                results_hash = hash_file(temp.name)
-            endstate_0_hash = hash_file(leg_dir / "lambda0_traj.npz")
-            endstate_1_hash = hash_file(leg_dir / "lambda1_traj.npz")
-            # Load the results, so we can see what changed
-            assert (results_hash, endstate_0_hash, endstate_1_hash) == leg_results_hashes[leg], results
-
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
         proc = run_example("run_rbfe_legs.py", get_cli_args(config_a))
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]))
+        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[leg])
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
@@ -481,8 +483,13 @@ def test_run_rbfe_legs(
 
 @pytest.mark.fixed_output
 @pytest.mark.parametrize(
-    "leg, n_windows, n_frames, n_eq_steps",
-    [("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
+    "leg, n_windows, n_frames, n_eq_steps, local_steps",
+    [
+        ("solvent", 5, 50, 1000, 400),
+        ("complex", 5, 50, 1000, 400),
+        ("solvent", 5, 50, 1000, 390),
+        ("complex", 5, 50, 1000, 390),
+    ],
 )
 @pytest.mark.parametrize("mol_a, mol_b", [("15", "30")])
 @pytest.mark.parametrize("seed", [2025])
@@ -491,6 +498,7 @@ def test_run_rbfe_legs_local(
     n_windows,
     n_frames,
     n_eq_steps,
+    local_steps,
     mol_a,
     mol_b,
     seed,
@@ -501,15 +509,25 @@ def test_run_rbfe_legs_local(
     # which can be used to investigate the results that generated the hashes.
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
-        "solvent": (
+        ("solvent", 400): (
             "5519004ac7a647596f1e7af302ad4ede94b2aa50fffa392f5714136ae0b2762c",
             "330ab473b16e82d79b4357b85d27c41ec5e7cd5c264cf467762b59a07e68386b",
             "47375f67ebdcdb200c6f592072a10e70cb921beec92873b4a09d12c5190efbed",
         ),
-        "complex": (
+        ("complex", 400): (
             "1e62acd25471ae88d3e24c742dacc57db611470899664bfa9cc2c7c310690ef6",
             "ad00f2cac4a35ccb27f06323b2c4f263da17f48cb23294116772ccdc61fa39c8",
             "f32a0b9f4e4f7a8d95ffb5285726c71c5f4367ba146863485ed20b0c4eca5752",
+        ),
+        ("solvent", 390): (
+            "8a0879f17e1a59743b7994b70f95683ed59be3e669d29ffe58cb44843bf9ae15",
+            "3898ba7d175c1df2d97e5f00376026777ab3961975dc5df9139bf58446c94e23",
+            "061909fbe75ad30436b8391944a9d45598f29e6d8b65f7ba4a80a0e11b3cc45e",
+        ),
+        ("complex", 390): (
+            "04984dad6674457ef8e92687c13603ebbbf84ced59a978cbf98ebd857c30652c",
+            "444c938b7a25264234654799f8d99da8365a3d84b87369d0ed24b0d090a5ea9c",
+            "c5dd9511c3f76d2a734313f90653e3a9b3654f92ddc5bdca7928cd7a5e3e46fc",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -524,8 +542,8 @@ def test_run_rbfe_legs_local(
             n_frames=n_frames,
             n_windows=n_windows,
             forcefield=DEFAULT_FF,
-            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}",
-            local_md_steps=400,
+            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}_{local_steps}",
+            local_md_steps=local_steps,
             local_md_radius=2.0,
         )
 
@@ -579,25 +597,12 @@ def test_run_rbfe_legs_local(
                 assert len(traj_data["coords"]) == n_frames
                 assert len(traj_data["boxes"]) == n_frames
 
-        def verify_leg_results_hashes(output_dir: Path):
-            leg_dir = output_dir / leg
-            results = dict(np.load(leg_dir / "results.npz"))
-            with NamedTemporaryFile(suffix=".npz") as temp:
-                # The time changes, so need to remove prior to hashing
-                results.pop("time")
-                np.savez(temp.name, **results)
-                results_hash = hash_file(temp.name)
-            endstate_0_hash = hash_file(leg_dir / "lambda0_traj.npz")
-            endstate_1_hash = hash_file(leg_dir / "lambda1_traj.npz")
-            # Load the results, so we can see what changed
-            assert (results_hash, endstate_0_hash, endstate_1_hash) == leg_results_hashes[leg], results
-
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
         proc = run_example("run_rbfe_legs.py", get_cli_args(config_a))
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]))
+        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(leg, local_steps)])
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
