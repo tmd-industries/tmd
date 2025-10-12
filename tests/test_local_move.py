@@ -20,6 +20,7 @@ from jax import grad, jit, vmap
 from jax import numpy as jnp
 
 from tmd import constants
+from tmd.fe.model_utils import apply_hmr
 from tmd.ff import Forcefield
 from tmd.integrator import VelocityVerletIntegrator
 from tmd.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops
@@ -231,7 +232,7 @@ def test_local_md_particle_density(freeze_reference, k):
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
     temperature = constants.DEFAULT_TEMP
-    dt = 1.5e-3
+    dt = 2.5e-3
     friction = 1.0
     seed = 2022
     cutoff = 1.2
@@ -243,6 +244,7 @@ def test_local_md_particle_density(freeze_reference, k):
 
     bond_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
     bond_list = get_bond_list(bond_pot)
+    masses = apply_hmr(masses, bond_list, multiplier=2)
     group_idxs = get_group_indices(bond_list, coords.shape[0])
 
     local_idxs = np.arange(len(coords) - mol.GetNumAtoms(), len(coords), dtype=np.int32)
