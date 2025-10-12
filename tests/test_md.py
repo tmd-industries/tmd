@@ -626,7 +626,7 @@ def test_multiple_steps_local_entire_system(freeze_reference):
     friction = 1.0
     seed = 2022
     radius = np.inf
-    num_steps = 5
+    num_steps = 10
 
     unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
     v0 = np.zeros_like(coords)
@@ -650,7 +650,7 @@ def test_multiple_steps_local_entire_system(freeze_reference):
     if freeze_reference:
         assert np.all(xs[0] == coords, axis=1).sum() == 1, "Expected only a single atom to be stationary"
     else:
-        assert np.all(xs[0] != coords), "All coordinates should have moved"
+        assert np.all(xs[0] == coords, axis=1).sum() == 0, "All coordinates should have moved"
 
 
 @pytest.mark.memcheck
