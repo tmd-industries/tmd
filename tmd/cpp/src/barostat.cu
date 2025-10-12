@@ -32,15 +32,14 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
     const int N,
     const RealType pressure,    // Expected in Bar
     const RealType temperature, // Kelvin
-    const std::vector<std::vector<int>> group_idxs, const int interval,
-    const std::vector<std::shared_ptr<BoundPotential<RealType>>> bps,
+    const std::vector<std::vector<int>> &group_idxs, const int interval,
+    const std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
     const int seed, const bool adaptive_scaling_enabled,
     const RealType initial_volume_scale_factor)
-    : Mover<RealType>(interval), N_(N),
+    : Mover<RealType>(interval), N_(N), num_mols_(group_idxs.size()),
       adaptive_scaling_enabled_(adaptive_scaling_enabled), bps_(bps),
       pressure_(pressure), temperature_(temperature), seed_(seed),
-      group_idxs_(group_idxs), num_grouped_atoms_(0), sum_storage_bytes_(0),
-      runner_() {
+      num_grouped_atoms_(0), sum_storage_bytes_(0), runner_() {
 
   // Trigger check that interval is valid
   this->set_interval(this->interval_);
@@ -54,12 +53,10 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
     std::cout << "warning pressure more than 10bar" << std::endl;
   }
 
-  const int num_mols = group_idxs_.size();
-
   verify_group_idxs(N, group_idxs);
   // Array of flattened atom indices, mol indices and mol offsets
   std::array<std::vector<int>, 3> flattened_groups =
-      prepare_group_idxs_for_gpu(group_idxs_);
+      prepare_group_idxs_for_gpu(group_idxs);
 
   num_grouped_atoms_ = flattened_groups[0].size();
 
@@ -86,7 +83,7 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
   gpuErrchk(cudaMemcpy(d_volume_scale_, &initial_volume_scale_factor,
                        1 * sizeof(*d_volume_scale_), cudaMemcpyHostToDevice));
 
-  cudaSafeMalloc(&d_centroids_, num_mols * 3 * sizeof(*d_centroids_));
+  cudaSafeMalloc(&d_centroids_, num_mols_ * 3 * sizeof(*d_centroids_));
   cudaSafeMalloc(&d_mol_offsets_,
                  flattened_groups[2].size() * sizeof(*d_mol_offsets_));
 
@@ -183,11 +180,10 @@ void MonteCarloBarostat<RealType>::move(const int N,
     return;
   }
 
-  const int num_molecules = group_idxs_.size();
   gpuErrchk(cudaMemsetAsync(d_centroids_, 0,
-                            num_molecules * 3 * sizeof(*d_centroids_), stream));
+                            num_mols_ * 3 * sizeof(*d_centroids_), stream));
 
-  k_setup_barostat_move<RealType><<<1, 1, 0, stream>>>(
+  k_setup_barostat_move<RealType, true, true, true><<<1, 1, 0, stream>>>(
       adaptive_scaling_enabled_, d_rand_state_, d_box, d_volume_delta_,
       d_volume_scale_, d_length_scale_, d_volume_, d_metropolis_hasting_rand_);
   gpuErrchk(cudaPeekAtLastError());
@@ -212,7 +208,7 @@ void MonteCarloBarostat<RealType>::move(const int N,
   gpuErrchk(cudaPeekAtLastError());
 
   // Scale centroids
-  k_rescale_positions<RealType><<<blocks, tpb, 0, stream>>>(
+  k_rescale_positions<RealType, true, true, true><<<blocks, tpb, 0, stream>>>(
       num_grouped_atoms_, d_x_proposed_, d_length_scale_, d_box,
       d_box_proposed_, // Box will be rescaled by length_scale
       d_atom_idxs_, d_mol_idxs_, d_mol_offsets_, d_centroids_);
@@ -234,7 +230,7 @@ void MonteCarloBarostat<RealType>::move(const int N,
   const RealType kT = static_cast<RealType>(BOLTZ) * temperature_;
 
   k_decide_move<RealType><<<ceil_divide(N_, tpb), tpb, 0, stream>>>(
-      N_, adaptive_scaling_enabled_, num_molecules, kT, pressure,
+      N_, adaptive_scaling_enabled_, num_mols_, kT, pressure,
       d_metropolis_hasting_rand_, d_volume_, d_volume_delta_, d_volume_scale_,
       d_init_u_, d_final_u_, d_box, d_box_proposed_, d_x, d_x_proposed_,
       d_num_accepted_, d_num_attempted_);

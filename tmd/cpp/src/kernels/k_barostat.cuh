@@ -22,7 +22,7 @@ namespace tmd {
 
 // k_rescale_positions scales the box and the centroids of groups to evaluate a
 // potential barostat move
-template <typename RealType>
+template <typename RealType, bool SCALE_X, bool SCALE_Y, bool SCALE_Z>
 void __global__
 k_rescale_positions(const int N,                   // Number of atoms to shift
                     RealType *__restrict__ coords, // Coordinates
@@ -34,16 +34,23 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
                     const int *__restrict__ mol_offsets,             // [N]
                     const unsigned long long *__restrict__ centroids // [N*3]
 ) {
+  static_assert(SCALE_X | SCALE_Y | SCALE_Z);
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  RealType center_x = box[0 * 3 + 0] * 0.5f;
-  RealType center_y = box[1 * 3 + 1] * 0.5f;
-  RealType center_z = box[2 * 3 + 2] * 0.5f;
+  RealType center_x = box[0 * 3 + 0] * static_cast<RealType>(0.5);
+  RealType center_y = box[1 * 3 + 1] * static_cast<RealType>(0.5);
+  RealType center_z = box[2 * 3 + 2] * static_cast<RealType>(0.5);
 
   RealType scale = static_cast<RealType>(length_scale[0]);
   if (idx == 0) {
-    scaled_box[0 * 3 + 0] *= scale;
-    scaled_box[1 * 3 + 1] *= scale;
-    scaled_box[2 * 3 + 2] *= scale;
+    if (SCALE_X) {
+      scaled_box[0 * 3 + 0] *= scale;
+    }
+    if (SCALE_Y) {
+      scaled_box[1 * 3 + 1] *= scale;
+    }
+    if (SCALE_Z) {
+      scaled_box[2 * 3 + 2] *= scale;
+    }
   }
   while (idx < N) {
     int atom_idx = atom_idxs[idx];
@@ -59,32 +66,34 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
     RealType centroid_z =
         FIXED_TO_FLOAT<RealType>(centroids[mol_idx * 3 + 2]) / num_atoms;
 
-    RealType displacement_x =
-        ((centroid_x - center_x) * scale) + center_x - centroid_x;
-    RealType displacement_y =
-        ((centroid_y - center_y) * scale) + center_y - centroid_y;
-    RealType displacement_z =
-        ((centroid_z - center_z) * scale) + center_z - centroid_z;
-
-    // centroid of the new molecule
-    centroid_x += displacement_x;
-    centroid_y += displacement_y;
-    centroid_z += displacement_z;
-
     // compute displacement needed to shift centroid back into the scaled
     // homebox
-    RealType scaled_box_x = box[0 * 3 + 0] * scale;
-    RealType scaled_box_y = box[1 * 3 + 1] * scale;
-    RealType scaled_box_z = box[2 * 3 + 2] * scale;
+    if (SCALE_X) {
+      RealType displacement_x =
+          ((centroid_x - center_x) * scale) + center_x - centroid_x;
+      centroid_x += displacement_x;
+      RealType scaled_box_x = box[0 * 3 + 0] * scale;
+      RealType new_center_x = scaled_box_x * floor(centroid_x / scaled_box_x);
+      coords[atom_idx * 3 + 0] += displacement_x - new_center_x;
+    }
 
-    RealType new_center_x = scaled_box_x * floor(centroid_x / scaled_box_x);
-    RealType new_center_y = scaled_box_y * floor(centroid_y / scaled_box_y);
-    RealType new_center_z = scaled_box_z * floor(centroid_z / scaled_box_z);
+    if (SCALE_Y) {
+      RealType displacement_y =
+          ((centroid_y - center_y) * scale) + center_y - centroid_y;
+      centroid_y += displacement_y;
+      RealType scaled_box_y = box[1 * 3 + 1] * scale;
+      RealType new_center_y = scaled_box_y * floor(centroid_y / scaled_box_y);
+      coords[atom_idx * 3 + 1] += displacement_y - new_center_y;
+    }
 
-    // final coordinates
-    coords[atom_idx * 3 + 0] += displacement_x - new_center_x;
-    coords[atom_idx * 3 + 1] += displacement_y - new_center_y;
-    coords[atom_idx * 3 + 2] += displacement_z - new_center_z;
+    if (SCALE_Z) {
+      RealType displacement_z =
+          ((centroid_z - center_z) * scale) + center_z - centroid_z;
+      centroid_z += displacement_z;
+      RealType scaled_box_z = box[2 * 3 + 2] * scale;
+      RealType new_center_z = scaled_box_z * floor(centroid_z / scaled_box_z);
+      coords[atom_idx * 3 + 2] += displacement_z - new_center_z;
+    }
 
     idx += gridDim.x * blockDim.x;
   }
@@ -116,7 +125,7 @@ void __global__ k_find_group_centroids(
 // k_setup_barostat_move performs the initialization for a barostat move. It
 // determines what the the proposed volume will be and sets up d_length_scale
 // and d_volume_delta for use in k_decide_move.
-template <typename RealType>
+template <typename RealType, bool SCALE_X, bool SCALE_Y, bool SCALE_Z>
 void __global__
 k_setup_barostat_move(const bool adaptive,
                       curandState_t *__restrict__ rng,                  // [1]
@@ -127,6 +136,7 @@ k_setup_barostat_move(const bool adaptive,
                       RealType *__restrict__ d_volume,                  // [1]
                       RealType *__restrict__ d_metropolis_hastings_rand // [1]
 ) {
+  static_assert(SCALE_X | SCALE_Y | SCALE_Z);
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= 1) {
     return; // Only a single thread needs to perform this operation
@@ -150,7 +160,16 @@ k_setup_barostat_move(const bool adaptive,
   const RealType new_volume = volume + delta_volume;
   *d_volume = volume;
   *d_volume_delta = delta_volume;
-  *d_length_scale = cbrt(new_volume / volume);
+
+  constexpr int dimensions_scaled =
+      (SCALE_X ? 1 : 0) + (SCALE_Y ? 1 : 0) + (SCALE_Z ? 1 : 0);
+  if (dimensions_scaled == 3) {
+    *d_length_scale = cbrt(new_volume / volume);
+  } else if (dimensions_scaled == 2) {
+    *d_length_scale = sqrt(new_volume / volume);
+  } else if (dimensions_scaled == 1) {
+    *d_length_scale = new_volume / volume;
+  }
 }
 
 // k_decide_move handles the metropolis check for whether or not to accept a
