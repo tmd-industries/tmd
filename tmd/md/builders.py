@@ -69,7 +69,6 @@ def get_ion_residue_templates(modeller) -> dict[app.Residue, str]:
 
 def replace_clashy_waters(
     modeller: app.Modeller,
-    host_coords: NDArray[np.float64],
     box: NDArray[np.float64],
     mols: list[Chem.Mol],
     host_ff: app.ForceField,
@@ -83,9 +82,6 @@ def replace_clashy_waters(
     ----------
     modeller: app.Modeller
         Modeller to update in place
-
-    host_coords: NDArray[np.float64]
-        Coordinates of host, may be different than modeller.positions
 
     box: NDArray[np.float64]
         Box to evaluate PBCs under
@@ -130,6 +126,7 @@ def replace_clashy_waters(
                 waters_to_delete.add(atom.residue)
         return waters_to_delete
 
+    num_system_atoms = len(modeller.positions)
     # Have to repeatedly loop, as the waters added may clash.
     # TBD: Msys/Vipar this nonsense away. The trouble is the ligand has to be parameterized to be added to OpenMM
     waters_to_add = len(get_waters_to_delete(clashy_idxs))
@@ -139,7 +136,6 @@ def replace_clashy_waters(
     # then adding will add more clashy waters.
     # Need to end up with the same number of waters at the end
     while iteration < max_iterations:
-        num_system_atoms = host_coords.shape[0]
         clashy_waters = get_waters_to_delete(clashy_idxs)
         combined_templates = get_ion_residue_templates(modeller)
         # First add back in the number of waters that are clashy and we know we need to delete
@@ -152,7 +148,7 @@ def replace_clashy_waters(
         )
         clashy_waters = get_waters_to_delete(clashy_idxs)
         updated_clashy_idxs = get_clashy_idxs()
-        # If the number of
+        # If the number of clashes is unchanged, the clashy waters can finally be deleted
         if len(clashy_idxs) == len(updated_clashy_idxs):
             break
         waters_to_add = len(get_waters_to_delete(updated_clashy_idxs)) - len(get_waters_to_delete(clashy_idxs))
@@ -401,7 +397,7 @@ def build_protein_system(
     solvated_host_coords = strip_units(modeller.positions)
 
     if mols is not None:
-        replace_clashy_waters(modeller, solvated_host_coords, box, mols, host_ff, water_ff)
+        replace_clashy_waters(modeller, box, mols, host_ff, water_ff)
         solvated_host_coords = strip_units(modeller.positions)
 
     num_water_atoms = solvated_host_coords.shape[0] - num_host_atoms
@@ -497,7 +493,7 @@ def build_water_system(
         modeller, box, ff, water_ff, mols=mols, neutralize=neutralize, ionic_concentration=ionic_concentration
     )
 
-    def get_host_coords():
+    def get_centered_coords():
         host_coords = strip_units(modeller.positions)
         # If mols provided, center waters such that the center is the mols centroid
         # Done to avoid placing mols at the edges and moves the water coordinates to avoid
@@ -505,16 +501,17 @@ def build_water_system(
         if mols is not None and len(mols) > 0:
             mol_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
             mols_centroid = np.mean(mol_coords, axis=0)
-            box_extents = (np.max(host_coords, axis=0) - np.min(host_coords, axis=0)) * 0.5
-            box_center = np.min(host_coords, axis=0) + box_extents
-            host_coords = host_coords - box_center + mols_centroid
+            host_centroid = np.mean(host_coords, axis=0)
+            host_coords = host_coords - host_centroid + mols_centroid
         return host_coords
 
-    if mols is not None:
-        solvated_host_coords = get_host_coords()
-        replace_clashy_waters(modeller, solvated_host_coords, box.astype(np.float64), mols, ff, water_ff)
+    modeller = app.Modeller(modeller.topology, get_centered_coords())
 
-    solvated_host_coords = get_host_coords()
+    if mols is not None:
+        replace_clashy_waters(modeller, box.astype(np.float64), mols, ff, water_ff)
+        solvated_host_coords = strip_units(modeller.positions)
+    else:
+        solvated_host_coords = strip_units(modeller.positions)
 
     assert modeller.getTopology().getNumAtoms() == solvated_host_coords.shape[0]
 
