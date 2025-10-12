@@ -40,6 +40,7 @@ class HostConfig:
     conf: NDArray
     box: NDArray
     num_water_atoms: int
+    num_membrane_atoms: int
     omm_topology: app.topology.Topology
 
     def __post_init__(self):
@@ -312,8 +313,9 @@ def load_pdb_system(
         conf=host_coords,
         box=box,
         num_water_atoms=num_water_atoms,
+        num_membrane_atoms=0,
         omm_topology=modeller.topology,
-        masses=np.array(masses),
+        masses=np.asarray(masses),
     )
 
 
@@ -434,8 +436,9 @@ def build_protein_system(
         conf=solvated_host_coords,
         box=box,
         num_water_atoms=num_water_atoms,
+        num_membrane_atoms=0,
         omm_topology=modeller.topology,
-        masses=np.array(masses),
+        masses=np.asarray(masses),
     )
 
 
@@ -450,7 +453,9 @@ def build_membrane_system(
 ) -> HostConfig:
     """
     Build a solvated protein+membrane system with a 10A padding. Assumes the PDB file is posed such that the XY plane
-    will containe the membrane, this matches with OpenMM
+    will contain the membrane, this matches with OpenMM.
+
+    Note that this will produce different numbers of water molecules due to non-deterministic minimization in OpenMM
 
     Parameters
     ----------
@@ -575,9 +580,10 @@ def build_membrane_system(
         host_system=solvated_host_system,
         conf=solvated_host_coords,
         box=box,
-        num_water_atoms=len(solvated_host_coords) - len(host_coords),  # This is WRONG
+        num_water_atoms=num_water_atoms,
+        num_membrane_atoms=num_membrane_atoms,
         omm_topology=modeller.topology,
-        masses=np.array(masses),
+        masses=np.asarray(masses),
     )
 
 
@@ -681,6 +687,7 @@ def build_water_system(
         conf=solvated_host_coords,
         box=box,
         num_water_atoms=num_water_atoms,
+        num_membrane_atoms=0,
         omm_topology=modeller.topology,
-        masses=np.array(masses),
+        masses=np.asarray(masses),
     )
