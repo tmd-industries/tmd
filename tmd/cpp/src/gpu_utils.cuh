@@ -41,6 +41,21 @@ curandStatus_t templateCurandNormal(curandGenerator_t generator,
                                     double stddev);
 
 template <typename T>
+T __device__ __forceinline__ template_curand_uniform(curandState_t *state);
+
+template <>
+float __device__ __forceinline__
+template_curand_uniform<float>(curandState_t *state) {
+  return curand_uniform(state);
+}
+
+template <>
+double __device__ __forceinline__
+template_curand_uniform<double>(curandState_t *state) {
+  return curand_uniform_double(state);
+}
+
+template <typename T>
 T __device__ __forceinline__ template_curand_normal(curandState_t *state);
 
 template <>

@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include "curand.h"
 #include "k_fixed_point.cuh"
 
 namespace tmd {
@@ -115,26 +116,36 @@ void __global__ k_find_group_centroids(
 // determines what the the proposed volume will be and sets up d_length_scale
 // and d_volume_delta for use in k_decide_move.
 template <typename RealType>
-void __global__ k_setup_barostat_move(
-    const bool adaptive,
-    const RealType *__restrict__ rand,  // [2], use first value, second value is
-                                        // metropolis condition
-    const RealType *__restrict__ d_box, // [3*3]
-    RealType *__restrict__ d_volume_delta, // [1]
-    RealType *__restrict__ d_volume_scale, // [1]
-    RealType *__restrict__ d_length_scale, // [1]
-    RealType *__restrict__ d_volume        // [1]
+void __global__
+k_setup_barostat_move(const bool adaptive,
+                      curandState_t *__restrict__ rng,       // [1]
+                      const RealType *__restrict__ d_box,    // [3*3]
+                      RealType *__restrict__ d_volume_delta, // [1]
+                      RealType *__restrict__ d_volume_scale, // [1]
+                      RealType *__restrict__ d_length_scale, // [1]
+                      RealType *__restrict__ d_volume,       // [1]
+                      RealType *__restrict__ d_metropolis_hastings_rand_ // [1]
 ) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= 1) {
     return; // Only a single thread needs to perform this operation
   }
+  curandState_t local_rng = *rng;
+
+  RealType rand_scale = template_curand_uniform<RealType>(&local_rng);
+  RealType metropolis_hastings = template_curand_uniform<RealType>(&local_rng);
+  // Need to store this in global memory to avoid race condition in
+  // k_decide_move
+  *d_metropolis_hastings_rand_ = metropolis_hastings;
+  // Only safe so long as there is a single thread
+  *rng = local_rng;
+
   const RealType volume =
       d_box[0 * 3 + 0] * d_box[1 * 3 + 1] * d_box[2 * 3 + 2];
   if (adaptive && *d_volume_scale == 0.0) {
     *d_volume_scale = 0.01 * volume;
   }
-  const RealType delta_volume = *d_volume_scale * 2 * (rand[0] - 0.5);
+  const RealType delta_volume = *d_volume_scale * 2 * (rand_scale - 0.5);
   const RealType new_volume = volume + delta_volume;
   *d_volume = volume;
   *d_volume_delta = delta_volume;
@@ -149,8 +160,8 @@ template <typename RealType>
 void __global__
 k_decide_move(const int N, const bool adaptive, const int num_molecules,
               const RealType kt, const RealType pressure,
-              const RealType *__restrict__ rand,     // [2] Use second value
-              const RealType *__restrict__ d_volume, // [1]
+              const RealType *__restrict__ rand,           // [1]
+              const RealType *__restrict__ d_volume,       // [1]
               const RealType *__restrict__ d_volume_delta, // [1]
               RealType *__restrict__ d_volume_scale,       // [1]
               const __int128 *__restrict__ d_init_u,       // [1]
@@ -175,10 +186,12 @@ k_decide_move(const int N, const bool adaptive, const int num_molecules,
     energy_delta = FIXED_ENERGY_TO_FLOAT<RealType>(d_final_u[0] - d_init_u[0]);
   }
 
+  const RealType local_rand = *rand;
+
   const RealType w = energy_delta + pressure * volume_delta -
                      num_molecules * kt * log(new_volume / volume);
 
-  const bool rejected = w > 0 && rand[1] > exp(-w / kt);
+  const bool rejected = w > 0 && local_rand > exp(-w / kt);
 
   while (idx < N) {
     if (idx == 0) {
