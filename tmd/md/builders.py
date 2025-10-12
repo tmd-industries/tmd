@@ -318,7 +318,7 @@ def load_pdb_system(
         box=box,
         num_water_atoms=num_water_atoms,
         omm_topology=modeller.topology,
-        masses=np.array(masses),
+        masses=np.asarray(masses),
     )
 
 
@@ -347,7 +347,6 @@ def build_protein_system(
 
     mols: optional list of mols
         Molecules to be part of the system, will avoid placing water molecules that clash with the mols.
-        If water molecules provided in the PDB clash with the mols, will do nothing.
 
     ionic_concentration: optional float
         Concentration of ions, in molars, to add to the system. Defaults to 0.0, meaning no ions are added.
@@ -438,7 +437,7 @@ def build_protein_system(
         box=box,
         num_water_atoms=num_water_atoms,
         omm_topology=modeller.topology,
-        masses=np.array(masses),
+        masses=np.asarray(masses),
     )
 
 
@@ -542,5 +541,5 @@ def build_water_system(
         box=box,
         num_water_atoms=num_water_atoms,
         omm_topology=modeller.topology,
-        masses=np.array(masses),
+        masses=np.asarray(masses),
     )
