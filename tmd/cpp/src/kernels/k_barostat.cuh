@@ -119,13 +119,13 @@ void __global__ k_find_group_centroids(
 template <typename RealType>
 void __global__
 k_setup_barostat_move(const bool adaptive,
-                      curandState_t *__restrict__ rng,       // [1]
-                      const RealType *__restrict__ d_box,    // [3*3]
-                      RealType *__restrict__ d_volume_delta, // [1]
-                      RealType *__restrict__ d_volume_scale, // [1]
-                      RealType *__restrict__ d_length_scale, // [1]
-                      RealType *__restrict__ d_volume,       // [1]
-                      RealType *__restrict__ d_metropolis_hastings_rand_ // [1]
+                      curandState_t *__restrict__ rng,                  // [1]
+                      const RealType *__restrict__ d_box,               // [3*3]
+                      RealType *__restrict__ d_volume_delta,            // [1]
+                      RealType *__restrict__ d_volume_scale,            // [1]
+                      RealType *__restrict__ d_length_scale,            // [1]
+                      RealType *__restrict__ d_volume,                  // [1]
+                      RealType *__restrict__ d_metropolis_hastings_rand // [1]
 ) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= 1) {
@@ -137,7 +137,7 @@ k_setup_barostat_move(const bool adaptive,
   RealType metropolis_hastings = template_curand_uniform<RealType>(&local_rng);
   // Need to store this in global memory to avoid race condition in
   // k_decide_move
-  *d_metropolis_hastings_rand_ = metropolis_hastings;
+  *d_metropolis_hastings_rand = metropolis_hastings;
   // Only safe so long as there is a single thread
   *rng = local_rng;
 
