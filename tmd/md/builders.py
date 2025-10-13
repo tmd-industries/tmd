@@ -116,49 +116,53 @@ def replace_clashy_waters(
     clashy_idxs = get_clashy_idxs()
     if len(clashy_idxs) == 0:
         return
+    # Determine the number of atoms in the original system. Should end up with the same number of atoms
+    num_system_atoms = len(modeller.positions)
 
-    def get_waters_to_delete(idxs):
+    def get_waters_to_delete():
         all_atoms = list(modeller.topology.atoms())
         waters_to_delete = set()
-        for idx in idxs:
+        for idx in clashy_idxs:
             atom = all_atoms[idx]
             if atom.residue.name == WATER_RESIDUE_NAME:
                 waters_to_delete.add(atom.residue)
+            else:
+                raise RuntimeError(f"Clashy atom is not a water: Residue name {atom.residue.name}")
         return waters_to_delete
 
-    num_system_atoms = len(modeller.positions)
-    # Have to repeatedly loop, as the waters added may clash.
-    # TBD: Msys/Vipar this nonsense away. The trouble is the ligand has to be parameterized to be added to OpenMM
-    waters_to_add = len(get_waters_to_delete(clashy_idxs))
-    max_iterations = 10
-    iteration = 0
-    # Have to add in the all of the non-clashy waters before removing the clashy waters. Otherwise removing the clashy waters
-    # then adding will add more clashy waters.
-    # Need to end up with the same number of waters at the end
-    while iteration < max_iterations:
-        clashy_waters = get_waters_to_delete(clashy_idxs)
-        combined_templates = get_ion_residue_templates(modeller)
-        # First add back in the number of waters that are clashy and we know we need to delete
-        modeller.addSolvent(
-            host_ff,
-            numAdded=waters_to_add,
-            neutralize=False,
-            model=sanitize_water_ff(water_ff),
-            residueTemplates=combined_templates,
-        )
-        clashy_waters = get_waters_to_delete(clashy_idxs)
-        updated_clashy_idxs = get_clashy_idxs()
-        # If the number of clashes is unchanged, the clashy waters can finally be deleted
-        if len(clashy_idxs) == len(updated_clashy_idxs):
-            break
-        waters_to_add = len(get_waters_to_delete(updated_clashy_idxs)) - len(get_waters_to_delete(clashy_idxs))
-        assert waters_to_add >= 1
-        clashy_idxs = updated_clashy_idxs
-        iteration += 1
-    assert iteration < max_iterations, (
-        f"Builder would have taken more than {max_iterations} to replace clashy waters. Investigate"
+    dummy_chain_id = "DUMMY"
+
+    topology = app.Topology()
+    dummy_chain = topology.addChain(dummy_chain_id)
+    ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
+    for mol in mols:
+        # Add a bunch of chlorine atoms in place of the ligand atoms. This will prevent OpenMM from
+        # placing atoms in the binding pocket. OpenMM only looks at the parameters of waters, not the solute
+        # so this is fine.
+        for atom in mol.GetAtoms():
+            res = topology.addResidue(CHLORINE_ION_RESIDUE, dummy_chain)
+            topology.addAtom(CHLORINE_ION_RESIDUE, app.Element.getBySymbol("Cl"), res)
+    modeller.add(topology, ligand_coords * unit.nanometers)
+
+    with open("src.pdb", "w") as ofs:
+        app.PDBFile.writeHeader(modeller.topology, ofs)
+        app.PDBFile.writeModel(modeller.topology, modeller.positions, ofs)
+
+    clashy_waters = get_waters_to_delete()
+    combined_templates = get_ion_residue_templates(modeller)
+    # First add back in the number of waters that are clashy and we know we need to delete
+    modeller.addSolvent(
+        host_ff,
+        numAdded=len(clashy_waters),
+        neutralize=False,
+        model=sanitize_water_ff(water_ff),
+        residueTemplates=combined_templates,
     )
+    clashy_waters = get_waters_to_delete()
     modeller.delete(list(clashy_waters))
+    # Remove the chain filled with the dummy atoms
+    ligand_chain = [chain for chain in modeller.topology.chains() if chain.id == dummy_chain_id]
+    modeller.delete(ligand_chain)
     assert num_system_atoms == modeller.getTopology().getNumAtoms()
 
 

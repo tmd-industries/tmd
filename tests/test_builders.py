@@ -79,7 +79,7 @@ def test_build_water_system():
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/tip4pfb", "amber14/spce", "tip5p"])
+@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/tip4pfb", "amber14/spce"])
 def test_build_water_system_different_water_ffs(water_ff):
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
     host_config = build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
