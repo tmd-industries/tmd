@@ -488,7 +488,8 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 @pytest.mark.parametrize("seed", [2025])
 @pytest.mark.parametrize("batch_size", [1, 2, 128])
-def test_vacuum_batch_simulation(precision, seed, batch_size):
+@pytest.mark.parametrize("integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator])
+def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
     rng = np.random.default_rng(seed)
 
     dt = 2.5e-3
@@ -517,7 +518,17 @@ def test_vacuum_batch_simulation(precision, seed, batch_size):
 
     batch_v0 = [np.zeros_like(coords) for coords in batch_coords]
 
-    verlet = VelocityVerletIntegrator(dt, [masses for _ in range(batch_size)])
+    intg_impl = None
+    if integrator_klass is VelocityVerletIntegrator:
+        intg = VelocityVerletIntegrator(dt, [masses for _ in range(batch_size)])
+        intg_impl = intg.impl(precision)
+    elif integrator_klass is LangevinIntegrator:
+        friction = 1.0
+        intg = LangevinIntegrator(constants.DEFAULT_TEMP, dt, friction, [masses for _ in range(batch_size)], seed)
+        intg_impl = intg.impl(precision)
+    else:
+        assert False, f"Unknown integrator type {integrator_klass}"
+    assert intg_impl is not None
 
     batch_pots = []
     for pot in guest_system.get_U_fns():
@@ -574,7 +585,7 @@ def test_vacuum_batch_simulation(precision, seed, batch_size):
         np.stack(batch_coords).squeeze(),
         np.stack(batch_v0).squeeze(),
         np.stack(batch_boxes).squeeze(),
-        verlet.impl(precision),
+        intg_impl,
         [bp.to_gpu(precision).bound_impl for bp in batch_pots],
         precision=precision,
     )
