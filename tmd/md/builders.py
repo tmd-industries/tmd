@@ -528,9 +528,10 @@ def build_membrane_system(
     solvated_host_coords = strip_units(modeller.positions)
 
     if mols is not None:
+        water_res = [residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]
         # Only look at waters that we have added, ignored the waters provided in the PDB
-        water_idxs = np.arange(host_coords.shape[0], solvated_host_coords.shape[0])
-        replace_clashy_waters(modeller, solvated_host_coords, box, water_idxs, mols, host_ff, water_ff)
+        water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_res]).reshape(-1)
+        replace_clashy_waters(modeller, solvated_host_coords, box, water_indices, mols, host_ff, water_ff)
         solvated_host_coords = strip_units(modeller.positions)
 
     num_water_atoms = (
