@@ -144,10 +144,6 @@ def replace_clashy_waters(
             topology.addAtom(CHLORINE_ION_RESIDUE, app.Element.getBySymbol("Cl"), res)
     modeller.add(topology, ligand_coords * unit.nanometers)
 
-    with open("src.pdb", "w") as ofs:
-        app.PDBFile.writeHeader(modeller.topology, ofs)
-        app.PDBFile.writeModel(modeller.topology, modeller.positions, ofs)
-
     clashy_waters = get_waters_to_delete()
     combined_templates = get_ion_residue_templates(modeller)
     # First add back in the number of waters that are clashy and we know we need to delete

@@ -413,11 +413,6 @@ def test_build_protein_system_removal_of_clashy_waters_in_pdb():
     assert all(res.name == WATER_RESIDUE_NAME for res in clashy_residues)
 
     host_config = build_protein_system(host_pdbfile, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, mols=mols, box_margin=0.1)
-    from tmd.fe.cif_writer import CIFWriter
-
-    writer = CIFWriter([host_config.omm_topology, *mols], "jank.cif")
-    writer.write_frame(np.concatenate([host_config.conf, ligand_coords]) * 10.0)
-    writer.close()
 
     clashy_idxs = idxs_within_cutoff(host_config.conf, ligand_coords, host_config.box, cutoff=cutoff)
     clashy_residues = [

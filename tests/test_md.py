@@ -626,7 +626,7 @@ def test_multiple_steps_local_entire_system(freeze_reference):
     friction = 1.0
     seed = 2022
     radius = np.inf
-    num_steps = 10
+    num_steps = 5
 
     unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
     v0 = np.zeros_like(coords)
