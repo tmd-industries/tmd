@@ -30,6 +30,7 @@ from tmd.md.builders import (
     build_protein_system,
     build_water_system,
     get_box_from_coords,
+    load_pdb_system,
     strip_units,
 )
 from tmd.md.minimizer import check_force_norm
@@ -315,7 +316,7 @@ def test_build_protein_system_waters_before_protein():
     num_waters = 100
     # Construct a PDB file with the waters before the protein, should raise an exception
     with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as pdb_path:
-        host_pdbfile = host_pdb = app.PDBFile(str(pdb_path))
+        host_pdbfile = app.PDBFile(str(pdb_path))
 
     host_ff = app.ForceField(f"{DEFAULT_PROTEIN_FF}.xml", f"{DEFAULT_WATER_FF}.xml")
 
@@ -325,7 +326,7 @@ def test_build_protein_system_waters_before_protein():
     modeller.addSolvent(host_ff, numAdded=num_waters, neutralize=False, model=sanitize_water_ff(DEFAULT_WATER_FF))
     assert modeller.getTopology().getNumAtoms() == num_waters * 3
 
-    modeller.add(host_pdbfile.topology, host_pdb.positions)
+    modeller.add(host_pdbfile.topology, host_pdbfile.positions)
 
     with NamedTemporaryFile(suffix=".pdb") as temp:
         with open(temp.name, "w") as ofs:
@@ -419,3 +420,22 @@ def test_build_protein_system_removal_of_clashy_waters_in_pdb():
         res for res in host_config.omm_topology.residues() for atom in res.atoms() if atom.index in clashy_idxs
     ]
     assert len(clashy_idxs) == 0
+
+
+@pytest.mark.nocuda
+def test_build_protein_wat_residue_names():
+    """Test to verify that if waters are specified with the WAT residue name, that they are correctly identified with the WATER_RESIDUE_NAME.
+    If this isn't the case our handling of waters is invalid
+    """
+    with NamedTemporaryFile(suffix=".pdb") as temp:
+        with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_solv_equil.pdb") as protein_path:
+            # Convert the HOH water code to WAT code
+            with open(protein_path) as ifs:
+                with open(temp.name, "w") as ofs:
+                    for line in ifs.readlines():
+                        ofs.write(line.replace(WATER_RESIDUE_NAME, "WAT"))
+        host_config = load_pdb_system(temp.name, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, box_margin=0.1)
+        water_res_names_match = [
+            res.name == WATER_RESIDUE_NAME for res in host_config.omm_topology.residues() if len(list(res.atoms())) == 3
+        ]
+        assert len(water_res_names_match) > 0 and all(water_res_names_match)
