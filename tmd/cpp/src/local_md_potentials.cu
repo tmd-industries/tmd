@@ -542,7 +542,11 @@ void LocalMDPotentials<RealType>::_truncate_bonded_potential_idxs(
     throw std::runtime_error(
         "_truncate_bonded_potential_idxs::Unexpected truncatable type");
   }
-  assert(num_idxs > 0 && idxs_dim > 0 && d_src_idxs != nullptr);
+  // If the potential is empty, do nothing
+  if (num_idxs == 0) {
+    return;
+  }
+  assert(idxs_dim > 0 && d_src_idxs != nullptr);
 
   const int blocks = ceil_divide(num_idxs, tpb);
   // Assume that the full bound potential params are being used
@@ -737,6 +741,10 @@ void LocalMDPotentials<RealType>::_reset_bonded_potential_idxs(
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
   const int params_dim = bp->params_dim;
   const int num_idxs = total_idxs / idxs_dim;
+  // If the potential is empty, return
+  if (num_idxs == 0) {
+    return;
+  }
 
   k_permute_chunks<RealType, false>
       <<<ceil_divide(num_idxs, tpb), tpb, 0, stream>>>(

@@ -139,7 +139,8 @@ def main():
     if num_gpus is None:
         num_gpus = get_gpu_count()
 
-    pool = CUDAMPSPoolClient(num_gpus, workers_per_gpu=args.mps_workers)
+    # Set max_tasks_per_child=1 to reduce potential for accumulating memory
+    pool = CUDAMPSPoolClient(num_gpus, workers_per_gpu=args.mps_workers, max_tasks_per_child=1)
     pool.verify()
     futures = []
 
