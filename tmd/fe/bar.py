@@ -506,7 +506,7 @@ class MBARConvergence:
         df = mbar.compute_free_energy_differences(compute_uncertainty=False)[DG_KEY][0, -1]
         self._last_f_k = mbar.f_k
 
-        self.add_estimate(df / self._kBT)
+        self.add_estimate(df * self._kBT)
 
     def add_estimate(self, dG: float):
         """Add pre-computed dG (kJ/mol)"""
