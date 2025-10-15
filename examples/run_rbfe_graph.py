@@ -101,6 +101,18 @@ def main():
         help="Max difference in estimates before allowing termination",
     )
     parser.add_argument(
+        "--early_term_samples",
+        default=30,
+        type=int,
+        help="Number of samples before evaluating whether or not samples leg is converged",
+    )
+    parser.add_argument(
+        "--early_term_slope_threshold",
+        default=0.75,
+        type=float,
+        help="Threshold of the implied slope to use for convergence",
+    )
+    parser.add_argument(
         "--store_trajectories",
         action="store_true",
         help="Store the trajectories of the edges. Can take up a large amount of space",
@@ -162,7 +174,10 @@ def main():
                 optimize_target_overlap=args.target_overlap,
                 rest_params=RESTParams(args.rest_max_temperature_scale, args.rest_temperature_scale_interpolation),
                 early_termination_params=EarlyTerminationParams(
-                    args.early_term_threshold, interval=args.early_term_interval
+                    args.early_term_threshold,
+                    interval=args.early_term_interval,
+                    num_samples=args.early_term_samples,
+                    slope_threshold=args.early_term_slope_threshold,
                 )
                 if args.early_term_interval > 0
                 else None,

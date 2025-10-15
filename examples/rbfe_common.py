@@ -32,7 +32,7 @@ def compute_total_ns(res: SimulationResult | HREXSimulationResult, md_params: MD
     else:
         n_bisection_windows = len(res.intermediate_results[-1].initial_states)
         total_steps += md_params.n_eq_steps * n_bisection_windows
-    total_steps += md_params.steps_per_frame * md_params.n_frames * n_windows
+    total_steps += md_params.steps_per_frame * len(res.trajectories[0].boxes) * n_windows
 
     dt = res.final_result.initial_states[0].integrator.dt
     dt_in_fs = 1000 * dt

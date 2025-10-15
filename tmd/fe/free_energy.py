@@ -97,7 +97,7 @@ class EarlyTerminationParams:
     """
 
     prediction_delta: float
-    num_samples: int = 10
+    num_samples: int = 30
     interval: int = 25
     slope_threshold: float = 0.75
 
