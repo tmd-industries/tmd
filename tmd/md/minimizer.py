@@ -667,7 +667,8 @@ def get_val_and_grad_fn(bps: Sequence[BoundPotential], box: NDArray, precision=n
 
     def val_and_grad_fn(coords):
         g_bp, u_bp = impl.execute(coords, box)
-        return u_bp, g_bp
+        assert len(u_bp) == 1
+        return u_bp[0], g_bp
 
     return val_and_grad_fn
 

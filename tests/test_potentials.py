@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,9 +33,10 @@ pytestmark = [pytest.mark.memcheck]
 
 @pytest.fixture
 def harmonic_bond():
+    n_atoms = 3
     bond_idxs = np.array([[0, 1], [0, 2]], dtype=np.int32)
     params = np.ones(shape=(2, 2), dtype=np.float32)
-    return HarmonicBond(bond_idxs).bind(params)
+    return HarmonicBond(n_atoms, bond_idxs).bind(params)
 
 
 def execute_bound_impl(bp):
@@ -59,7 +61,7 @@ def test_bound_potential_get_potential(harmonic_bond):
 def test_bound_potential_empty_params():
     bond_idxs = np.empty((0, 2), dtype=np.int32)
     params = np.empty((0, 2))
-    u_test = HarmonicBond(bond_idxs).bind(params).to_gpu(np.float32)
+    u_test = HarmonicBond(3, bond_idxs).bind(params).to_gpu(np.float32)
     x = np.empty((0, 3), dtype=np.float32)
     box = np.eye(3, dtype=np.float32)
     assert u_test(x, box) == 0.0
@@ -128,10 +130,8 @@ def test_unbound_potential_execute_validation(harmonic_bond):
 
 
 def test_summed_potential_raises_on_inconsistent_lengths(harmonic_bond):
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(ValueError, match=r"number of potentials != number of parameter arrays"):
         SummedPotential([harmonic_bond], [])
-
-    assert str(excinfo.value) == "number of potentials != number of parameter arrays"
 
 
 def test_summed_potential_keeps_referenced_potentials_alive(harmonic_bond):
@@ -225,7 +225,7 @@ def reference_execute_over_batch(unbound, coords, boxes, params):
 def test_unbound_impl_execute_batch(harmonic_bond, precision):
     np.random.seed(2022)
 
-    N = 5
+    N = harmonic_bond.potential.num_atoms
 
     coords = np.random.random((N, 3)).astype(np.float32)
     perturbed_coords = coords + np.random.random(coords.shape).astype(np.float32)
@@ -317,7 +317,7 @@ def test_unbound_impl_execute_batch(harmonic_bond, precision):
 def test_bound_impl_execute_batch(harmonic_bond, precision):
     np.random.seed(2022)
 
-    N = 5
+    N = harmonic_bond.potential.num_atoms
 
     coords = np.random.random((N, 3)).astype(np.float32)
     perturbed_coords = coords + np.random.random(coords.shape).astype(np.float32)
@@ -395,8 +395,8 @@ def harmonic_bond_test_system():
             [np.random.choice(num_atoms, size=(2,), replace=False) for _ in range(num_bonds)], dtype=np.int32
         )
 
-    harmonic_bond_1 = HarmonicBond(random_bond_idxs())
-    harmonic_bond_2 = HarmonicBond(random_bond_idxs())
+    harmonic_bond_1 = HarmonicBond(num_atoms, random_bond_idxs())
+    harmonic_bond_2 = HarmonicBond(num_atoms, random_bond_idxs())
 
     params_1 = np.random.uniform(0, 1, size=(num_bonds, 2))
     params_2 = np.random.uniform(0, 1, size=(num_bonds, 2))
@@ -628,7 +628,7 @@ def test_execute_batch_sparse(
 ):
     rng = np.random.default_rng(seed)
 
-    n_atoms = 5
+    n_atoms = harmonic_bond.potential.num_atoms
     coords = rng.normal(0, 1, (coords_size, n_atoms, 3)).astype(precision)
 
     params = rng.uniform(size=(params_size, *harmonic_bond.params.shape)).astype(precision)

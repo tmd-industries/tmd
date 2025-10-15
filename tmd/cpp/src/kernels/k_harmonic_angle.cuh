@@ -21,11 +21,13 @@ namespace tmd {
 
 template <typename RealType, bool COMPUTE_U, bool COMPUTE_DU_DX,
           bool COMPUTE_DU_DP>
-void __global__ k_harmonic_angle(const int A, // number of angles
+void __global__ k_harmonic_angle(const int N,
+                                 const int A, // number of angles
                                  const RealType *__restrict__ coords, // [N, 3]
                                  const RealType *__restrict__ box,    // [3, 3]
                                  const RealType *__restrict__ params, // [P, 3]
                                  const int *__restrict__ angle_idxs,  // [A, 3]
+                                 const int *__restrict__ system_idxs, // [A]
                                  unsigned long long *__restrict__ du_dx,
                                  unsigned long long *__restrict__ du_dp,
                                  __int128 *__restrict__ u) {
@@ -36,13 +38,16 @@ void __global__ k_harmonic_angle(const int A, // number of angles
     return;
   }
 
-  int i_idx = angle_idxs[a_idx * 3 + 0];
-  int j_idx = angle_idxs[a_idx * 3 + 1];
-  int k_idx = angle_idxs[a_idx * 3 + 2];
+  const int system_idx = system_idxs[a_idx];
+  const int coord_offset = system_idx * N;
 
-  int ka_idx = a_idx * 3 + 0;
-  int a0_idx = a_idx * 3 + 1;
-  int eps_idx = a_idx * 3 + 2;
+  const int i_idx = angle_idxs[a_idx * 3 + 0] + coord_offset;
+  const int j_idx = angle_idxs[a_idx * 3 + 1] + coord_offset;
+  const int k_idx = angle_idxs[a_idx * 3 + 2] + coord_offset;
+
+  const int ka_idx = a_idx * 3 + 0;
+  const int a0_idx = a_idx * 3 + 1;
+  const int eps_idx = a_idx * 3 + 2;
 
   RealType ka = params[ka_idx];
   RealType a0 = params[a0_idx];
@@ -54,7 +59,7 @@ void __global__ k_harmonic_angle(const int A, // number of angles
   RealType njk = 0; // initialize your summed variables!
   // first pass, compute the norms
   for (int d = 0; d < 3; d++) {
-    RealType box_dim = box[d * 3 + d];
+    RealType box_dim = box[system_idx * 9 + d * 3 + d];
     RealType vji = coords[i_idx * 3 + d] - coords[j_idx * 3 + d];
     RealType vjk = coords[k_idx * 3 + d] - coords[j_idx * 3 + d];
     vji -= box_dim * nearbyint(vji / box_dim);

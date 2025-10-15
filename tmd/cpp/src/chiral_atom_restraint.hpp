@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include "energy_accum.hpp"
 #include "potential.hpp"
 #include <array>
 #include <vector>
@@ -24,35 +25,42 @@ namespace tmd {
 template <typename RealType>
 class ChiralAtomRestraint : public Potential<RealType> {
 
-  typedef void (*k_chiral_atom_fn)(const int N,
+  typedef void (*k_chiral_atom_fn)(const int N, const int R,
                                    const RealType *__restrict__ coords,
                                    const RealType *__restrict__ params,
                                    const int *__restrict__ idxs,
+                                   const int *__restrict__ system_idxs,
                                    unsigned long long *__restrict__ du_dx,
                                    unsigned long long *__restrict__ du_dp,
                                    __int128 *__restrict__ u_buffer);
 
 private:
+  const int num_batches_;
+  const int num_atoms_;
   const int R_;
   int *d_idxs_;
+  int *d_system_idxs_; // Which system idx each restraint is associated with
   __int128 *d_u_buffer_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
   std::array<k_chiral_atom_fn, 8> kernel_ptrs_;
 
 public:
-  ChiralAtomRestraint(const std::vector<int> &idxs // [R, 4]
-  );
+  ChiralAtomRestraint(const int num_batches, const int num_atoms,
+                      const std::vector<int> &idxs, // [R, 4]
+                      const std::vector<int> &system_idxs);
 
   ~ChiralAtomRestraint();
 
-  virtual void execute_device(const int N, const int P, const RealType *d_x,
-                              const RealType *d_p, const RealType *d_box,
+  virtual void execute_device(const int batches, const int N, const int P,
+                              const RealType *d_x, const RealType *d_p,
+                              const RealType *d_box,
                               unsigned long long *d_du_dx, // buffered
                               unsigned long long *d_du_dp, __int128 *d_u,
                               cudaStream_t stream) override;
+
+  virtual int batch_size() const override;
 };
 
 } // namespace tmd

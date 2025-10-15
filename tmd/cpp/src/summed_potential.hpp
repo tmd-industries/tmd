@@ -16,6 +16,7 @@
 #pragma once
 
 #include "device_buffer.hpp"
+#include "energy_accum.hpp"
 #include "potential.hpp"
 #include "stream_manager.hpp"
 #include <memory>
@@ -34,8 +35,7 @@ private:
   DeviceBuffer<__int128> d_u_buffer_;
   StreamManager manager_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
 public:
   SummedPotential(
@@ -48,8 +48,9 @@ public:
 
   const std::vector<int> &get_parameter_sizes();
 
-  virtual void execute_device(const int N, const int P, const RealType *d_x,
-                              const RealType *d_p, const RealType *d_box,
+  virtual void execute_device(const int batches, const int N, const int P,
+                              const RealType *d_x, const RealType *d_p,
+                              const RealType *d_box,
                               unsigned long long *d_du_dx,
                               unsigned long long *d_du_dp, __int128 *d_u,
                               cudaStream_t stream) override;

@@ -39,11 +39,13 @@ inline __device__ void cross_product(const RealType a[3], const RealType b[3],
 template <typename RealType, int D, bool COMPUTE_U, bool COMPUTE_DU_DX,
           bool COMPUTE_DU_DP>
 void __global__ k_periodic_torsion(
+    const int N,                          // Atoms in system
     const int T,                          // number of bonds
     const RealType *__restrict__ coords,  // [n, 3]
     const RealType *__restrict__ box,     // [3, 3]
     const RealType *__restrict__ params,  // [p, 3]
     const int *__restrict__ torsion_idxs, // [b, 4]
+    const int *__restrict__ system_idxs,  // [b],
     unsigned long long *__restrict__ du_dx,
     unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u) {
 
@@ -53,10 +55,14 @@ void __global__ k_periodic_torsion(
     return;
   }
 
-  int i_idx = torsion_idxs[t_idx * 4 + 0];
-  int j_idx = torsion_idxs[t_idx * 4 + 1];
-  int k_idx = torsion_idxs[t_idx * 4 + 2];
-  int l_idx = torsion_idxs[t_idx * 4 + 3];
+  const int system_idx = system_idxs[t_idx];
+  const int coord_offset = system_idx * N;
+  const int box_offset = system_idx * 9;
+
+  int i_idx = torsion_idxs[t_idx * 4 + 0] + coord_offset;
+  int j_idx = torsion_idxs[t_idx * 4 + 1] + coord_offset;
+  int k_idx = torsion_idxs[t_idx * 4 + 2] + coord_offset;
+  int l_idx = torsion_idxs[t_idx * 4 + 3] + coord_offset;
 
   RealType rij[D];
   RealType rkj[D];
@@ -67,7 +73,7 @@ void __global__ k_periodic_torsion(
 // (todo) cap to three dims, while keeping stride at 4
 #pragma unroll D
   for (int d = 0; d < D; d++) {
-    RealType box_dim = box[d * 3 + d];
+    RealType box_dim = box[box_offset + d * 3 + d];
     RealType vij = coords[j_idx * D + d] - coords[i_idx * D + d];
     RealType vkj = coords[j_idx * D + d] - coords[k_idx * D + d];
     RealType vkl = coords[l_idx * D + d] - coords[k_idx * D + d];

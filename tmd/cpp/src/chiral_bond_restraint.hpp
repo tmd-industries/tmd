@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +15,7 @@
 
 #pragma once
 
+#include "energy_accum.hpp"
 #include "potential.hpp"
 #include <array>
 #include <vector>
@@ -24,36 +26,44 @@ template <typename RealType>
 class ChiralBondRestraint : public Potential<RealType> {
 
   typedef void (*k_chiral_bond_fn)(
-      const int N, const RealType *__restrict__ coords,
+      const int N, const int R, const RealType *__restrict__ coords,
       const RealType *__restrict__ params, const int *__restrict__ idxs,
-      const int *__restrict__ signs, unsigned long long *__restrict__ du_dx,
+      const int *__restrict__ signs, const int *__restrict__ system_idxs,
+      unsigned long long *__restrict__ du_dx,
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
+  const int num_batches_;
+  const int num_atoms_;
   const int R_;
 
   int *d_idxs_;
   int *d_signs_;
+  int *d_system_idxs_; // Which system idx each restraint is associated with
   __int128 *d_u_buffer_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
   std::array<k_chiral_bond_fn, 8> kernel_ptrs_;
 
 public:
-  ChiralBondRestraint(const std::vector<int> &idxs, // [R, 4]
-                      const std::vector<int> &signs // [R]
+  ChiralBondRestraint(const int num_batches, const int num_atoms,
+                      const std::vector<int> &idxs,       // [R, 4]
+                      const std::vector<int> &signs,      // [R]
+                      const std::vector<int> &system_idxs // [R]
   );
 
   ~ChiralBondRestraint();
 
-  virtual void execute_device(const int N, const int P, const RealType *d_x,
-                              const RealType *d_p, const RealType *d_box,
+  virtual void execute_device(const int batches, const int N, const int P,
+                              const RealType *d_x, const RealType *d_p,
+                              const RealType *d_box,
                               unsigned long long *d_du_dx, // buffered
                               unsigned long long *d_du_dp,
                               __int128 *d_u, // buffered
                               cudaStream_t stream) override;
+
+  virtual int batch_size() const override;
 };
 
 } // namespace tmd

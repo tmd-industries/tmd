@@ -91,10 +91,12 @@ void __global__ k_log_probability_flag(
 template <typename RealType, bool COMPUTE_U, bool COMPUTE_DU_DX,
           bool COMPUTE_DU_DP>
 void __global__ k_flat_bottom_bond(
+    const int N,
     const int B, // number of bonds
     const RealType *__restrict__ coords, const RealType *__restrict__ box,
     const RealType *__restrict__ params, // [B, 3]
     const int *__restrict__ bond_idxs,   // [B, 2]
+    const int *__restrict__ system_idxs, // [B]
     unsigned long long *__restrict__ du_dx,
     unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u) {
 
@@ -104,11 +106,15 @@ void __global__ k_flat_bottom_bond(
     return;
   }
 
+  const int system_idx = system_idxs[b_idx];
+  const int coord_offset = system_idx * N;
+  const int box_offset = system_idx * 9;
+
   // which atoms
   const int num_atoms = 2;
   int atoms_idx = b_idx * num_atoms;
-  int src_idx = bond_idxs[atoms_idx + 0];
-  int dst_idx = bond_idxs[atoms_idx + 1];
+  const int src_idx = bond_idxs[atoms_idx + 0] + coord_offset;
+  const int dst_idx = bond_idxs[atoms_idx + 1] + coord_offset;
 
   // look up params
   const int num_params = 3;
@@ -127,7 +133,8 @@ void __global__ k_flat_bottom_bond(
 #pragma unroll
   for (int d = 0; d < 3; d++) {
     RealType delta = coords[src_idx * 3 + d] - coords[dst_idx * 3 + d];
-    delta -= box[d * 3 + d] * nearbyint(delta / box[d * 3 + d]);
+    delta -= box[box_offset + (d * 3 + d)] *
+             nearbyint(delta / box[box_offset + (d * 3 + d)]);
     dx[d] = delta;
     r2 += delta * delta;
   }

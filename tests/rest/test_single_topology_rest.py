@@ -125,7 +125,7 @@ def test_single_topology_rest_vacuum(mol_pair, temperature_scale_interpolation_f
                 state.nonbonded_pair_list,
                 potential=replace(
                     state.nonbonded_pair_list.potential,
-                    idxs=state.nonbonded_pair_list.potential.idxs[pair_pred, :],
+                    idxs=state.nonbonded_pair_list.potential.idxs[pair_pred, :],  # type: ignore
                 ),
                 params=state.nonbonded_pair_list.params[pair_pred, :],
             )

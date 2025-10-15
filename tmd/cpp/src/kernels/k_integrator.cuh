@@ -94,12 +94,13 @@ k_update_forward_baoab(const int N, const RealType ca,
 
 template <typename RealType, bool UPDATE_X>
 __global__ void half_step_velocity_verlet(
-    const int N, const int D, const unsigned int *__restrict__ idxs,
+    const int batch_size, const int N, const int D,
+    const unsigned int *__restrict__ idxs,
     const RealType *__restrict__ cbs, // N, dt / mass
     RealType *__restrict__ x_t, RealType *__restrict__ v_t,
     const unsigned long long *__restrict__ du_dx, const RealType dt) {
   int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (kernel_idx >= N) {
+  if (kernel_idx >= batch_size * N) {
     return;
   }
   int atom_idx;
@@ -108,7 +109,7 @@ __global__ void half_step_velocity_verlet(
   } else {
     atom_idx = kernel_idx;
   }
-  if (atom_idx >= N) {
+  if (atom_idx >= batch_size * N) {
     return;
   }
 
@@ -125,12 +126,13 @@ __global__ void half_step_velocity_verlet(
 
 template <typename RealType>
 __global__ void update_forward_velocity_verlet(
-    const int N, const int D, const unsigned int *__restrict__ idxs,
+    const int batch_size, const int N, const int D,
+    const unsigned int *__restrict__ idxs,
     const RealType *__restrict__ cbs, // N, dt / mass
     RealType *__restrict__ x_t, RealType *__restrict__ v_t,
     const unsigned long long *__restrict__ du_dx, const RealType dt) {
   int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (kernel_idx >= N) {
+  if (kernel_idx >= N * batch_size) {
     return;
   }
   int atom_idx;
@@ -139,10 +141,11 @@ __global__ void update_forward_velocity_verlet(
   } else {
     atom_idx = kernel_idx;
   }
-  if (atom_idx >= N) {
+  if (atom_idx >= N * batch_size) {
     return;
   }
 
+  // TBD: Investigate removing the y dim
   int d_idx = blockIdx.y;
   int local_idx = atom_idx * D + d_idx;
 

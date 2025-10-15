@@ -37,7 +37,7 @@ void StreamedPotentialRunner<RealType>::execute_potentials(
     manager_.wait_on_master(i, stream);
   }
   for (int i = 0; i < bps.size(); i++) {
-    bps[i]->execute_device(N, d_x, d_box, d_du_dx, d_du_dp,
+    bps[i]->execute_device(1, N, d_x, d_box, d_du_dx, d_du_dp,
                            d_u == nullptr ? nullptr : d_u + i,
                            manager_.get_stream(i));
   }

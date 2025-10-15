@@ -71,7 +71,7 @@ def get_strained_atoms(mol: Chem.Mol, ff: Forcefield, max_force: Optional[float]
     return [int(x) for x in np.arange(x0.shape[0])[norm_grads > max_force]]
 
 
-def apply_hmr(masses, bond_list, multiplier=2):
+def apply_hmr(masses, bond_list, multiplier=2) -> NDArray:
     """
     Implements hydrogen mass repartitioning. Hydrogen masses
     are increased by multiplied by multiplier, and the connecting

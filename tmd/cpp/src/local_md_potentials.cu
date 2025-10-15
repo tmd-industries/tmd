@@ -215,8 +215,9 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
     default_bonds[i * 2 + 1] = i + 1;
   }
   std::vector<RealType> default_params(N_ * 3);
+  std::vector<int> system_idxs(N_, 0);
   free_restraint_ = std::shared_ptr<FlatBottomBond<RealType>>(
-      new FlatBottomBond<RealType>(default_bonds));
+      new FlatBottomBond<RealType>(1, N, default_bonds, system_idxs));
   // Construct a bound potential with 0 params
   bound_free_restraint_ = std::shared_ptr<BoundPotential<RealType>>(
       new BoundPotential<RealType>(free_restraint_, default_params, 3));
@@ -224,7 +225,8 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
   if (!freeze_reference) {
     frozen_restraint_ = std::shared_ptr<LogFlatBottomBond<RealType>>(
         new LogFlatBottomBond<RealType>(
-            default_bonds, 1 / (temperature * static_cast<RealType>(BOLTZ))));
+            1, N, default_bonds, system_idxs,
+            1 / (temperature * static_cast<RealType>(BOLTZ))));
     bound_frozen_restraint_ = std::shared_ptr<BoundPotential<RealType>>(
         new BoundPotential<RealType>(frozen_restraint_, default_params, 3));
     // Push restraint to the front of the potentials for performance

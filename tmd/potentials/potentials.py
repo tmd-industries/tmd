@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,6 +39,7 @@ from .types import Box, Conf, Params
 
 @dataclass
 class HarmonicBond(Potential):
+    num_atoms: int
     idxs: NDArray[np.int32]
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
@@ -46,6 +48,7 @@ class HarmonicBond(Potential):
 
 @dataclass
 class HarmonicAngle(Potential):
+    num_atoms: int
     idxs: NDArray[np.int32]
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
@@ -65,6 +68,7 @@ class CentroidRestraint(Potential):
 
 @dataclass
 class ChiralAtomRestraint(Potential):
+    num_atoms: int
     idxs: NDArray[np.int32]
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
@@ -73,6 +77,7 @@ class ChiralAtomRestraint(Potential):
 
 @dataclass
 class ChiralBondRestraint(Potential):
+    num_atoms: int
     idxs: NDArray[np.int32]
     signs: NDArray[np.int32]
 
@@ -82,6 +87,7 @@ class ChiralBondRestraint(Potential):
 
 @dataclass
 class FlatBottomBond(Potential):
+    num_atoms: int
     idxs: NDArray[np.int32]
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
@@ -90,6 +96,7 @@ class FlatBottomBond(Potential):
 
 @dataclass
 class LogFlatBottomBond(Potential):
+    num_atoms: int
     idxs: NDArray[np.int32]
     beta: float
 
@@ -99,6 +106,7 @@ class LogFlatBottomBond(Potential):
 
 @dataclass
 class PeriodicTorsion(Potential):
+    num_atoms: int
     idxs: NDArray[np.int32]
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
@@ -148,7 +156,11 @@ class Nonbonded(Potential):
         )
         exclusion_idxs, scale_factors = nonbonded.filter_exclusions(atom_idxs, self.exclusion_idxs, self.scale_factors)
         exclusions = NonbondedExclusions(
-            exclusion_idxs, scale_factors.astype(precision), precision(self.beta), precision(self.cutoff)
+            self.num_atoms,
+            exclusion_idxs,
+            scale_factors.astype(precision),
+            precision(self.beta),
+            precision(self.cutoff),
         )
         return FanoutSummedPotential([exclusions, all_pairs]).to_gpu(precision)
 
@@ -180,8 +192,9 @@ class NonbondedInteractionGroup(Potential):
 
 @dataclass
 class NonbondedPairList(Potential):
-    idxs: NDArray[np.int32]
-    rescale_mask: NDArray[np.float64]
+    num_atoms: int
+    idxs: NDArray[np.int32] | list[NDArray[np.int32]]
+    rescale_mask: NDArray[np.float64] | list[NDArray[np.float64]]
     beta: float
     cutoff: float
 
@@ -194,8 +207,9 @@ class NonbondedPairList(Potential):
 
 @dataclass
 class NonbondedExclusions(Potential):
-    idxs: NDArray[np.int32]
-    rescale_mask: NDArray[np.float64]
+    num_atoms: int
+    idxs: NDArray[np.int32] | list[NDArray[np.int32]]
+    rescale_mask: NDArray[np.float64] | list[NDArray[np.float64]]
     beta: float
     cutoff: float
 
@@ -218,7 +232,8 @@ class NonbondedPairListPrecomputed(Potential):
     floating point operations are different in python vs C++.
     """
 
-    idxs: NDArray[np.int32]
+    num_atoms: int
+    idxs: NDArray[np.int32] | list[NDArray[np.int32]]
     beta: float
     cutoff: float
 

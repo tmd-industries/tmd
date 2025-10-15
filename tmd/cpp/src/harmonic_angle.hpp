@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include "energy_accum.hpp"
 #include "potential.hpp"
 #include <array>
 #include <vector>
@@ -23,37 +24,44 @@ namespace tmd {
 
 template <typename RealType> class HarmonicAngle : public Potential<RealType> {
 
-  typedef void (*k_angle_fn)(const int N, const RealType *__restrict__ coords,
-                             const RealType *__restrict__ box,
-                             const RealType *__restrict__ params,
-                             const int *__restrict__ idxs,
-                             unsigned long long *__restrict__ du_dx,
-                             unsigned long long *__restrict__ du_dp,
-                             __int128 *__restrict__ u_buffer);
+  typedef void (*k_angle_fn)(
+      const int N, const int A, const RealType *__restrict__ coords,
+      const RealType *__restrict__ box, const RealType *__restrict__ params,
+      const int *__restrict__ idxs, const int *__restrict__ system_idxs,
+      unsigned long long *__restrict__ du_dx,
+      unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
+  const int num_batches_;
+  const int num_atoms_;
   const int max_idxs_;
   int cur_num_idxs_;
-  int *d_angle_idxs_; // [max_idxs_, 3]
+  int *d_angle_idxs_;  // [max_idxs_, 3]
+  int *d_system_idxs_; // [max_idxs_]
   __int128 *d_u_buffer_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
   std::array<k_angle_fn, 8> kernel_ptrs_;
 
 public:
   static const int IDXS_DIM = 3;
 
-  HarmonicAngle(const std::vector<int> &angle_idxs);
+  HarmonicAngle(const int num_batches, const int num_atoms,
+                const std::vector<int> &angle_idxs, // [A, 3]
+                const std::vector<int> &system_idxs // [A]
+  );
 
   ~HarmonicAngle();
 
-  virtual void execute_device(const int N, const int P, const RealType *d_x,
-                              const RealType *d_p, const RealType *d_box,
+  virtual void execute_device(const int batches, const int N, const int P,
+                              const RealType *d_x, const RealType *d_p,
+                              const RealType *d_box,
                               unsigned long long *d_du_dx,
                               unsigned long long *d_du_dp, __int128 *d_u,
                               cudaStream_t stream) override;
+
+  virtual int batch_size() const override;
 
   void set_idxs_device(const int num_idxs, const int *d_new_idxs,
                        cudaStream_t stream);

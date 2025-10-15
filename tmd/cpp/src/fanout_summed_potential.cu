@@ -13,10 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "assert.h"
 #include "fanout_summed_potential.hpp"
 #include "gpu_utils.cuh"
 #include "nonbonded_common.hpp"
-#include <cub/cub.cuh>
 #include <memory>
 
 namespace tmd {
@@ -26,19 +26,10 @@ FanoutSummedPotential<RealType>::FanoutSummedPotential(
     const std::vector<std::shared_ptr<Potential<RealType>>> potentials,
     const bool parallel)
     : potentials_(potentials), parallel_(parallel),
-      d_u_buffer_(potentials_.size()), sum_storage_bytes_(0) {
-
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_,
-                                   d_u_buffer_.data, d_u_buffer_.data,
-                                   potentials_.size()));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
-};
+      d_u_buffer_(potentials_.size()), nrg_accum_(1, potentials_.size()){};
 
 template <typename RealType>
-FanoutSummedPotential<RealType>::~FanoutSummedPotential() {
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
-};
+FanoutSummedPotential<RealType>::~FanoutSummedPotential(){};
 
 template <typename RealType>
 const std::vector<std::shared_ptr<Potential<RealType>>> &
@@ -48,10 +39,11 @@ FanoutSummedPotential<RealType>::get_potentials() {
 
 template <typename RealType>
 void FanoutSummedPotential<RealType>::execute_device(
-    const int N, const int P, const RealType *d_x, const RealType *d_p,
-    const RealType *d_box, unsigned long long *d_du_dx,
+    const int batches, const int N, const int P, const RealType *d_x,
+    const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
+  assert(batches == 1);
   if (d_u) {
     gpuErrchk(cudaMemsetAsync(d_u_buffer_.data, 0, d_u_buffer_.size(), stream));
   }
@@ -70,7 +62,7 @@ void FanoutSummedPotential<RealType>::execute_device(
       pot_stream = manager_.get_stream(i);
     }
     potentials_[i]->execute_device(
-        N, P, d_x, d_p, d_box, d_du_dx, d_du_dp,
+        batches, N, P, d_x, d_p, d_box, d_du_dx, d_du_dp,
         d_u == nullptr ? nullptr : d_u_buffer_.data + i, pot_stream);
   }
 
@@ -80,9 +72,9 @@ void FanoutSummedPotential<RealType>::execute_device(
     }
   }
   if (d_u) {
-    gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                     d_u_buffer_.data, d_u, potentials_.size(),
-                                     stream));
+    // nullptr for the d_system_idxs as batch size is fixed to 1
+    nrg_accum_.sum_device(potentials_.size(), d_u_buffer_.data, nullptr, d_u,
+                          stream);
   }
 };
 
