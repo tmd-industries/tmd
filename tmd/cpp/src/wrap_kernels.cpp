@@ -87,9 +87,10 @@ void verify_coords(const py::array_t<double, py::array::c_style> &coords) {
 }
 
 // A utility to make sure that the coords and box shapes are correct
+template <typename RealType>
 void verify_coords_and_box(
-    const py::array_t<double, py::array::c_style> &coords,
-    const py::array_t<double, py::array::c_style> &box) {
+    const py::array_t<RealType, py::array::c_style> &coords,
+    const py::array_t<RealType, py::array::c_style> &box) {
   verify_coords(coords);
   if (box.ndim() != 2 || box.shape(0) != 3 || box.shape(1) != 3) {
     throw std::runtime_error("box must be 3x3");
@@ -97,11 +98,11 @@ void verify_coords_and_box(
   auto box_data = box.data();
   for (int i = 0; i < box.size(); i++) {
     if (i == 0 || i == 4 || i == 8) {
-      if (box_data[i] <= 0.0) {
+      if (box_data[i] <= 0) {
         throw std::runtime_error(
             "box must have positive values along diagonal");
       }
-    } else if (box_data[i] != 0.0) {
+    } else if (box_data[i] != 0) {
       throw std::runtime_error("box must be ortholinear");
     }
   }
@@ -1361,7 +1362,6 @@ void declare_potential(py::module &m, const char *typestr) {
 
             const long unsigned int N = coords.shape(1);
             const long unsigned int D = coords.shape(2);
-            // verify_coords_and_box(coords, box);
 
             long unsigned int P = 0;
             for (auto batch : params) {

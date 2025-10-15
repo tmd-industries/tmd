@@ -566,7 +566,6 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
     for pot in batch_pots:
         assert pot.potential.to_gpu(precision).unbound_impl.batch_size() == batch_size
         bp = pot.to_gpu(precision).bound_impl
-        # print("running")
         du_dx, u = bp.execute(np.stack(batch_coords), np.stack(batch_boxes))
 
         # Sanity check

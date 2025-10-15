@@ -102,14 +102,14 @@ void Context<RealType>::_verify_coords_and_box(const RealType *coords_buffer,
             std::to_string(i + 1));
       }
     }
-    const double max_box_dim =
+    const RealType max_box_dim =
         max(box_buffer[9 * i + 0 * 3 + 0],
             max(box_buffer[9 * i + 1 * 3 + 1], box_buffer[9 * i + 2 * 3 + 2]));
     const auto [min_coord, max_coord] = std::minmax_element(
         coords_buffer + i * N_ * 3, coords_buffer + i * N_ * 3 + N_ * 3);
     // Look at the largest difference in all dimensions, since coordinates are
     // not imaged into the home box per se, rather into the nearest periodic box
-    const double max_coord_delta = *max_coord - *min_coord;
+    const RealType max_coord_delta = *max_coord - *min_coord;
     if (max_box_dim * 100.0 < max_coord_delta) {
       throw std::runtime_error(
           "simulation unstable: dimensions of coordinates two orders of "
