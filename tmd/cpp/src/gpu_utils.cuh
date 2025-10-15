@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,6 +40,21 @@ curandStatus_t templateCurandNormal(curandGenerator_t generator,
 curandStatus_t templateCurandNormal(curandGenerator_t generator,
                                     double *outputPtr, size_t n, double mean,
                                     double stddev);
+
+template <typename T>
+T __device__ __forceinline__ template_curand_uniform(curandState_t *state);
+
+template <>
+float __device__ __forceinline__
+template_curand_uniform<float>(curandState_t *state) {
+  return curand_uniform(state);
+}
+
+template <>
+double __device__ __forceinline__
+template_curand_uniform<double>(curandState_t *state) {
+  return curand_uniform_double(state);
+}
 
 template <typename T>
 T __device__ __forceinline__ template_curand_normal(curandState_t *state);
