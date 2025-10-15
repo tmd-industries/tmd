@@ -22,6 +22,7 @@ from numpy.typing import NDArray
 
 import tmd._vendored.pymbar as pymbar
 from tmd._vendored.pymbar.testsystems import ExponentialTestCase
+from tmd.constants import DEFAULT_KT
 from tmd.fe.bar import (
     DG_ERR_KEY,
     DG_KEY,
@@ -313,6 +314,9 @@ def test_mbar_convergence(n_samples, n_states):
     for i in range(n_estimates - 1):
         u_kln_offset += u_kln_stride
         convergence.add_estimate_from_u_kln(u_kln[:, :, :u_kln_offset])
+        df = df_from_u_kln(u_kln[:, :, :u_kln_offset])
+        dg = df * DEFAULT_KT
+        np.testing.assert_allclose(dg, convergence.estimates()[-1])
     assert len(convergence._estimates) == n_estimates - 1
     # Still not enough samples
     assert not convergence.converged()
