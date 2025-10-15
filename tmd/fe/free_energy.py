@@ -689,9 +689,6 @@ def sample_with_context_iter(
                 )
                 steps = md_params.steps_per_frame
             local_steps = md_params.local_md_params.local_steps
-            global_steps = steps - local_steps
-            if global_steps > 0:
-                ctxt.multiple_steps(n_steps=global_steps)
             x_t, box_t = ctxt.multiple_steps_local(
                 local_steps,
                 ligand_idxs.astype(np.int32),
@@ -699,6 +696,9 @@ def sample_with_context_iter(
                 radius=rng.uniform(md_params.local_md_params.min_radius, md_params.local_md_params.max_radius),
                 seed=rng.integers(np.iinfo(np.int32).max),
             )
+            global_steps = steps - local_steps
+            if global_steps > 0:
+                x_t, box_t = ctxt.multiple_steps(n_steps=global_steps)
             if store_frames:
                 coords.append(x_t[-1])
                 boxes.append(box_t[-1])
