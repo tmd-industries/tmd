@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -83,9 +84,32 @@ def generate_dummy_group_assignments(
     core_atoms_ = frozenset(core_atoms)
     dummy_atoms = frozenset(bond_graph.nodes()) - core_atoms_
     induced_g = nx.subgraph(bond_graph, dummy_atoms)
+    # For any ring break, defined as a dummy group attached at two points, delete the bonds furtherest from both anchors
+    bonds_to_delete = []
+    for cc in nx.connected_components(induced_g):
+        bond_anchors = {n for dummy_atom in cc for n in bond_graph.neighbors(dummy_atom) if n in core_atoms_}
+        if len(bond_anchors) == 2:
+            cc = cc.union(bond_anchors)
+            a, b = bond_anchors
+            subgraph = nx.Graph(nx.subgraph(bond_graph, cc))
+            subgraph.remove_edge(a, b)
+
+            # Delete the bond in the middle of the path, converting a single dummy group into two
+            path = nx.shortest_path(subgraph, a, b)
+            # Don't do anything clever for cyclopropyl (probably not valid)
+            if len(path) <= 3:
+                continue
+            start = len(path) // 2 - 1 + len(path) % 2
+            end = start + 1
+            bonds_to_delete.append((path[start], path[end]))
+    if len(bonds_to_delete) > 0:
+        # Copy the graph to be editable
+        induced_g = nx.Graph(induced_g)
+        for a, b in bonds_to_delete:
+            induced_g.remove_edge(a, b)
 
     def get_bond_anchors(dummy_group):
-        bond_anchors = {n for dummy_atom in dummy_group for n in bond_graph.neighbors(dummy_atom) if n in core_atoms}
+        bond_anchors = {n for dummy_atom in dummy_group for n in bond_graph.neighbors(dummy_atom) if n in core_atoms_}
         if len(bond_anchors) > 1:
             warnings.warn(
                 f"Multiple bond anchors {bond_anchors} found for dummy group: {dummy_group}",

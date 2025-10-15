@@ -471,9 +471,16 @@ def set_romol_conf(mol: Chem.Mol, new_coords: NDArray, conf_id: int = 0):
     # convert from nm to angstroms
     angstrom_coords = new_coords * 10.0
     angstrom_coords = angstrom_coords.astype(np.float64)  # Must be float64
-    conf = mol.GetConformer(conf_id)
-    for i, pos in enumerate(angstrom_coords):
-        conf.SetAtomPosition(i, pos)
+    try:
+        conf = mol.GetConformer(conf_id)
+        for i, pos in enumerate(angstrom_coords):
+            conf.SetAtomPosition(i, pos)
+    except ValueError:
+        conf = Chem.Conformer(mol.GetNumAtoms())
+        conf.SetId(conf_id)
+        for i, pos in enumerate(angstrom_coords):
+            conf.SetAtomPosition(i, pos)
+        mol.AddConformer(conf)
 
 
 def get_mol_masses(mol: Chem.Mol) -> NDArray:

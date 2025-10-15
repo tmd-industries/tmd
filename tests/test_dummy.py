@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,7 +53,7 @@ def test_generate_dummy_group_assignments():
        /     \ /
       0-------1
 
-    The dummy groups identified should be {D0}, {D1, D2}. This partioning
+    The dummy groups identified should be {D0}, {D1, D2}. This partitioning
     maximizes the number of bonded terms that we can leave on:
 
         D0 D1  D2
@@ -93,14 +94,13 @@ def test_generate_dummy_group_assignments():
     g = convert_to_nx(Chem.MolFromSmiles("C1CC2OOC12"))
     core = [0, 1, 2, 5]
     dgas = list(generate_dummy_group_assignments(g, core))
-    assert equivalent_assignment(dgas, [{2: {3, 4}}, {5: {3, 4}}])
+    assert equivalent_assignment(dgas, [{2: {3}, 5: {4}}])
 
     # example above, where O's are dummy atoms, and Cs are core
     g = convert_to_nx(Chem.MolFromSmiles("OC1COO1"))
     core = [1, 2]
     dgas = list(generate_dummy_group_assignments(g, core))
-    # one or two groups depending on choice of anchor atom for {3, 4}
-    assert equivalent_assignment(dgas, [{1: {0}, 2: {3, 4}}, {1: {0, 3, 4}}])
+    assert equivalent_assignment(dgas, [{1: {0, 4}, 2: {3}}])
 
 
 def test_generate_dummy_group_assignments_empty_core():

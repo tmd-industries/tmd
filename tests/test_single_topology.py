@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,7 +49,13 @@ from tmd.fe.single_topology import (
     setup_dummy_interactions_from_ff,
 )
 from tmd.fe.system import minimize_scipy, simulate_system
-from tmd.fe.utils import get_mol_name, get_romol_conf, read_sdf, read_sdf_mols_by_name
+from tmd.fe.utils import (
+    get_mol_name,
+    get_romol_conf,
+    read_sdf,
+    read_sdf_mols_by_name,
+    set_romol_conf,
+)
 from tmd.ff import Forcefield
 from tmd.md.builders import build_water_system
 from tmd.potentials.jax_utils import pairwise_distances
@@ -1124,6 +1131,99 @@ $$$$""",
     chiral_params_1 = vs_1.chiral_atom.params
     assert len(chiral_idxs_0) == len(chiral_idxs_1)
     assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 3
+
+
+@pytest.mark.nocuda
+def test_ring_breaking_bond_position():
+    """Test that when a ring breaking transformation is performed that the bond broken is
+    further from the two atom anchors.
+
+    This is done to reduce the phase space available to the broken ring in intermediate states
+    """
+    mol_a = Chem.MolFromMolBlock(
+        """
+  Mrv2503 10152518042D
+
+ 10 11  0  0  0  0            999 V2000
+  -13.5268    2.1085    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -14.2412    1.6960    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -14.2412    0.8709    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -13.5268    0.4584    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -12.8123    0.8709    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -12.8123    1.6960    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -12.0978    0.4584    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -11.3833    0.8708    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -11.3833    1.6959    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -12.0978    2.1084    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0  0  0  0
+  2  3  1  0  0  0  0
+  3  4  2  0  0  0  0
+  4  5  1  0  0  0  0
+  5  6  2  0  0  0  0
+  6  1  1  0  0  0  0
+  7  8  2  0  0  0  0
+  8  9  1  0  0  0  0
+  9 10  2  0  0  0  0
+  5  7  1  0  0  0  0
+ 10  6  1  0  0  0  0
+M  END
+$$$$
+""",
+        removeHs=False,
+    )
+    # Append hydrogens to the end
+    mol_a = Chem.AddHs(mol_a)
+
+    mol_b = Chem.MolFromMolBlock(
+        """
+  MJ250300
+
+  9 10  0  0  0  0  0  0  0  0999 V2000
+  -13.5268    2.3763    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -14.2412    1.9638    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -14.2412    1.1387    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -13.5268    0.7262    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -12.8123    1.1387    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -12.8123    1.9638    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -12.0277    0.8837    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -11.5427    1.5511    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  -12.0276    2.2186    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0  0  0  0
+  2  3  1  0  0  0  0
+  3  4  2  0  0  0  0
+  4  5  1  0  0  0  0
+  5  6  2  0  0  0  0
+  6  1  1  0  0  0  0
+  7  8  1  0  0  0  0
+  8  9  1  0  0  0  0
+  5  7  1  0  0  0  0
+  6  9  1  0  0  0  0
+M  END
+$$$$
+""",
+        removeHs=False,
+    )
+    mol_b = Chem.AddHs(mol_b)
+    # Give the hydrogens meaningful atoms
+    AllChem.EmbedMolecule(mol_a, randomSeed=2025)
+    AllChem.EmbedMolecule(mol_b, randomSeed=2025)
+
+    # Map only the five member ring
+    core = np.array([[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5]])
+    AllChem.AlignMol(mol_a, mol_b, atomMap=core.tolist())
+
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    st = SingleTopology(mol_a, mol_b, core, ff)
+    vs_0 = st.setup_intermediate_state(1.0)
+
+    frames = simulate_system(
+        vs_0.get_U_fn(), st.combine_confs(get_romol_conf(mol_a), get_romol_conf(mol_b)), num_samples=1
+    )
+
+    with Chem.SDWriter("endstate.sdf") as writer:
+        m = st.mol(1.0)
+        set_romol_conf(m, frames[-1])
+        writer.write(m)
 
 
 @pytest.mark.nocuda
