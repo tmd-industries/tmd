@@ -196,8 +196,8 @@ def test_pre_equilibrate_host_all_ligands(host_name, data_dir, pdb_name, sdf_nam
         with path_to_internal_file(data_dir, pdb_name) as host_path:
             host_config = builders.build_protein_system(str(host_path), ff.protein_ff, ff.water_ff, mols=mols)
     x_host, x_box = minimizer.pre_equilibrate_host(mols, host_config, ff)
-    assert np.any(x_box != host_config.box)
-    assert np.all(x_host != host_config.conf)
+    assert np.all(x_box == host_config.box, axis=1).sum() == 0
+    assert np.all(x_host == host_config.conf, axis=1).sum() == 0
 
 
 def test_fire_minimize_host_adamantane():
