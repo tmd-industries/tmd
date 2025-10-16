@@ -69,9 +69,7 @@ def get_ion_residue_templates(modeller) -> dict[app.Residue, str]:
 
 def replace_clashy_waters(
     modeller: app.Modeller,
-    host_coords: NDArray[np.float64],
     box: NDArray[np.float64],
-    water_idxs: NDArray[np.int_],
     mols: list[Chem.Mol],
     host_ff: app.ForceField,
     water_ff: str,
@@ -85,14 +83,8 @@ def replace_clashy_waters(
     modeller: app.Modeller
         Modeller to update in place
 
-    host_coords: NDArray[np.float64]
-        Coordinates of host, may be different than modeller.positions
-
     box: NDArray[np.float64]
         Box to evaluate PBCs under
-
-    water_idxs: NDArray[int]
-        The indices of all of the water atoms in the system.
 
     mols: list[Mol]
         List of molecules to determine which waters are clashy
@@ -109,13 +101,23 @@ def replace_clashy_waters(
     if len(mols) == 0:
         return
 
-    water_coords = host_coords[water_idxs]
-    ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
-    clashy_idxs = idxs_within_cutoff(water_coords, ligand_coords, box, cutoff=clash_distance)
+    def get_clashy_idxs():
+        water_idxs = np.concatenate(
+            [[a.index for a in res.atoms()] for res in modeller.topology.residues() if res.name == WATER_RESIDUE_NAME]
+        )
+        water_coords = strip_units(modeller.positions)[water_idxs]
+        ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
+        idxs = idxs_within_cutoff(water_coords, ligand_coords, box, cutoff=clash_distance)
+        if len(idxs) > 0:
+            # Offset the clashy idxs with the first atom idx, else could be pointing at non-water atoms
+            idxs += np.min(water_idxs)
+        return idxs
+
+    clashy_idxs = get_clashy_idxs()
     if len(clashy_idxs) == 0:
         return
-    # Offset the clashy idxs with the first atom idx, else could be pointing at non-water atoms
-    clashy_idxs += np.min(water_idxs)
+    # Determine the number of atoms in the original system. Should end up with the same number of atoms
+    num_system_atoms = len(modeller.positions)
 
     def get_waters_to_delete():
         all_atoms = list(modeller.topology.atoms())
@@ -124,12 +126,24 @@ def replace_clashy_waters(
             atom = all_atoms[idx]
             if atom.residue.name == WATER_RESIDUE_NAME:
                 waters_to_delete.add(atom.residue)
+            else:
+                raise RuntimeError(f"Clashy atom is not a water: Residue name {atom.residue.name}")
         return waters_to_delete
 
-    # First add back in the number of waters that are clashy. Then delete the clashy waters.
-    # Done in this order so that additional waters being added will be at the boundaries, if added after deleting
-    # addSolvent fills the void intended for the mols. Need to end up with the same number of waters as originally
-    num_system_atoms = host_coords.shape[0]
+    dummy_chain_id = "DUMMY"
+
+    topology = app.Topology()
+    dummy_chain = topology.addChain(dummy_chain_id)
+    ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
+    for mol in mols:
+        # Add a bunch of chlorine atoms in place of the ligand atoms. This will prevent OpenMM from
+        # placing atoms in the binding pocket. OpenMM only looks at the parameters of waters, not the solute
+        # so this is fine.
+        for atom in mol.GetAtoms():
+            res = topology.addResidue(CHLORINE_ION_RESIDUE, dummy_chain)
+            topology.addAtom(CHLORINE_ION_RESIDUE, app.Element.getBySymbol("Cl"), res)
+    modeller.add(topology, ligand_coords * unit.nanometers)
+
     clashy_waters = get_waters_to_delete()
     combined_templates = get_ion_residue_templates(modeller)
     # First add back in the number of waters that are clashy and we know we need to delete
@@ -142,6 +156,9 @@ def replace_clashy_waters(
     )
     clashy_waters = get_waters_to_delete()
     modeller.delete(list(clashy_waters))
+    # Remove the chain filled with the dummy atoms
+    ligand_chain = [chain for chain in modeller.topology.chains() if chain.id == dummy_chain_id]
+    modeller.delete(ligand_chain)
     assert num_system_atoms == modeller.getTopology().getNumAtoms()
 
 
@@ -301,7 +318,7 @@ def load_pdb_system(
         box=box,
         num_water_atoms=num_water_atoms,
         omm_topology=modeller.topology,
-        masses=np.array(masses),
+        masses=np.asarray(masses),
     )
 
 
@@ -330,7 +347,6 @@ def build_protein_system(
 
     mols: optional list of mols
         Molecules to be part of the system, will avoid placing water molecules that clash with the mols.
-        If water molecules provided in the PDB clash with the mols, will do nothing.
 
     ionic_concentration: optional float
         Concentration of ions, in molars, to add to the system. Defaults to 0.0, meaning no ions are added.
@@ -380,9 +396,7 @@ def build_protein_system(
     solvated_host_coords = strip_units(modeller.positions)
 
     if mols is not None:
-        # Only look at waters that we have added, ignored the waters provided in the PDB
-        water_idxs = np.arange(host_coords.shape[0], solvated_host_coords.shape[0])
-        replace_clashy_waters(modeller, solvated_host_coords, box, water_idxs, mols, host_ff, water_ff)
+        replace_clashy_waters(modeller, box, mols, host_ff, water_ff)
         solvated_host_coords = strip_units(modeller.positions)
 
     num_water_atoms = solvated_host_coords.shape[0] - num_host_atoms
@@ -423,7 +437,7 @@ def build_protein_system(
         box=box,
         num_water_atoms=num_water_atoms,
         omm_topology=modeller.topology,
-        masses=np.array(masses),
+        masses=np.asarray(masses),
     )
 
 
@@ -478,7 +492,7 @@ def build_water_system(
         modeller, box, ff, water_ff, mols=mols, neutralize=neutralize, ionic_concentration=ionic_concentration
     )
 
-    def get_host_coords():
+    def get_centered_coords():
         host_coords = strip_units(modeller.positions)
         # If mols provided, center waters such that the center is the mols centroid
         # Done to avoid placing mols at the edges and moves the water coordinates to avoid
@@ -486,18 +500,17 @@ def build_water_system(
         if mols is not None and len(mols) > 0:
             mol_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
             mols_centroid = np.mean(mol_coords, axis=0)
-            box_extents = (np.max(host_coords, axis=0) - np.min(host_coords, axis=0)) * 0.5
-            box_center = np.min(host_coords, axis=0) + box_extents
-            host_coords = host_coords - box_center + mols_centroid
+            host_centroid = np.mean(host_coords, axis=0)
+            host_coords = host_coords - host_centroid + mols_centroid
         return host_coords
 
+    modeller = app.Modeller(modeller.topology, get_centered_coords())
+
     if mols is not None:
-        solvated_host_coords = get_host_coords()
-
-        water_idxs = np.arange(solvated_host_coords.shape[0])
-        replace_clashy_waters(modeller, solvated_host_coords, box.astype(np.float64), water_idxs, mols, ff, water_ff)
-
-    solvated_host_coords = get_host_coords()
+        replace_clashy_waters(modeller, box.astype(np.float64), mols, ff, water_ff)
+        solvated_host_coords = strip_units(modeller.positions)
+    else:
+        solvated_host_coords = strip_units(modeller.positions)
 
     assert modeller.getTopology().getNumAtoms() == solvated_host_coords.shape[0]
 
@@ -528,5 +541,5 @@ def build_water_system(
         box=box,
         num_water_atoms=num_water_atoms,
         omm_topology=modeller.topology,
-        masses=np.array(masses),
+        masses=np.asarray(masses),
     )

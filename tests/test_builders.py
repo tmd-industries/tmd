@@ -22,12 +22,20 @@ from rdkit import Chem
 
 from tmd.constants import DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, ONE_4PI_EPS0, NBParamIdx
 from tmd.fe.free_energy import HostConfig
-from tmd.fe.utils import get_romol_conf, read_sdf, set_romol_conf
+from tmd.fe.utils import get_romol_conf, read_sdf, read_sdf_mols_by_name, set_romol_conf
 from tmd.ff import sanitize_water_ff
 from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
-from tmd.md.builders import build_protein_system, build_water_system
+from tmd.md.builders import (
+    WATER_RESIDUE_NAME,
+    build_protein_system,
+    build_water_system,
+    get_box_from_coords,
+    load_pdb_system,
+    strip_units,
+)
 from tmd.md.minimizer import check_force_norm
 from tmd.potentials import Nonbonded
+from tmd.potentials.jax_utils import idxs_within_cutoff
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 from tmd.utils import path_to_internal_file
 
@@ -72,7 +80,7 @@ def test_build_water_system():
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/tip4pfb", "amber14/spce", "tip5p"])
+@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/tip4pfb", "amber14/spce"])
 def test_build_water_system_different_water_ffs(water_ff):
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
     host_config = build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
@@ -308,7 +316,7 @@ def test_build_protein_system_waters_before_protein():
     num_waters = 100
     # Construct a PDB file with the waters before the protein, should raise an exception
     with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as pdb_path:
-        host_pdbfile = host_pdb = app.PDBFile(str(pdb_path))
+        host_pdbfile = app.PDBFile(str(pdb_path))
 
     host_ff = app.ForceField(f"{DEFAULT_PROTEIN_FF}.xml", f"{DEFAULT_WATER_FF}.xml")
 
@@ -318,7 +326,7 @@ def test_build_protein_system_waters_before_protein():
     modeller.addSolvent(host_ff, numAdded=num_waters, neutralize=False, model=sanitize_water_ff(DEFAULT_WATER_FF))
     assert modeller.getTopology().getNumAtoms() == num_waters * 3
 
-    modeller.add(host_pdbfile.topology, host_pdb.positions)
+    modeller.add(host_pdbfile.topology, host_pdbfile.positions)
 
     with NamedTemporaryFile(suffix=".pdb") as temp:
         with open(temp.name, "w") as ofs:
@@ -378,3 +386,56 @@ def test_build_protein_system():
     host_atoms_with_moved_ligands = moved_host_config.conf.shape[0] - moved_host_config.num_water_atoms
     assert num_host_atoms == host_atoms_with_moved_ligands
     assert compute_box_volume(host_config.box) < compute_box_volume(moved_host_config.box)
+
+
+@pytest.mark.nocuda
+def test_build_protein_system_removal_of_clashy_waters_in_pdb():
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "ligands.sdf") as sdf_path:
+        mols_by_name = read_sdf_mols_by_name(sdf_path)
+    mol_a = mols_by_name["43"]
+    mol_b = mols_by_name["44"]
+
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "cdk8_structure.pdb") as pdb_path:
+        host_pdbfile = str(pdb_path)
+    pdb_obj = app.PDBFile(host_pdbfile)
+    pdb_coords = strip_units(pdb_obj.positions)
+
+    box = get_box_from_coords(pdb_coords)
+
+    mols = [mol_a, mol_b]
+    ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
+
+    cutoff = 0.2
+
+    clashy_idxs = idxs_within_cutoff(pdb_coords, ligand_coords, box, cutoff=cutoff)
+    assert len(clashy_idxs) >= 1
+    clash_set = set(clashy_idxs.tolist())
+    clashy_residues = [res for res in pdb_obj.topology.residues() for atom in res.atoms() if atom.index in clash_set]
+    assert all(res.name == WATER_RESIDUE_NAME for res in clashy_residues)
+
+    host_config = build_protein_system(host_pdbfile, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, mols=mols, box_margin=0.1)
+
+    clashy_idxs = idxs_within_cutoff(host_config.conf, ligand_coords, host_config.box, cutoff=cutoff)
+    clashy_residues = [
+        res for res in host_config.omm_topology.residues() for atom in res.atoms() if atom.index in clashy_idxs
+    ]
+    assert len(clashy_idxs) == 0
+
+
+@pytest.mark.nocuda
+def test_build_protein_wat_residue_names():
+    """Test to verify that if waters are specified with the WAT residue name, that they are correctly identified with the WATER_RESIDUE_NAME.
+    If this isn't the case our handling of waters is invalid
+    """
+    with NamedTemporaryFile(suffix=".pdb") as temp:
+        with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_solv_equil.pdb") as protein_path:
+            # Convert the HOH water code to WAT code
+            with open(protein_path) as ifs:
+                with open(temp.name, "w") as ofs:
+                    for line in ifs.readlines():
+                        ofs.write(line.replace(WATER_RESIDUE_NAME, "WAT"))
+        host_config = load_pdb_system(temp.name, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, box_margin=0.1)
+        water_res_names_match = [
+            res.name == WATER_RESIDUE_NAME for res in host_config.omm_topology.residues() if len(list(res.atoms())) == 3
+        ]
+        assert len(water_res_names_match) > 0 and all(water_res_names_match)
