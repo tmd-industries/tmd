@@ -32,6 +32,7 @@ from tmd.fe.bar import (
     construct_mbar_from_u_kln,
     df_and_err_from_mbar,
     pair_overlap_from_mbar,
+    sanitize_energies_for_bar,
     works_from_ukln,
 )
 from tmd.fe.plots import (
@@ -688,9 +689,6 @@ def sample_with_context_iter(
                 )
                 steps = md_params.steps_per_frame
             local_steps = md_params.local_md_params.local_steps
-            global_steps = steps - local_steps
-            if global_steps > 0:
-                ctxt.multiple_steps(n_steps=global_steps)
             x_t, box_t = ctxt.multiple_steps_local(
                 local_steps,
                 ligand_idxs.astype(np.int32),
@@ -698,6 +696,9 @@ def sample_with_context_iter(
                 radius=rng.uniform(md_params.local_md_params.min_radius, md_params.local_md_params.max_radius),
                 seed=rng.integers(np.iinfo(np.int32).max),
             )
+            global_steps = steps - local_steps
+            if global_steps > 0:
+                x_t, box_t = ctxt.multiple_steps(n_steps=global_steps)
             if store_frames:
                 coords.append(x_t[-1])
                 boxes.append(box_t[-1])
@@ -787,10 +788,6 @@ def sample(initial_state: InitialState, md_params: MDParams, max_buffer_frames: 
     )
 
 
-class IndeterminateEnergyWarning(UserWarning):
-    pass
-
-
 def estimate_free_energy_bar(u_kln_by_component: NDArray, temperature: float, n_bootstrap: int = 0) -> BarResult:
     """
     Estimate free energy difference for a pair of states given pre-generated samples.
@@ -805,7 +802,7 @@ def estimate_free_energy_bar(u_kln_by_component: NDArray, temperature: float, n_
 
     n_bootstrap: int
         Number of bootstrap iterations for Bar error estimation.
-        If n_bootstrap == 0, will return Bar uncertainity without bootstrapping.
+        If n_bootstrap == 0, will return Bar uncertainty without bootstrapping.
 
     Return
     ------
@@ -815,19 +812,7 @@ def estimate_free_energy_bar(u_kln_by_component: NDArray, temperature: float, n_
     """
     assert n_bootstrap >= 0
 
-    # 1. We represent energies that we aren't able to evaluate (e.g. because of a fixed-point overflow in GPU potential code) with NaNs, but
-    # 2. pymbar.mbar.MBAR will fail with LinAlgError if there are NaNs in the input.
-    #
-    # To work around this, we replace any NaNs with np.inf prior to the MBAR calculation.
-    #
-    # This is reasonable because u(x) -> inf corresponds to probability(x) -> 0, so this in effect declares that these
-    # pathological states have zero weight.
-    if np.any(np.isnan(u_kln_by_component)):
-        warn(
-            "Encountered NaNs in u_kln matrix. Replacing each instance with inf prior to MBAR calculation",
-            IndeterminateEnergyWarning,
-        )
-        u_kln_by_component = np.where(np.isnan(u_kln_by_component), np.inf, u_kln_by_component)
+    u_kln_by_component = sanitize_energies_for_bar(u_kln_by_component)
 
     u_kln = u_kln_by_component.sum(0)
 
@@ -1270,13 +1255,7 @@ def verify_and_sanitize_potential_matrix(
     replica_energies = np.diagonal(U_kl[replica_idx_by_state])
     assert np.all(np.isfinite(replica_energies)), "Replicas have non-finite energies"
     assert np.all(np.abs(replica_energies) < abs_energy_threshold), "Energies larger in magnitude than tolerated"
-    if np.any(np.isnan(U_kl)):
-        warn(
-            "Encountered NaNs in potential matrix. Replacing each instance with inf",
-            IndeterminateEnergyWarning,
-        )
-        U_kl = np.where(np.isnan(U_kl), np.inf, U_kl)
-    return U_kl
+    return sanitize_energies_for_bar(U_kl)
 
 
 def assert_ensembles_compatible(state_a: InitialState, state_b: InitialState):
@@ -1417,7 +1396,9 @@ def generate_pair_bar_ulkns(
             for state_idx, p_us in zip(state_idxs, per_pot_us):
                 energies_by_frames_by_params[i, state_idx, j] = p_us
 
-    u_kln_by_component_by_lambda = np.empty((len(initial_states) - 1, len(unbound_impls), 2, 2, num_samples))
+    u_kln_by_component_by_lambda = np.empty(
+        (len(initial_states) - 1, len(unbound_impls), 2, 2, num_samples), dtype=np.float32
+    )
     for i, states in enumerate(zip(range(len(initial_states)), range(1, len(initial_states)))):
         assert len(states) == 2
         for j in range(len(unbound_impls)):
@@ -1609,7 +1590,9 @@ def run_sims_hrex(
         U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 
         # Re-order energies by state
-        iterated_u_kln[:, :, :, current_frame] = np.array(U_kl_raw[:, hrex.replica_idx_by_state]) / kBT
+        iterated_u_kln[:, :, :, current_frame] = (
+            sanitize_energies_for_bar(np.array(U_kl_raw[:, hrex.replica_idx_by_state])) / kBT
+        )
         log_q_kl = -U_kl / kBT
 
         replica_idx_by_state_by_iter.append(hrex.replica_idx_by_state)

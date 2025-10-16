@@ -223,7 +223,7 @@ def test_build_rbfe_graph(scoring_method):
 @pytest.mark.parametrize("batch_size", [1, 1000])
 @pytest.mark.parametrize(
     "insertion_type, last_frame_sha",
-    [("untargeted", "124a2333d1a2937285dc8e5064dfcca8c745df561039542a5fd2bf0b349fabe7")],
+    [("untargeted", "2417ba12aff134eef27762a71b226efbc276710acad36e8f4043be41529d8eb9")],
 )
 def test_water_sampling_mc_bulk_water(batch_size, insertion_type, last_frame_sha):
     with resources.as_file(resources.files("tmd.testsystems.water_exchange")) as water_exchange:
@@ -255,8 +255,8 @@ def test_water_sampling_mc_bulk_water(batch_size, insertion_type, last_frame_sha
 @pytest.mark.parametrize(
     "insertion_type, last_frame_sha",
     [
-        ("targeted", "71ed0e592f7f15e4f602a32c91f391f67932f770c53e5ff2a98045b088d9ba08"),
-        ("untargeted", "98853a6900d7c8d0792dd87312ab431f0bf4a688e64e0995a4b07d72a63ef9a4"),
+        ("targeted", "32a322c08e30b53f7f3f0b8d5593d44927317e94a339427cb9f98a1c0288bbc0"),
+        ("untargeted", "f3dc7ab6f6c475651628799cf2e31e032d450f541bad389a9a1e12bb170a0b20"),
     ],
 )
 def test_water_sampling_mc_buckyball(batch_size, insertion_type, last_frame_sha):
@@ -290,6 +290,21 @@ def test_water_sampling_mc_buckyball(batch_size, insertion_type, last_frame_sha)
         assert hash_file(last_frame) == last_frame_sha
 
 
+def verify_leg_results_hashes(leg_dir: Path, expected_hash: str):
+    result_path = leg_dir / "results.npz"
+    assert result_path.is_file()
+    results = dict(np.load(result_path))
+    with NamedTemporaryFile(suffix=".npz") as temp:
+        # The time changes, so need to remove prior to hashing
+        results.pop("time")
+        np.savez(temp.name, **results)
+        results_hash = hash_file(temp.name)
+    endstate_0_hash = hash_file(leg_dir / "lambda0_traj.npz")
+    endstate_1_hash = hash_file(leg_dir / "lambda1_traj.npz")
+    # Load the results, so we can see what changed
+    assert (results_hash, endstate_0_hash, endstate_1_hash) == expected_hash, results
+
+
 @pytest.mark.fixed_output
 @pytest.mark.parametrize(
     "leg, n_windows, n_frames, n_eq_steps",
@@ -318,14 +333,14 @@ def test_run_rbfe_legs(
             "016af8696f58e58daf3135e87fddc3d0630b5cfc409bb10c649a1cecc6630bb2",
         ),
         "solvent": (
-            "2560e1d3283183bbd38d3ffd3b7651884ea0e4994964de8ec28d989de8d94105",
-            "cf8f3ea796d806e83759868f58e333d8c486ef8682ab88bb883ea8820fed756a",
-            "f17298079f56be48da33c969b956403727f1f8b84e8ca8ac345ea1c1aab9ba0b",
+            "021016fff390b7d809cd823fcd6ad937b31b31e2f8696b5e6bd9538b5bfbb1fb",
+            "7418a19e501f5e16afd594fa20e0987e78c4a84d71bc5e27239d9fc1c2bad030",
+            "6282b7176c07507a33d49722a0231424e03dac2214c93872761d082c72033adc",
         ),
         "complex": (
-            "9f8b586e9d2703357380160dc2b3a269fc3c22c4ae9e504d0902997bded4e555",
-            "307aa781bb9697747d8245f470c86ed0d0a79581b4f7a1360dee3f0abe080c84",
-            "a565cd74cd994df1c0a07cc6bf818c6e2d376f066c3e0a1c91933d68e34dfd98",
+            "5d84c259f99fb7ce5c00cea37aa1631343ee6ec5177b3d8b98e918da40bdaaed",
+            "c3155850324a1e35e9ee22afc26ac6ab91d7fdefe3493c804257fa3bf4b3f8e8",
+            "0a77feb5d5ab00ba97527687f1f5225757d4d1494c80f611e0a78e0ec977cdb3",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -407,25 +422,12 @@ def test_run_rbfe_legs(
                 assert len(traj_data["coords"]) == n_frames
                 assert len(traj_data["boxes"]) == n_frames
 
-        def verify_leg_results_hashes(output_dir: Path):
-            leg_dir = output_dir / leg
-            results = dict(np.load(leg_dir / "results.npz"))
-            with NamedTemporaryFile(suffix=".npz") as temp:
-                # The time changes, so need to remove prior to hashing
-                results.pop("time")
-                np.savez(temp.name, **results)
-                results_hash = hash_file(temp.name)
-            endstate_0_hash = hash_file(leg_dir / "lambda0_traj.npz")
-            endstate_1_hash = hash_file(leg_dir / "lambda1_traj.npz")
-            # Load the results, so we can see what changed
-            assert (results_hash, endstate_0_hash, endstate_1_hash) == leg_results_hashes[leg], results
-
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
         proc = run_example("run_rbfe_legs.py", get_cli_args(config_a))
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]))
+        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[leg])
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
@@ -481,8 +483,13 @@ def test_run_rbfe_legs(
 
 @pytest.mark.fixed_output
 @pytest.mark.parametrize(
-    "leg, n_windows, n_frames, n_eq_steps",
-    [("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
+    "leg, n_windows, n_frames, n_eq_steps, local_steps",
+    [
+        ("solvent", 5, 50, 1000, 400),
+        ("complex", 5, 50, 1000, 400),
+        ("solvent", 5, 50, 1000, 390),
+        ("complex", 5, 50, 1000, 390),
+    ],
 )
 @pytest.mark.parametrize("mol_a, mol_b", [("15", "30")])
 @pytest.mark.parametrize("seed", [2025])
@@ -491,6 +498,7 @@ def test_run_rbfe_legs_local(
     n_windows,
     n_frames,
     n_eq_steps,
+    local_steps,
     mol_a,
     mol_b,
     seed,
@@ -501,15 +509,25 @@ def test_run_rbfe_legs_local(
     # which can be used to investigate the results that generated the hashes.
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
-        "solvent": (
-            "5519004ac7a647596f1e7af302ad4ede94b2aa50fffa392f5714136ae0b2762c",
-            "330ab473b16e82d79b4357b85d27c41ec5e7cd5c264cf467762b59a07e68386b",
-            "47375f67ebdcdb200c6f592072a10e70cb921beec92873b4a09d12c5190efbed",
+        ("solvent", 400): (
+            "5f52d070da344b75acfff8226f36a100a527ec1fceb5fb38327534907ce2bf59",
+            "0f12df7037533d831096b5181384d460b5352318cfd9ef75f4df291c81827b6a",
+            "0124c318b3816dcbc9806f379cd6e0b76b121b67c1f513b98a6b318fc9c76892",
         ),
-        "complex": (
-            "1e62acd25471ae88d3e24c742dacc57db611470899664bfa9cc2c7c310690ef6",
-            "ad00f2cac4a35ccb27f06323b2c4f263da17f48cb23294116772ccdc61fa39c8",
-            "f32a0b9f4e4f7a8d95ffb5285726c71c5f4367ba146863485ed20b0c4eca5752",
+        ("complex", 400): (
+            "49284c33a9a2e142646e35aca622673fe8199704f2175f04157c6de7931f8509",
+            "3ac81481973e36836f81c9c4b9cc716425b0f89e05921b6c5e9da3afe35570a4",
+            "123c7200fef520551c5bdecd958f66bbb2a5b2ad876e298f32b05b14b42055c3",
+        ),
+        ("solvent", 390): (
+            "6c8a58092cdf826c5207000b8c8a7f15e6cd6dfbf5bc6516d1955842c1c4e18b",
+            "873c9be5968d389be2bc0e3a91f45a1f5fe578cef10cd4217165aa4899b79e6c",
+            "2ad56b8ddc1f1bdacef06d94c01cdf2ed1d1bbcbdcd612b1706458853d527818",
+        ),
+        ("complex", 390): (
+            "1682206575ce0aa72c424bc4f31e807c23b1ebe35a0f243a7f78530dfbf0ee63",
+            "29d0be040935381e28b5582a5bbd04553d44d51d1d7698a4dbb893d5756434c5",
+            "f1dbb6c5625183be643a16199535faa69c82298dacf38a9af9ed307afca78de5",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -524,8 +542,8 @@ def test_run_rbfe_legs_local(
             n_frames=n_frames,
             n_windows=n_windows,
             forcefield=DEFAULT_FF,
-            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}",
-            local_md_steps=400,
+            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}_{local_steps}",
+            local_md_steps=local_steps,
             local_md_radius=2.0,
         )
 
@@ -579,25 +597,12 @@ def test_run_rbfe_legs_local(
                 assert len(traj_data["coords"]) == n_frames
                 assert len(traj_data["boxes"]) == n_frames
 
-        def verify_leg_results_hashes(output_dir: Path):
-            leg_dir = output_dir / leg
-            results = dict(np.load(leg_dir / "results.npz"))
-            with NamedTemporaryFile(suffix=".npz") as temp:
-                # The time changes, so need to remove prior to hashing
-                results.pop("time")
-                np.savez(temp.name, **results)
-                results_hash = hash_file(temp.name)
-            endstate_0_hash = hash_file(leg_dir / "lambda0_traj.npz")
-            endstate_1_hash = hash_file(leg_dir / "lambda1_traj.npz")
-            # Load the results, so we can see what changed
-            assert (results_hash, endstate_0_hash, endstate_1_hash) == leg_results_hashes[leg], results
-
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
         proc = run_example("run_rbfe_legs.py", get_cli_args(config_a))
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]))
+        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(leg, local_steps)])
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
