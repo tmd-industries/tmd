@@ -67,6 +67,11 @@ WATER_SAMPLER_MOVERS = (
     custom_ops.TIBDExchangeMove_f64,
 )
 
+BAROSTAT_MOVERS = (
+    custom_ops.MonteCarloBarostat_f32,
+    custom_ops.MonteCarloBarostat_f64,
+)
+
 
 @dataclass(frozen=True)
 class RESTParams:
@@ -1040,6 +1045,10 @@ def run_sims_bisection(
             mover.set_step(0)
             if isinstance(mover, WATER_SAMPLER_MOVERS):
                 mover.set_params(get_water_sampler_params(initial_state))
+            elif isinstance(mover, BAROSTAT_MOVERS):
+                assert initial_state.barostat is not None
+                # If initial_volume_scale factor is None, set to 0.0. Which indicates 1% of box volume.
+                mover.set_volume_scale_factor(initial_state.barostat.initial_volume_scale_factor or 0.0)
         # Update the seed of the MDParams to ensure Local MD doesn't select the same sequence of reference atoms
         traj = sample_with_context(
             context,
