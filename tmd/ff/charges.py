@@ -512,4 +512,4 @@ PRECOMPUTED_CHARGES: dict[str, list] = {"patterns": []}
 # Zero out all of the BCCs for Amber AM1CCC charges.
 # This is to allow training the SMIRKS
 AMBER_AM1_CCC = AM1CCC_CHARGES.copy()
-AMBER_AM1_CCC["patterns"] = [(pattern, 0.0) for pattern, _ in AMBER_AM1_CCC["patterns"]
+AMBER_AM1_CCC["patterns"] = [(pattern, 0.0) for pattern, _ in AMBER_AM1_CCC["patterns"]]
