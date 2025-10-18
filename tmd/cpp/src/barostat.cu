@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,9 +24,6 @@
 #include <variant>
 
 #include "kernels/k_barostat.cuh"
-
-// Number of batches of random values to generate at a time
-const static int RANDOM_BATCH_SIZE = 1000;
 
 namespace tmd {
 
@@ -65,10 +63,6 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
 
   num_grouped_atoms_ = flattened_groups[0].size();
 
-  curandErrchk(curandCreateGenerator(&cr_rng_, CURAND_RNG_PSEUDO_DEFAULT));
-  cudaSafeMalloc(&d_rand_, RANDOM_BATCH_SIZE * 2 * sizeof(*d_rand_));
-  curandErrchk(curandSetPseudoRandomGeneratorSeed(cr_rng_, seed_));
-
   cudaSafeMalloc(&d_x_proposed_, N_ * 3 * sizeof(*d_x_proposed_));
   cudaSafeMalloc(&d_box_proposed_, 3 * 3 * sizeof(*d_box_proposed_));
   cudaSafeMalloc(&d_u_buffer_, bps_.size() * sizeof(*d_u_buffer_));
@@ -85,6 +79,9 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
   cudaSafeMalloc(&d_length_scale_, 1 * sizeof(*d_length_scale_));
   cudaSafeMalloc(&d_volume_scale_, 1 * sizeof(*d_volume_scale_));
   cudaSafeMalloc(&d_volume_delta_, 1 * sizeof(*d_volume_delta_));
+  cudaSafeMalloc(&d_rand_state_, 1 * sizeof(*d_rand_state_));
+  cudaSafeMalloc(&d_metropolis_hasting_rand_,
+                 1 * sizeof(*d_metropolis_hasting_rand_));
 
   gpuErrchk(cudaMemcpy(d_volume_scale_, &initial_volume_scale_factor,
                        1 * sizeof(*d_volume_scale_), cudaMemcpyHostToDevice));
@@ -111,6 +108,9 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
                        flattened_groups[2].size() * sizeof(*d_mol_offsets_),
                        cudaMemcpyHostToDevice));
 
+  k_initialize_curand_states<<<1, 1, 0>>>(1, seed_, d_rand_state_);
+  gpuErrchk(cudaPeekAtLastError());
+
   this->reset_counters();
 };
 
@@ -126,15 +126,15 @@ MonteCarloBarostat<RealType>::~MonteCarloBarostat() {
   gpuErrchk(cudaFree(d_u_buffer_));
   gpuErrchk(cudaFree(d_init_u_));
   gpuErrchk(cudaFree(d_final_u_));
-  gpuErrchk(cudaFree(d_rand_));
   gpuErrchk(cudaFree(d_length_scale_));
   gpuErrchk(cudaFree(d_volume_));
   gpuErrchk(cudaFree(d_volume_scale_));
   gpuErrchk(cudaFree(d_volume_delta_));
+  gpuErrchk(cudaFree(d_rand_state_));
+  gpuErrchk(cudaFree(d_metropolis_hasting_rand_));
   gpuErrchk(cudaFree(d_num_accepted_));
   gpuErrchk(cudaFree(d_num_attempted_));
   gpuErrchk(cudaFree(d_sum_temp_storage_));
-  curandErrchk(curandDestroyGenerator(cr_rng_));
 };
 
 template <typename RealType>
@@ -183,27 +183,13 @@ void MonteCarloBarostat<RealType>::move(const int N,
     return;
   }
 
-  // Get offset into the d_rand_ array
-  int random_offset =
-      (((this->step_ / this->interval_) * 2) - 2) % (RANDOM_BATCH_SIZE * 2);
-
-  // Generate random values batches then offset on each move
-  // Each move requires two random values, the first is used to adjust the
-  // scaling of box in k_setup_barostat_move and the second is used to accept or
-  // reject in the Metropolis-Hastings check performed in k_decide_move.
-  if (random_offset == 0) {
-    curandErrchk(curandSetStream(cr_rng_, stream));
-    curandErrchk(
-        templateCurandUniform(cr_rng_, d_rand_, RANDOM_BATCH_SIZE * 2));
-  }
-
   const int num_molecules = group_idxs_.size();
   gpuErrchk(cudaMemsetAsync(d_centroids_, 0,
                             num_molecules * 3 * sizeof(*d_centroids_), stream));
 
   k_setup_barostat_move<RealType><<<1, 1, 0, stream>>>(
-      adaptive_scaling_enabled_, d_rand_ + random_offset, d_box,
-      d_volume_delta_, d_volume_scale_, d_length_scale_, d_volume_);
+      adaptive_scaling_enabled_, d_rand_state_, d_box, d_volume_delta_,
+      d_volume_scale_, d_length_scale_, d_volume_, d_metropolis_hasting_rand_);
   gpuErrchk(cudaPeekAtLastError());
 
   // Create duplicates of the coords/box that we can modify
@@ -249,7 +235,7 @@ void MonteCarloBarostat<RealType>::move(const int N,
 
   k_decide_move<RealType><<<ceil_divide(N_, tpb), tpb, 0, stream>>>(
       N_, adaptive_scaling_enabled_, num_molecules, kT, pressure,
-      d_rand_ + random_offset, d_volume_, d_volume_delta_, d_volume_scale_,
+      d_metropolis_hasting_rand_, d_volume_, d_volume_delta_, d_volume_scale_,
       d_init_u_, d_final_u_, d_box, d_box_proposed_, d_x, d_x_proposed_,
       d_num_accepted_, d_num_attempted_);
   gpuErrchk(cudaPeekAtLastError());

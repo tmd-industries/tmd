@@ -157,7 +157,7 @@ class SerialClient(AbstractClient):
 
 
 class ProcessPoolClient(AbstractClient):
-    def __init__(self, max_workers):
+    def __init__(self, max_workers: int, max_tasks_per_child: int | None = None):
         """
         Generic wrapper around ProcessPoolExecutor. Each call to submit()
         will be run on a different worker.  If the number of jobs submitted
@@ -169,12 +169,17 @@ class ProcessPoolClient(AbstractClient):
         max_workers: int
             Number of workers to launch via the ProcessPoolExecutor
 
+        max_tasks_per_child: int or None
+            Number of tasks to run before restarting the process. If None, will never restart child processes
+
         """
         self.max_workers = max_workers
         self._idx = 0
         self._total_idx = 0
         ctxt = multiprocessing.get_context("spawn")
-        self.executor = futures.ProcessPoolExecutor(max_workers=self.max_workers, mp_context=ctxt)
+        self.executor = futures.ProcessPoolExecutor(
+            max_workers=self.max_workers, mp_context=ctxt, max_tasks_per_child=max_tasks_per_child
+        )
 
     def submit(self, task_fn, *args, **kwargs) -> BaseFuture:
         """
@@ -208,8 +213,8 @@ class CUDAPoolClient(ProcessPoolClient):
     the number of GPUs.
     """
 
-    def __init__(self, max_workers: int):
-        super().__init__(max_workers)
+    def __init__(self, max_workers: int, max_tasks_per_child: int | None = None):
+        super().__init__(max_workers, max_tasks_per_child)
         self._gpu_list = get_visible_gpus(max_workers)
 
     @staticmethod
@@ -246,7 +251,13 @@ class CUDAMPSPoolClient(ProcessPoolClient):
     this will perform worse than CUDAPoolClient.
     """
 
-    def __init__(self, num_gpus: int, workers_per_gpu: int = 4, active_thread_usage_per_worker: float | None = None):
+    def __init__(
+        self,
+        num_gpus: int,
+        workers_per_gpu: int = 4,
+        active_thread_usage_per_worker: float | None = None,
+        max_tasks_per_child: int | None = None,
+    ):
         """
         Parameters
         ----------
@@ -260,8 +271,11 @@ class CUDAMPSPoolClient(ProcessPoolClient):
         active_thread_usage_per_worker: float or None
             Sets the environment variable `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE` for each process. Defaults to 200 / workers_per_gpu,
             typically best left to the default.
+
+        max_tasks_per_child: int or None
+            Number of tasks to run before restarting the process. If None, will never restart child processes
         """
-        super().__init__(num_gpus * workers_per_gpu)
+        super().__init__(num_gpus * workers_per_gpu, max_tasks_per_child)
         assert workers_per_gpu > 0
         assert active_thread_usage_per_worker is None or active_thread_usage_per_worker > 0.0
         self.workers_per_gpu = workers_per_gpu

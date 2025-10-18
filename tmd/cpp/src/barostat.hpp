@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,7 +17,7 @@
 #pragma once
 
 #include "bound_potential.hpp"
-#include "curand.h"
+#include "curand_kernel.h"
 #include "mover.hpp"
 #include "streamed_potential_runner.hpp"
 #include <memory>
@@ -66,9 +67,9 @@ private:
   const int seed_;
   const std::vector<std::vector<int>> group_idxs_;
 
-  // stuff that deals with RNG
-  RealType *d_rand_;
-  curandGenerator_t cr_rng_;
+  // device rng
+  curandState_t *d_rand_state_;         // [1]
+  RealType *d_metropolis_hasting_rand_; // [1]
 
   int num_grouped_atoms_;
 
