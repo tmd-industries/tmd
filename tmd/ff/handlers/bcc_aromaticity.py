@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -92,7 +93,7 @@ def call_openeye(
         logging.debug(output_string)
 
 
-def match_smirks(smirks: str, oe_molecule: OEMol, unique: bool = False) -> list[dict[int, int]]:
+def oe_match_smirks(smirks: str, oe_molecule: OEMol, unique: bool = False) -> list[dict[int, int]]:
     """Attempt to find the indices (optionally unique) of all atoms which
     match a particular SMIRKS pattern.
     Parameters
@@ -205,7 +206,7 @@ class AromaticityModel:
             f"=@{x_type.replace('N', '6')}-@1"
         )
 
-        case_1_matches = match_smirks(case_1_smirks, oe_molecule, unique=True)
+        case_1_matches = oe_match_smirks(case_1_smirks, oe_molecule, unique=True)
         case_1_atoms = {match for matches in case_1_matches for match in matches.values()}
 
         cls._set_aromatic(case_1_matches, oe_molecule)
@@ -229,7 +230,7 @@ class AromaticityModel:
         case_2_atoms: set[int] = set()
 
         while previous_case_2_atoms != case_2_atoms:
-            case_2_matches = match_smirks(case_2_smirks, oe_molecule, unique=True)
+            case_2_matches = oe_match_smirks(case_2_smirks, oe_molecule, unique=True)
             # Enforce the ar6 condition
             case_2_matches = [
                 case_2_match
@@ -257,7 +258,7 @@ class AromaticityModel:
         case_3_atoms: set[int] = set()
 
         while previous_case_3_atoms != case_3_atoms:
-            case_3_matches = match_smirks(case_3_smirks, oe_molecule, unique=True)
+            case_3_matches = oe_match_smirks(case_3_smirks, oe_molecule, unique=True)
 
             # Enforce the ar6 condition
             case_3_matches = [
@@ -287,7 +288,7 @@ class AromaticityModel:
             f"=@{x_type.replace('N', '7')}-@1"
         )
 
-        case_4_matches = match_smirks(case_4_smirks, oe_molecule, unique=True)
+        case_4_matches = oe_match_smirks(case_4_smirks, oe_molecule, unique=True)
         case_4_atoms = {match for matches in case_4_matches for match in matches.values()}
 
         cls._set_aromatic(case_4_matches, oe_molecule)
@@ -308,7 +309,7 @@ class AromaticityModel:
             *case_4_atoms,
         }
 
-        case_5_matches = match_smirks(case_5_smirks, oe_molecule, unique=True)
+        case_5_matches = oe_match_smirks(case_5_smirks, oe_molecule, unique=True)
         case_5_matches = [
             matches
             for matches in case_5_matches
