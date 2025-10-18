@@ -27,6 +27,7 @@ from scipy import stats
 
 from tmd.constants import DEFAULT_TEMP
 from tmd.fe.free_energy import (
+    EarlyTerminationParams,
     HostConfig,
     HREXParams,
     HREXSimulationResult,
@@ -310,6 +311,44 @@ def plot_hrex_rbfe_hif2a(result: HREXSimulationResult):
         [state.lamb for state in result.final_result.initial_states],
     )
     plt.show()
+
+
+@pytest.mark.parametrize("seed", [2025])
+@pytest.mark.parametrize("local_md", [True, False])
+def test_hrex_rbfe_early_termination(hif2a_single_topology_leg, local_md: bool, seed):
+    """Verify that early termination works correctly"""
+    host_name, (mol_a, mol_b, core, forcefield, host_config) = hif2a_single_topology_leg
+
+    if local_md and host_name is None:
+        pytest.skip("No local MD for vacuum")
+
+    early_termination_params = EarlyTerminationParams(prediction_delta=1e6)
+    md_params = MDParams(
+        n_frames=2000,
+        n_eq_steps=10,
+        steps_per_frame=200,
+        seed=seed,
+        local_md_params=LocalMDParams(local_steps=200) if local_md else None,
+        hrex_params=HREXParams(
+            n_frames_bisection=10,
+            # Make the prediction delta very large, should terminate after getting num_samples
+            early_termination_params=early_termination_params,
+        ),
+    )
+    expected_frames = early_termination_params.num_samples * early_termination_params.interval
+
+    res = estimate_relative_free_energy_bisection_hrex(
+        mol_a,
+        mol_b,
+        core,
+        forcefield,
+        host_config,
+        md_params,
+        lambda_interval=(0.0, 0.1),
+        n_windows=3,
+    )
+    for traj in res.trajectories:
+        assert len(traj.boxes) == expected_frames
 
 
 @pytest.mark.parametrize("seed", [2023])

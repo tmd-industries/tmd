@@ -374,6 +374,7 @@ def get_samples_by_iter_by_replica(
 class HREXDiagnostics:
     replica_idx_by_state_by_iter: list[list[ReplicaIdx]]
     fraction_accepted_by_pair_by_iter: list[list[tuple[int, int]]]
+    mbar_estimates: list[float] | None = None
 
     @property
     def cumulative_swap_acceptance_rates(self) -> NDArray:
