@@ -92,7 +92,11 @@ def generate_dummy_group_assignments(
             cc = cc.union(bond_anchors)
             a, b = bond_anchors
             subgraph = nx.Graph(nx.subgraph(bond_graph, cc))
-            subgraph.remove_edge(a, b)
+            # Make sure there is no edge between a and b
+            try:
+                subgraph.remove_edge(a, b)
+            except nx.NetworkXError:
+                pass
 
             # Delete the bond in the middle of the path, converting a single dummy group into two
             path = nx.shortest_path(subgraph, a, b)
