@@ -27,10 +27,13 @@
 namespace tmd {
 
 template <typename RealType>
-Neighborlist<RealType>::Neighborlist(const int N, bool compute_upper_triangular)
-    : max_size_(N), N_(N), NC_(N), NR_(N),
+Neighborlist<RealType>::Neighborlist(const num_systems, const int N, const bool compute_upper_triangular)
+    : num_systems_(num_systems), max_size_(N), N_(N), NC_(N), NR_(N),
       compute_upper_triangular_(compute_upper_triangular) {
 
+  if (num_systems == 0) {
+    throw std::runtime_error("Neighborlist num_systems must be at least 1");
+  }
   if (N == 0) {
     throw std::runtime_error("Neighborlist N must be at least 1");
   }
@@ -38,29 +41,29 @@ Neighborlist<RealType>::Neighborlist(const int N, bool compute_upper_triangular)
   const int row_blocks = this->num_row_blocks();
   const int Y = this->Y();
 
-  const unsigned long long MAX_TILE_BUFFER = row_blocks * column_blocks;
-  const unsigned long long MAX_ATOM_BUFFER = this->max_ixn_count();
+  const unsigned long long MAX_TILE_BUFFER = num_systems_ * row_blocks * column_blocks;
+  const unsigned long long MAX_ATOM_BUFFER = num_systems_ *  this->max_ixn_count();
 
   // interaction buffers
-  cudaSafeMalloc(&d_ixn_count_, 1 * sizeof(*d_ixn_count_));
+  cudaSafeMalloc(&d_ixn_count_, num_systems_ * sizeof(*d_ixn_count_));
   cudaSafeMalloc(&d_ixn_tiles_, MAX_TILE_BUFFER * sizeof(*d_ixn_tiles_));
   cudaSafeMalloc(&d_ixn_atoms_, MAX_ATOM_BUFFER * sizeof(*d_ixn_atoms_));
   cudaSafeMalloc(&d_trim_atoms_,
-                 column_blocks * Y * TILE_SIZE * sizeof(*d_trim_atoms_));
+                 num_systems_ * column_blocks * Y * TILE_SIZE * sizeof(*d_trim_atoms_));
 
   // bounding box buffers
   cudaSafeMalloc(&d_row_block_bounds_ctr_,
-                 row_blocks * 3 * sizeof(*d_row_block_bounds_ctr_));
+                 num_systems_ * row_blocks * 3 * sizeof(*d_row_block_bounds_ctr_));
   cudaSafeMalloc(&d_row_block_bounds_ext_,
-                 row_blocks * 3 * sizeof(*d_row_block_bounds_ext_));
+                 num_systems_ * row_blocks * 3 * sizeof(*d_row_block_bounds_ext_));
   cudaSafeMalloc(&d_column_block_bounds_ctr_,
-                 column_blocks * 3 * sizeof(*d_column_block_bounds_ctr_));
+                 num_systems_ * column_blocks * 3 * sizeof(*d_column_block_bounds_ctr_));
   cudaSafeMalloc(&d_column_block_bounds_ext_,
-                 column_blocks * 3 * sizeof(*d_column_block_bounds_ext_));
+                 num_systems_ * column_blocks * 3 * sizeof(*d_column_block_bounds_ext_));
 
   // Row and column indice arrays
-  cudaSafeMalloc(&d_column_idxs_, max_size_ * sizeof(*d_column_idxs_));
-  cudaSafeMalloc(&d_row_idxs_, max_size_ * sizeof(*d_row_idxs_));
+  cudaSafeMalloc(&d_column_idxs_, num_systems_* max_size_ * sizeof(*d_column_idxs_));
+  cudaSafeMalloc(&d_row_idxs_, num_systems_* max_size_ * sizeof(*d_row_idxs_));
 
   this->reset_row_idxs();
 }
@@ -88,8 +91,8 @@ void Neighborlist<RealType>::compute_block_bounds_host(const int N,
                                                        RealType *h_bb_exts) {
 
   const int D = 3;
-  DeviceBuffer<RealType> d_coords(N * D);
-  DeviceBuffer<RealType> d_box(D * D);
+  DeviceBuffer<RealType> d_coords(num_systems_, N * D);
+  DeviceBuffer<RealType> d_box(num_systems_, D * D);
 
   d_coords.copy_from(h_coords);
   d_box.copy_from(h_box);
@@ -244,7 +247,7 @@ void Neighborlist<RealType>::set_compute_upper_triangular(bool val) {
 }
 
 template <typename RealType>
-void Neighborlist<RealType>::set_row_idxs(std::vector<unsigned int> row_idxs) {
+void Neighborlist<RealType>::set_row_idxs(std::vector<unsigned int> &row_idxs) {
   std::set<unsigned int> unique_row_idxs(row_idxs.begin(), row_idxs.end());
   std::vector<unsigned int> col_idxs =
       get_indices_difference<unsigned int>(N_, unique_row_idxs);
@@ -253,7 +256,7 @@ void Neighborlist<RealType>::set_row_idxs(std::vector<unsigned int> row_idxs) {
 
 template <typename RealType>
 void Neighborlist<RealType>::set_row_idxs_and_col_idxs(
-    std::vector<unsigned int> row_idxs, std::vector<unsigned int> col_idxs) {
+    std::vector<unsigned int> &row_idxs, std::vector<unsigned int> &col_idxs) {
   if (row_idxs.size() == 0) {
     throw std::runtime_error("idxs can't be empty");
   }
@@ -401,6 +404,7 @@ int Neighborlist<RealType>::num_column_blocks() const {
 };
 
 template <typename RealType> int Neighborlist<RealType>::Y() const {
+  // Doesn't scale with the number of systems
   return ceil_divide(this->num_column_blocks(), WARP_SIZE);
 };
 

@@ -70,9 +70,10 @@ def reference_block_bounds(coords: NDArray, box: NDArray, block_size: int) -> tu
 
 
 @pytest.mark.memcheck
+@pytest.mark.parametrize("batches", [1, 2])
 @pytest.mark.parametrize("precision,atol,rtol", [(np.float32, 1e-6, 1e-6), (np.float64, 2e-7, 1e-7)])
 @pytest.mark.parametrize("sort", [True, False])
-def test_block_bounds_dhfr(precision, atol, rtol, sort):
+def test_block_bounds_dhfr(batches, precision, atol, rtol, sort):
     _, _, coords, box = setup_dhfr()
 
     if precision == np.float32:

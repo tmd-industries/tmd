@@ -50,7 +50,7 @@ public:
 
   ~Neighborlist();
 
-  void set_row_idxs(std::vector<unsigned int> idxs);
+  void set_row_idxs(std::vector<unsigned int> &idxs);
 
   void set_compute_upper_triangular(bool val);
 
@@ -62,8 +62,8 @@ public:
 
   void resize_device(const int size, const cudaStream_t stream);
 
-  void set_row_idxs_and_col_idxs(std::vector<unsigned int> row_idxs,
-                                 std::vector<unsigned int> col_idxs);
+  void set_row_idxs_and_col_idxs(std::vector<unsigned int> &row_idxs,
+                                 std::vector<unsigned int> &col_idxs);
 
   void set_idxs_device(const int NC, const int NR, unsigned int *column_idxs,
                        unsigned int *row_idxs, const cudaStream_t stream);
