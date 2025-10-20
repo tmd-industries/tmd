@@ -24,10 +24,13 @@ namespace tmd {
 template <typename RealType> class Neighborlist {
 
 private:
-  const int max_size_; // Max number of atoms the buffers allow
-  int N_;              // Number of atoms
-  int NC_;             // Number of atoms in column, N_ by default
-  int NR_;             // Number of atoms in row, N_ by default
+  const int num_systems_;     // Number of systems neighborlist runs over
+  const int max_system_size_; // Max number of atoms in a system
+  int N_;                     // Number of atoms in each system
+  std::vector<int> column_idx_counts_; // [num_systems_] Number of atoms in
+                                       // column, N_ for each system by default
+  std::vector<int> row_idx_counts_; // [num_systems_] Number of atoms in row, N_
+                                    // for each system by default
 
   const bool compute_upper_triangular_;
 
@@ -37,7 +40,10 @@ private:
   RealType *d_column_block_bounds_ext_;
 
   unsigned int *d_row_idxs_;
+  unsigned int *d_row_idx_counts_;
+
   unsigned int *d_column_idxs_;
+  unsigned int *d_column_idx_counts_;
 
   unsigned int *d_ixn_count_;
   int *d_ixn_tiles_;
@@ -46,11 +52,12 @@ private:
 
 public:
   // N - number of atoms
-  Neighborlist(const int N, bool compute_upper_triangular);
+  Neighborlist(const int num_systems, const int N,
+               bool compute_upper_triangular);
 
   ~Neighborlist();
 
-  void set_row_idxs(std::vector<unsigned int> idxs);
+  void set_row_idxs(std::vector<unsigned int> &idxs);
 
   void reset_row_idxs();
 
@@ -60,23 +67,25 @@ public:
 
   void resize_device(const int size, const cudaStream_t stream);
 
-  void set_row_idxs_and_col_idxs(std::vector<unsigned int> row_idxs,
-                                 std::vector<unsigned int> col_idxs);
+  void set_row_idxs_and_col_idxs(std::vector<unsigned int> &row_idxs,
+                                 std::vector<unsigned int> &col_idxs);
 
   void set_idxs_device(const int NC, const int NR, unsigned int *column_idxs,
                        unsigned int *row_idxs, const cudaStream_t stream);
 
-  unsigned int num_tile_ixns();
+  std::vector<unsigned int> num_tile_ixns();
 
-  std::vector<std::vector<int>>
-  get_nblist_host(const int N, const RealType *h_coords, const RealType *h_box,
-                  const RealType cutoff, const RealType padding);
+  std::vector<std::vector<std::vector<int>>>
+  get_nblist_host(const int num_systems, const int N, const RealType *h_coords,
+                  const RealType *h_box, const RealType cutoff,
+                  const RealType padding);
 
   void build_nblist_device(const int N, const RealType *d_coords,
                            const RealType *d_box, const RealType cutoff,
                            const RealType padding, const cudaStream_t stream);
 
-  void compute_block_bounds_host(const int N, const RealType *h_coords,
+  void compute_block_bounds_host(const int num_systems, const int N,
+                                 const RealType *h_coords,
                                  const RealType *h_box, RealType *h_bb_ctrs,
                                  RealType *h_bb_exts);
 
@@ -88,19 +97,27 @@ public:
 
   unsigned int *get_row_idxs() { return d_row_idxs_; };
 
-  int get_num_row_idxs() { return NR_; };
+  unsigned int *get_num_row_idxs() { return d_row_idx_counts_; };
 
-  int get_num_col_idxs() { return NC_; };
+  int get_num_col_idxs() { return N_; };
 
   // get max number of row blocks
   int num_row_blocks() const;
   // get max number of column blocks
   int num_column_blocks() const;
 
+  int get_num_systems() const { return num_systems_; };
+
   // get max number of interactions
   int max_ixn_count() const;
 
 private:
+  // Sum of all row idx sizes
+  int total_row_idxs() const;
+
+  // Sum of all column idx sizes
+  int total_column_idxs() const;
+
   // Indicates that should only compute the upper triangle of the interactions
   // matrix, otherwise will compute the entire matrix.
   bool compute_upper_triangular() const;

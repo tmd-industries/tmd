@@ -203,7 +203,7 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
 
   // arange buffer that is constant throughout the lifetime of this class
   k_arange<<<ceil_divide(d_arange_.length, tpb), tpb>>>(d_arange_.length,
-                                                        d_arange_.data, 0);
+                                                        d_arange_.data);
   gpuErrchk(cudaPeekAtLastError());
 
   // Ensure that we allocate enough space for all potential bonds

@@ -168,7 +168,7 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
                                 1, 1, 1, 1>}),
 
       beta_(beta), cutoff_(cutoff), steps_since_last_sort_(0),
-      nblist_(N_, is_upper_triangular(interaction_type_)),
+      nblist_(1, N_, is_upper_triangular(interaction_type_)),
       nblist_padding_(nblist_padding), hilbert_sort_(nullptr),
       disable_hilbert_(disable_hilbert_sort) {
 
