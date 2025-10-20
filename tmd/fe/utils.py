@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,6 +26,45 @@ from rdkit.Chem.Draw import rdMolDraw2D
 from scipy.stats import special_ortho_group
 
 from tmd import constants
+
+
+def get_mol_experimental_value(
+    mol: Chem.Mol, field: str, units: str, experiment_temp: float = constants.DEFAULT_TEMP
+) -> float:
+    """Retrieve the experimental binding affinity of a molecule in kJ/mol.
+
+    Parameters
+    ----------
+
+    mol: Mol
+
+    field: str
+        SD Field on molecule that contains experimental label
+
+    units: str
+        The units of the field (kJ/mol, kcal/mol, uM, nM)
+
+    experiment_temp: float
+        Temperature in kelvin, defaults to constants.DEFAULT_TEMP. Only used
+        when converting uM or nM. Should be the Experiment temperature, not the simulation
+        temperature.
+
+    Returns
+    -------
+    float
+        Binding potency in kJ/mol.
+
+    """
+    if units == "kJ/mol":
+        return float(mol.GetProp(field))
+    elif units == "kcal/mol":
+        return float(mol.GetProp(field)) * constants.KCAL_TO_KJ
+    elif units == "uM":
+        return convert_uM_to_kJ_per_mole(float(mol.GetProp(field)), experiment_temp=experiment_temp)
+    elif units == "nM":
+        return convert_uM_to_kJ_per_mole(float(mol.GetProp(field)) / 1000.0, experiment_temp=experiment_temp)
+    else:
+        assert 0, f"Unknown units {units}"
 
 
 def convert_uIC50_to_kJ_per_mole(amount_in_uM: float, experiment_temp: float = constants.DEFAULT_TEMP) -> float:

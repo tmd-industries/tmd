@@ -356,6 +356,9 @@ def test_run_rbfe_legs(
             n_windows=n_windows,
             forcefield=DEFAULT_FF,
             output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_{mol_a}_{mol_b}_{leg}_{seed}",
+            force_overwrite=None,  # Force overwrite any existing data
+            experimental_field="IC50[uM](SPA)",
+            experimental_units="uM",
         )
 
         def verify_run(output_dir: Path):
@@ -545,6 +548,9 @@ def test_run_rbfe_legs_local(
             output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}_{local_steps}",
             local_md_steps=local_steps,
             local_md_radius=2.0,
+            force_overwrite=None,  # Force overwrite any existing data
+            experimental_field="IC50[uM](SPA)",
+            experimental_units="uM",
         )
 
         def verify_run(output_dir: Path):
@@ -557,6 +563,7 @@ def test_run_rbfe_legs_local(
             assert (output_dir / "atom_mapping.svg").is_file()
             assert (output_dir / "core.pkl").is_file()
             assert (output_dir / "ff.py").is_file()
+            assert output_dir / "ddg_results.csv"
 
             assert Forcefield.load_from_file(output_dir / "ff.py") is not None
 
