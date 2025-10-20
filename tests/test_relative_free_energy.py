@@ -28,7 +28,6 @@ from tmd.fe.free_energy import (
     PairBarResult,
     SimulationResult,
     image_frames,
-    sample,
 )
 from tmd.fe.rbfe import (
     estimate_relative_free_energy,
