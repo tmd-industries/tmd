@@ -50,6 +50,8 @@ Context<RealType>::Context(
     : N_(N), movers_(movers), step_(0), intg_(intg), bps_(bps),
       nonbonded_pots_(0) {
 
+  // JANK
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
   std::vector<std::shared_ptr<Potential<RealType>>> pots;
   for (auto bp : bps_) {
     pots.push_back(bp->potential);
