@@ -23,16 +23,35 @@ namespace tmd {
 
 static const int TILE_SIZE = WARP_SIZE;
 
-template <typename RealType>
+template <typename T>
 void __global__
-k_find_block_bounds(const int num_tiles,   // Number of tiles
-                    const int num_indices, // Number of indices
-                    const unsigned int *__restrict__ row_idxs, // [num_indices]
-                    const RealType *__restrict__ coords,       // [N*3]
-                    const RealType *__restrict__ box,          // [3*3]
-                    RealType *__restrict__ block_bounds_ctr,   // [num_tiles*3]
-                    RealType *__restrict__ block_bounds_ext,   // [num_tiles*3]
-                    unsigned int *__restrict__ ixn_count       // [1]
+k_reset_system_idxs(const size_t num_systems, const size_t N,
+                    T *__restrict__ col_system_idxs, // [num_systems, N]
+                    T *__restrict__ row_system_idxs  // [num_systems, N]
+) {
+  auto system_idx = blockIdx.y;
+  while (system_idx < num_systems) {
+    auto idx = blockIdx.x * blockDim.x + threadIdx.x;
+    while (idx < N) {
+      col_system_idxs[N * system_idx + idx] = system_idx;
+      row_system_idxs[N * system_idx + idx] = system_idx;
+    }
+    idx += gridDim.x * blockDim.x;
+  }
+}
+
+template <typename RealType>
+void __global__ k_find_block_bounds(
+    const int num_systems,                     // Number of systems
+    const int N,                               // Number of atoms per system
+    const int max_tiles,                       // Maximum tiles per systems
+    const unsigned int *num_indices,           // Number of indices per system
+    const unsigned int *__restrict__ row_idxs, //
+    const RealType *__restrict__ coords,       // [num_systems * N * 3]
+    const RealType *__restrict__ box,          // [num_systems * 3 * 3]
+    RealType *__restrict__ block_bounds_ctr,   // [num_systems * max_tiles * 3]
+    RealType *__restrict__ block_bounds_ext,   // [num_systems * max_tiles * 3]
+    unsigned int *__restrict__ ixn_counts      // [num_systems]
 ) {
 
   // Algorithm taken from
@@ -70,12 +89,13 @@ k_find_block_bounds(const int num_tiles,   // Number of tiles
   const RealType inv_bz = rcp_rn(box_z);
 
   int row_idx = tile_idx * TILE_SIZE + (threadIdx.x % WARP_SIZE);
-  // Reset the ixn count
-  if (row_idx == 0) {
-    ixn_count[0] = 0;
+  // Reset the ixn counts
+  if (row_idx < num_systems) {
+    ixn_counts[row_idx] = 0;
   }
+  int system_idx =
 
-  if (row_idx < num_indices) {
+      if (row_idx < num_indices) {
     int atom_idx = row_idxs[row_idx];
 
     pos_x = coords[atom_idx * 3 + 0];
@@ -127,7 +147,7 @@ k_find_block_bounds(const int num_tiles,   // Number of tiles
       max_pos_z = max(max_pos_z, imaged_pos);
     }
   }
-  if (threadIdx.x % WARP_SIZE == 0) {
+  if (compute_bounds) {
     block_bounds_ctr[tile_idx * 3 + 0] =
         static_cast<RealType>(0.5) * (max_pos_x + min_pos_x);
     block_bounds_ctr[tile_idx * 3 + 1] =
@@ -235,24 +255,32 @@ against each col block atom.
 // and column_idxs to be identical and be the values of np.arange(0, N).
 template <typename RealType, bool UPPER_TRIAG>
 void __global__ k_find_blocks_with_ixns(
-    const int N,                                  // Total number of atoms
-    const int NC,                                 // Number of columns idxs
-    const int NR,                                 // Number of rows idxs
-    const unsigned int *__restrict__ column_idxs, // [NC]
-    const unsigned int *__restrict__ row_idxs,    // [NR]
-    const RealType *__restrict__ column_bb_ctr,   // [N * 3] block centers
-    const RealType *__restrict__ column_bb_ext,   // [N * 3] block extents
-    const RealType *__restrict__ row_bb_ctr,      // [N * 3] block centers
-    const RealType *__restrict__ row_bb_ext,      // [N * 3] block extents
-    const RealType *__restrict__ coords,          // [N * 3]
-    const RealType *__restrict__ box,
+    const int num_systems,                    // Number of systems
+    const int N,                              // Total number of atoms
+    const unsigned int *system_column_counts, // [num_systems] Number of columns
+                                              // idxs for each system
+    const unsigned int
+        *system_row_counts, // [num_systems] Number of rows idxs for each system
+    const unsigned int *__restrict__ column_idxs, // [num_systems, NC]
+    const unsigned int *__restrict__ row_idxs,    // [num_systems, NR]
+    const RealType
+        *__restrict__ column_bb_ctr, // [num_systems * N * 3] block centers
+    const RealType
+        *__restrict__ column_bb_ext, // [num_systems * N * 3] block extents
+    const RealType
+        *__restrict__ row_bb_ctr, // [num_systems * N * 3] block centers
+    const RealType
+        *__restrict__ row_bb_ext,        // [num_systems * N * 3] block extents
+    const RealType *__restrict__ coords, // [num_systems * N * 3]
+    const RealType *__restrict__ box,    // [num_systems * 3 * 3]
     unsigned int *__restrict__ interactionCount, // number of tiles that have
                                                  // interactions
     int *__restrict__ interactingTiles, // the row block idx of the tile that is
                                         // interacting
     unsigned int
-        *__restrict__ interactingAtoms,    // [NR * WARP_SIZE] atom indices
-                                           // interacting with each row block
+        *__restrict__ interactingAtoms, // [num_systems * NR * WARP_SIZE] atom
+                                        // indices interacting with each row
+                                        // block
     unsigned int *__restrict__ trim_atoms, // the left-over trims that will
                                            // later be compacted
     const RealType base_cutoff, const RealType padding) {
@@ -272,6 +300,10 @@ void __global__ k_find_blocks_with_ixns(
   ixn_j_buffer[WARP_SIZE + threadIdx.x] = N;
 
   __shared__ volatile int sync_start[1];
+
+  assert(num_systems == 1);
+  const int NC = *system_column_counts;
+  const int NR = *system_column_counts;
 
   unsigned int row_i_idx = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned int atom_i_idx = row_i_idx < NR ? row_idxs[row_i_idx] : N;

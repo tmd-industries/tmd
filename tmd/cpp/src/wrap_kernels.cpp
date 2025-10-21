@@ -139,10 +139,13 @@ void declare_neighborlist(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("Neighborlist_") + typestr;
   py::class_<Class>(m, pyclass_name.c_str(), py::buffer_protocol(),
                     py::dynamic_attr())
-      .def(py::init([](const int replicas, const int N, const bool compute_upper_triangular) {
-             return new Neighborlist<RealType>(replicas, N, compute_upper_triangular);
+      .def(py::init([](const int num_systems, const int N,
+                       const bool compute_upper_triangular) {
+             return new Neighborlist<RealType>(num_systems, N,
+                                               compute_upper_triangular);
            }),
-           py::arg("N"), py::arg("compute_upper_triangular"))
+           py::arg("num_systems"), py::arg("N"),
+           py::arg("compute_upper_triangular"))
       .def(
           "compute_block_bounds",
           [](Neighborlist<RealType> &nblist,

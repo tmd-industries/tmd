@@ -43,21 +43,37 @@ void __global__ k_invert_indices(const int N, unsigned int *__restrict__ arr) {
   arr[idx] = arr[idx] >= N ? idx : N;
 }
 
-void __global__ k_arange(const int N, unsigned int *__restrict__ arr,
-                         unsigned int offset) {
-  const int atom_idx = blockIdx.x * blockDim.x + threadIdx.x;
+template <typename T>
+void __global__ k_arange(const size_t N, T *__restrict__ arr) {
+  const T atom_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (atom_idx >= N) {
     return;
   }
-  arr[atom_idx] = atom_idx + offset;
+  arr[atom_idx] = atom_idx;
 }
 
-void __global__ k_arange(const int N, int *__restrict__ arr, int offset) {
-  const int atom_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (atom_idx >= N) {
-    return;
+template void __global__ k_arange<int>(const size_t, int *__restrict__ arr);
+template void __global__ k_arange<unsigned int>(const size_t,
+                                                unsigned int *__restrict__ arr);
+
+template <typename T>
+void __global__ k_segment_arange(const size_t num_segments,
+                                 const size_t elements_per_segment,
+                                 T *__restrict__ arr) {
+  T segment_idx = blockDim.y;
+  while (segment_idx < num_segments) {
+    T arr_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    while (arr_idx < elements_per_segment) {
+      arr[elements_per_segment * segment_idx + arr_idx] = arr_idx;
+      arr_idx += gridDim.x * blockDim.x;
+    }
+    segment_idx += gridDim.y * blockDim.y;
   }
-  arr[atom_idx] = atom_idx + offset;
 }
+
+template void __global__ k_segment_arange<int>(const size_t, const size_t,
+                                               int *__restrict__ arr);
+template void __global__ k_segment_arange<unsigned int>(
+    const size_t, const size_t, unsigned int *__restrict__ arr);
 
 } // namespace tmd

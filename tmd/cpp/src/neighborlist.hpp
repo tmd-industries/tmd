@@ -24,10 +24,13 @@ namespace tmd {
 template <typename RealType> class Neighborlist {
 
 private:
-  const int max_size_; // Max number of atoms the buffers allow
-  int N_;              // Number of atoms
-  int NC_;             // Number of atoms in column, N_ by default
-  int NR_;             // Number of atoms in row, N_ by default
+  const int num_systems_;     // Number of systems neighborlist runs over
+  const int max_system_size_; // Max number of atoms in a system
+  int N_;                     // Number of atoms in each system
+  std::vector<int> column_idx_counts_; // [num_systems_] Number of atoms in
+                                       // column, N_ for each system by default
+  std::vector<int> row_idx_counts_; // [num_systems_] Number of atoms in row, N_
+                                    // for each system by default
 
   bool compute_upper_triangular_;
 
@@ -37,7 +40,12 @@ private:
   RealType *d_column_block_bounds_ext_;
 
   unsigned int *d_row_idxs_;
+  unsigned int *d_row_idx_counts_;
+  unsigned int *d_row_system_idxs_;
+
   unsigned int *d_column_idxs_;
+  unsigned int *d_column_idx_counts_;
+  unsigned int *d_column_system_idxs_;
 
   unsigned int *d_ixn_count_;
   int *d_ixn_tiles_;
@@ -46,7 +54,8 @@ private:
 
 public:
   // N - number of atoms
-  Neighborlist(const int N, bool compute_upper_triangular);
+  Neighborlist(const int num_systems, const int N,
+               bool compute_upper_triangular);
 
   ~Neighborlist();
 
@@ -90,9 +99,9 @@ public:
 
   unsigned int *get_row_idxs() { return d_row_idxs_; };
 
-  int get_num_row_idxs() { return NR_; };
+  std::vector<int> get_num_row_idxs() { return row_idx_counts_; };
 
-  int get_num_col_idxs() { return NC_; };
+  std::vector<int> get_num_col_idxs() { return column_idx_counts_; };
 
   // get max number of row blocks
   int num_row_blocks() const;
@@ -103,6 +112,12 @@ public:
   int max_ixn_count() const;
 
 private:
+  // Sum of all row idx sizes
+  int total_row_idxs() const;
+
+  // Sum of all column idx sizes
+  int total_column_idxs() const;
+
   // Indicates that should only compute the upper triangle of the interactions
   // matrix, otherwise will compute the entire matrix.
   bool compute_upper_triangular() const;

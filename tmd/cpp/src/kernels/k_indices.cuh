@@ -30,8 +30,12 @@ void __global__ k_set_value_to_idx(const int N, // Number of values in src
 // input.
 void __global__ k_invert_indices(const int N, unsigned int *__restrict__ arr);
 
-void __global__ k_arange(const int N, unsigned int *__restrict__ arr,
-                         unsigned int offset = 0);
-void __global__ k_arange(const int N, int *__restrict__ arr, int offset = 0);
+template <typename T>
+void __global__ k_arange(const size_t N, T *__restrict__ arr);
+
+template <typename T>
+void __global__ k_segment_arange(const size_t num_segments,
+                                 const size_t elements_per_segment,
+                                 T *__restrict__ arr);
 
 } // namespace tmd
