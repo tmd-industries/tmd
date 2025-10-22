@@ -76,17 +76,20 @@ def reference_block_bounds(coords: NDArray, box: NDArray, block_size: int) -> tu
 def test_block_bounds_dhfr(batches, precision, atol, rtol, sort):
     _, _, coords, box = setup_dhfr()
 
+    print("STARt\n")
     if precision == np.float32:
-        nblist = custom_ops.Neighborlist_f32(coords.shape[0], True)
+        nblist = custom_ops.Neighborlist_f32(batches, coords.shape[0], True)
     else:
-        nblist = custom_ops.Neighborlist_f64(coords.shape[0], True)
+        nblist = custom_ops.Neighborlist_f64(batches, coords.shape[0], True)
 
     if sort:
         perm = hilbert_sort(coords, box)
         coords = coords[perm]
 
+    print("Here we go")
     block_size = 32
     ref_ctrs, ref_exts = reference_block_bounds(coords, box, block_size)
+    print(len(ref_ctrs))
 
     test_ctrs, test_exts = nblist.compute_block_bounds(coords, box, block_size)
 

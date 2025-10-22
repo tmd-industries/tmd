@@ -365,8 +365,8 @@ template <typename RealType, int THREADS_PER_BLOCK, bool COMPUTE_U,
           bool COMPUTE_DU_DX, bool COMPUTE_DU_DP, bool COMPUTE_UPPER_TRIANGLE,
           bool COMPUTE_COL_GRADS>
 void __global__ k_nonbonded_unified(
-    const int N,  // Number of atoms involved in the interaction group
-    const int NR, // Number of row indices
+    const int N, // Number of atoms involved in the interaction group
+    const unsigned int *__restrict__ NR, // Number of row indices
     const unsigned int *__restrict__ ixn_count,
     const unsigned int
         *__restrict__ output_permutation, // [N] Permutation from atom idx ->
@@ -404,13 +404,13 @@ void __global__ k_nonbonded_unified(
 
     int row_block_idx = ixn_tiles[tile_idx];
     int index = row_block_idx * tile_size + tile_offset;
-    int atom_i_idx = index < NR ? index : N;
+    int atom_i_idx = index < *NR ? index : N;
     int atom_j_idx = ixn_atoms[tile_idx * tile_size + tile_offset];
 
     // if any atom_j_idx is less than num_row_atoms, or if COMPUTE_COL_GRADS is
     // True, we always compute_j_grads for this tile.
     bool compute_j_grads =
-        COMPUTE_COL_GRADS || __any_sync(0xffffffff, atom_j_idx < NR);
+        COMPUTE_COL_GRADS || __any_sync(0xffffffff, atom_j_idx < *NR);
 
     RealType w_i = atom_i_idx < N
                        ? params[atom_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_W]
@@ -427,13 +427,13 @@ void __global__ k_nonbonded_unified(
       if (tile_is_vanilla) {
         v_nonbonded_unified<RealType, 0, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 1>(
-            tile_idx, N, NR, output_permutation, coords, params, box,
+            tile_idx, N, *NR, output_permutation, coords, params, box,
             energy_accumulator, beta, cutoff_squared, ixn_tiles, ixn_atoms,
             du_dx, du_dp);
       } else {
         v_nonbonded_unified<RealType, 1, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 1>(
-            tile_idx, N, NR, output_permutation, coords, params, box,
+            tile_idx, N, *NR, output_permutation, coords, params, box,
             energy_accumulator, beta, cutoff_squared, ixn_tiles, ixn_atoms,
             du_dx, du_dp);
       };
@@ -441,13 +441,13 @@ void __global__ k_nonbonded_unified(
       if (tile_is_vanilla) {
         v_nonbonded_unified<RealType, 0, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 0>(
-            tile_idx, N, NR, output_permutation, coords, params, box,
+            tile_idx, N, *NR, output_permutation, coords, params, box,
             energy_accumulator, beta, cutoff_squared, ixn_tiles, ixn_atoms,
             du_dx, du_dp);
       } else {
         v_nonbonded_unified<RealType, 1, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 0>(
-            tile_idx, N, NR, output_permutation, coords, params, box,
+            tile_idx, N, *NR, output_permutation, coords, params, box,
             energy_accumulator, beta, cutoff_squared, ixn_tiles, ixn_atoms,
             du_dx, du_dp);
       };

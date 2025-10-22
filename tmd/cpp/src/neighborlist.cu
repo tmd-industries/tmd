@@ -92,12 +92,31 @@ Neighborlist<RealType>::Neighborlist(const int num_systems, const int N,
                                              sizeof(*d_column_system_idxs_));
   cudaSafeMalloc(&d_column_idx_counts_,
                  num_systems_ * sizeof(*d_column_idx_counts_));
+  // // Increment by 1 as the first value will be zero
+  // cudaSafeMalloc(&d_column_idx_offsets_,
+  //                (num_systems_ + 1) * sizeof(*d_column_idx_counts_));
+  // gpuErrchk(
+  //     cudaMemset(d_column_idx_offsets_, 0, (num_systems_ + 1) *
+  //     sizeof(*d_column_idx_offsets_)));
 
   cudaSafeMalloc(&d_row_idxs_,
                  num_systems_ * max_system_size_ * sizeof(*d_row_idxs_));
   cudaSafeMalloc(&d_row_system_idxs_,
                  num_systems_ * max_system_size_ * sizeof(*d_row_system_idxs_));
   cudaSafeMalloc(&d_row_idx_counts_, num_systems_ * sizeof(*d_row_idx_counts_));
+  // Increment by 1 as the first value will be zero
+  // cudaSafeMalloc(&d_row_idx_offsets_,
+  //                (num_systems_ + 1) * sizeof(*d_row_idx_counts_));
+  // gpuErrchk(
+  //     cudaMemset(d_row_idx_offsets_, 0, (num_systems_ + 1) *
+  //     sizeof(*d_row_idx_offsets_)));
+
+  // Since d_column_idx_counts_ and d_row_idx_counts_ are the same length can be
+  // used for both gpuErrchk(cub::DeviceScan::InclusiveSum(
+  //     nullptr, temp_sum_bytes_, d_column_idx_counts_,
+  //     d_column_idxs_offsets_, num_systems_));
+
+  // cudaSafeMalloc(&d_temp_storage_buffer_, temp_sum_bytes_);
 
   this->reset_row_idxs();
 }
@@ -119,6 +138,8 @@ template <typename RealType> Neighborlist<RealType>::~Neighborlist() {
   gpuErrchk(cudaFree(d_row_block_bounds_ext_));
   gpuErrchk(cudaFree(d_column_block_bounds_ctr_));
   gpuErrchk(cudaFree(d_column_block_bounds_ext_));
+
+  // gpuErrchk(cudaFree(d_temp_storage_buffer_));
 }
 
 template <typename RealType>
@@ -258,12 +279,13 @@ void Neighborlist<RealType>::compute_block_bounds_device(
   }
 
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
-
-  k_find_block_bounds<RealType>
-      <<<ceil_divide(this->total_column_idxs(), tpb), tpb, 0, stream>>>(
-          N_, d_column_idx_counts_, d_column_system_idxs_, d_column_idxs_,
-          d_coords, d_box, d_column_block_bounds_ctr_,
-          d_column_block_bounds_ext_, d_ixn_count_);
+  const int max_col_idxs =
+      *std::max_element(column_idx_counts_.begin(), column_idx_counts_.end());
+  dim3 col_dim_grid(ceil_divide(max_col_idxs, tpb), num_systems_, 1);
+  printf("Max col idxs %d\n", max_col_idxs);
+  k_find_block_bounds<RealType><<<col_dim_grid, tpb, 0, stream>>>(
+      num_systems_, N_, d_column_idx_counts_, d_column_idxs_, d_coords, d_box,
+      d_column_block_bounds_ctr_, d_column_block_bounds_ext_, d_ixn_count_);
   gpuErrchk(cudaPeekAtLastError());
   // In the case of upper triangle of the matrix, the column and row indices are
   // the same, so only compute block ixns for both when they are different
@@ -276,11 +298,13 @@ void Neighborlist<RealType>::compute_block_bounds_device(
   // - we're in the disjoint rectangular case, row_idxs need to be processed as
   // well.
   if (!this->compute_upper_triangular()) {
-    k_find_block_bounds<RealType>
-        <<<ceil_divide(this->total_row_idxs(), tpb), tpb, 0, stream>>>(
-            N_, d_row_idx_counts_, d_row_system_idxs_, d_row_idxs_, d_coords,
-            d_box, d_row_block_bounds_ctr_, d_row_block_bounds_ext_,
-            d_ixn_count_);
+    const int max_row_idxs =
+        *std::max_element(row_idx_counts_.begin(), row_idx_counts_.end());
+    dim3 row_dim_grid(ceil_divide(max_row_idxs, tpb), num_systems_, 1);
+
+    k_find_block_bounds<RealType><<<row_dim_grid, tpb, 0, stream>>>(
+        num_systems_, N_, d_row_idx_counts_, d_row_idxs_, d_coords, d_box,
+        d_row_block_bounds_ctr_, d_row_block_bounds_ext_, d_ixn_count_);
     gpuErrchk(cudaPeekAtLastError());
   }
 };
@@ -355,6 +379,7 @@ void Neighborlist<RealType>::reset_row_idxs_device(const cudaStream_t stream) {
   dim3 dimGrid(ceil_divide(N_, tpb), num_systems_, 1); // block x, y, z dims
   // Fill the indices with the 0 to N-1 indices, indicating 'normal'
   // neighborlist operation
+  // printf("Num Systems %d\n", num_systems_);
   k_segment_arange<unsigned int>
       <<<dimGrid, tpb, 0, stream>>>(num_systems_, N_, d_column_idxs_);
   gpuErrchk(cudaPeekAtLastError());
@@ -366,8 +391,22 @@ void Neighborlist<RealType>::reset_row_idxs_device(const cudaStream_t stream) {
       num_systems_, N_, d_column_system_idxs_, d_row_system_idxs_);
   gpuErrchk(cudaPeekAtLastError());
 
-  std::fill(row_idx_counts_.begin(), row_idx_counts_.end(), N_);
-  std::fill(column_idx_counts_.begin(), column_idx_counts_.end(), N_);
+  k_fill<<<ceil_divide(num_systems_, tpb), tpb, 0, stream>>>(
+      num_systems_, d_column_idx_counts_, static_cast<unsigned int>(N_));
+  gpuErrchk(cudaPeekAtLastError());
+  k_fill<<<ceil_divide(num_systems_, tpb), tpb, 0, stream>>>(
+      num_systems_, d_row_idx_counts_, static_cast<unsigned int>(N_));
+  gpuErrchk(cudaPeekAtLastError());
+
+  // // Setup the offsets
+  // // Offset output buffers by 1 since the first value is always zero
+  // gpuErrchk(cub::DeviceScan::InclusiveSum(
+  //     d_temp_storage_buffer_, temp_sum_bytes_, d_column_idx_counts_,
+  //     d_column_idxs_offsets_ + 1, num_systems_));
+
+  // gpuErrchk(cub::DeviceScan::InclusiveSum(
+  //     d_temp_storage_buffer_, temp_sum_bytes_, d_row_idx_counts_,
+  //     d_row_idxs_offsets_ + 1, num_systems_));
 }
 
 template <typename RealType>
@@ -479,7 +518,7 @@ template <typename RealType> int Neighborlist<RealType>::Y() const {
   const int max_column_blocks =
       *std::max_element(column_idx_counts_.begin(), column_idx_counts_.end());
   // Doesn't scale with the number of systems
-  return ceil_divide(this->num_column_blocks(), WARP_SIZE);
+  return ceil_divide(max_column_blocks, WARP_SIZE);
 };
 
 template <typename RealType>

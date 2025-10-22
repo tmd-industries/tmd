@@ -99,9 +99,9 @@ public:
 
   unsigned int *get_row_idxs() { return d_row_idxs_; };
 
-  std::vector<int> get_num_row_idxs() { return row_idx_counts_; };
+  unsigned int *get_num_row_idxs() { return d_row_idx_counts_; };
 
-  std::vector<int> get_num_col_idxs() { return column_idx_counts_; };
+  int get_num_col_idxs() { return N_; };
 
   // get max number of row blocks
   int num_row_blocks() const;

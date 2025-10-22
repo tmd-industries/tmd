@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,6 +14,7 @@
 // limitations under the License.
 
 #include "k_indices.cuh"
+#include "stdio.h"
 
 namespace tmd {
 // Takes a source and destination array.
@@ -57,10 +59,25 @@ template void __global__ k_arange<unsigned int>(const size_t,
                                                 unsigned int *__restrict__ arr);
 
 template <typename T>
+void __global__ k_fill(const size_t N, T *__restrict__ arr, const T val) {
+  auto idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (idx < N) {
+    arr[idx] = val;
+    idx += gridDim.x * blockDim.x;
+  }
+}
+
+template void __global__ k_fill<int>(const size_t, int *__restrict__ arr,
+                                     const int);
+template void __global__ k_fill<unsigned int>(const size_t,
+                                              unsigned int *__restrict__ arr,
+                                              const unsigned int);
+
+template <typename T>
 void __global__ k_segment_arange(const size_t num_segments,
                                  const size_t elements_per_segment,
                                  T *__restrict__ arr) {
-  T segment_idx = blockDim.y;
+  int segment_idx = blockIdx.y;
   while (segment_idx < num_segments) {
     T arr_idx = blockIdx.x * blockDim.x + threadIdx.x;
     while (arr_idx < elements_per_segment) {

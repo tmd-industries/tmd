@@ -35,23 +35,25 @@ k_reset_system_idxs(const size_t num_systems, const size_t N,
     while (idx < N) {
       col_system_idxs[N * system_idx + idx] = system_idx;
       row_system_idxs[N * system_idx + idx] = system_idx;
+      idx += gridDim.x * blockDim.x;
     }
-    idx += gridDim.x * blockDim.x;
+    system_idx += gridDim.y * blockDim.y;
   }
 }
 
 template <typename RealType>
 void __global__ k_find_block_bounds(
-    const int num_systems,                     // Number of systems
-    const int N,                               // Number of atoms per system
-    const int max_tiles,                       // Maximum tiles per systems
-    const unsigned int *num_indices,           // Number of indices per system
-    const unsigned int *__restrict__ row_idxs, //
-    const RealType *__restrict__ coords,       // [num_systems * N * 3]
-    const RealType *__restrict__ box,          // [num_systems * 3 * 3]
-    RealType *__restrict__ block_bounds_ctr,   // [num_systems * max_tiles * 3]
-    RealType *__restrict__ block_bounds_ext,   // [num_systems * max_tiles * 3]
-    unsigned int *__restrict__ ixn_counts      // [num_systems]
+    const int num_systems, // Number of systems
+    const int N,           // Number of atoms/rows per system
+    const unsigned int
+        *__restrict__ system_row_indice_counts, // [num_systems] Number of
+                                                // indices per system
+    const unsigned int *__restrict__ row_idxs,  // [num_systems * N]
+    const RealType *__restrict__ coords,        // [num_systems * N * 3]
+    const RealType *__restrict__ box,           // [num_systems * 3 * 3]
+    RealType *__restrict__ block_bounds_ctr,    // [num_systems * max_tiles * 3]
+    RealType *__restrict__ block_bounds_ext,    // [num_systems * max_tiles * 3]
+    unsigned int *__restrict__ ixn_counts       // [num_systems]
 ) {
 
   // Algorithm taken from
@@ -60,8 +62,16 @@ void __global__ k_find_block_bounds(
   // periodic box conditions
 
   // each warp processes one tile
-  int tile_idx = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE;
-
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+  const int num_row_idxs = system_row_indice_counts[system_idx];
+  const int num_tiles = ceil_divide(num_row_idxs, WARP_SIZE);
+  // if (blockIdx.x * blockDim.x + threadIdx.x == 0) {
+  // printf("system_idx %d %d %d\n", system_idx, num_row_idxs, num_tiles);
+  // }
+  const int tile_idx = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE;
   if (tile_idx >= num_tiles) {
     return;
   }
@@ -80,9 +90,9 @@ void __global__ k_find_block_bounds(
 
   RealType imaged_pos;
 
-  const RealType box_x = box[0 * 3 + 0];
-  const RealType box_y = box[1 * 3 + 1];
-  const RealType box_z = box[2 * 3 + 2];
+  const RealType box_x = box[system_idx * 9 + 0 * 3 + 0];
+  const RealType box_y = box[system_idx * 9 + 1 * 3 + 1];
+  const RealType box_z = box[system_idx * 9 + 2 * 3 + 2];
 
   const RealType inv_bx = rcp_rn(box_x);
   const RealType inv_by = rcp_rn(box_y);
@@ -90,17 +100,16 @@ void __global__ k_find_block_bounds(
 
   int row_idx = tile_idx * TILE_SIZE + (threadIdx.x % WARP_SIZE);
   // Reset the ixn counts
-  if (row_idx < num_systems) {
-    ixn_counts[row_idx] = 0;
+
+  if (row_idx == 0) {
+    ixn_counts[system_idx] = 0;
   }
-  int system_idx =
+  if (row_idx < num_row_idxs) {
+    int atom_idx = row_idxs[N * system_idx + row_idx];
 
-      if (row_idx < num_indices) {
-    int atom_idx = row_idxs[row_idx];
-
-    pos_x = coords[atom_idx * 3 + 0];
-    pos_y = coords[atom_idx * 3 + 1];
-    pos_z = coords[atom_idx * 3 + 2];
+    pos_x = coords[system_idx * N * 3 + atom_idx * 3 + 0];
+    pos_y = coords[system_idx * N * 3 + atom_idx * 3 + 1];
+    pos_z = coords[system_idx * N * 3 + atom_idx * 3 + 2];
 
     min_pos_x = pos_x;
     min_pos_y = pos_y;
@@ -112,7 +121,7 @@ void __global__ k_find_block_bounds(
   }
 
   // Only the first thread in each warp computes the min/max of the bounding box
-  bool compute_bounds = threadIdx.x % WARP_SIZE == 0;
+  const bool compute_bounds = threadIdx.x % WARP_SIZE == 0;
 
   // Build up center over time, and recenter before computing
   // min and max, to reduce overall size of box thanks to accounting
@@ -124,7 +133,7 @@ void __global__ k_find_block_bounds(
     pos_y = __shfl_sync(0xffffffff, pos_y, src_lane);
     pos_z = __shfl_sync(0xffffffff, pos_z, src_lane);
     // Only evaluate for the first thread and when the row idx is valid
-    if (compute_bounds && row_idx < num_indices) {
+    if (compute_bounds && row_idx < num_row_idxs) {
       imaged_pos =
           pos_x - box_x * nearbyint((pos_x - static_cast<RealType>(0.5) *
                                                  (max_pos_x + min_pos_x)) *
@@ -165,7 +174,7 @@ void __global__ k_find_block_bounds(
 }
 
 void __global__ k_compact_trim_atoms(
-    const int N, const int Y, unsigned int *__restrict__ trim_atoms,
+    const int N, const int Y, const unsigned int *__restrict__ trim_atoms,
     unsigned int *__restrict__ interactionCount,
     int *__restrict__ interactingTiles,
     unsigned int *__restrict__ interactingAtoms) {
