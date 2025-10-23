@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +22,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from concurrent import futures
 from pathlib import Path
-from subprocess import check_output
+from subprocess import CalledProcessError, check_output
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -324,7 +325,7 @@ class CUDAMPSPoolClient(ProcessPoolClient):
         try:
             # Timeout necessary, since sometimes cuda MPS will hang
             output = check_output(["nvidia-cuda-mps-control"], input=b"get_server_list", timeout=10.0)
-        except FileNotFoundError:
+        except (FileNotFoundError, CalledProcessError):
             output = ""
         if len(output.strip()) == 0:
             warnings.warn("Cuda MPS doesn't appear to be running, GPU performance may be slower than expected")
