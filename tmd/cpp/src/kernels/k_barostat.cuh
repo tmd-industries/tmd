@@ -34,7 +34,10 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
                     const int *__restrict__ mol_offsets,             // [N]
                     const unsigned long long *__restrict__ centroids // [N*3]
 ) {
-  static_assert(SCALE_X | SCALE_Y | SCALE_Z);
+  if (!(SCALE_X | SCALE_Y | SCALE_Z)) {
+    return;
+  }
+
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   RealType center_x = box[0 * 3 + 0] * static_cast<RealType>(0.5);
   RealType center_y = box[1 * 3 + 1] * static_cast<RealType>(0.5);
@@ -136,7 +139,10 @@ k_setup_barostat_move(const bool adaptive,
                       RealType *__restrict__ d_volume,                  // [1]
                       RealType *__restrict__ d_metropolis_hastings_rand // [1]
 ) {
-  static_assert(SCALE_X | SCALE_Y | SCALE_Z);
+  if (!(SCALE_X | SCALE_Y | SCALE_Z)) {
+    return;
+  }
+
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= 1) {
     return; // Only a single thread needs to perform this operation

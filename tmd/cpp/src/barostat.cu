@@ -179,6 +179,18 @@ void MonteCarloBarostat<RealType>::move(const int N,
   if (this->step_ % this->interval_ != 0) {
     return;
   }
+  const int tpb = DEFAULT_THREADS_PER_BLOCK;
+  // TBD: For larger systems (20k >) may be better to reduce the number of
+  // blocks, rather than matching the number of blocks to be
+  // ceil_divide(units_of_work, tpb). The kernels already support this, but at
+  // the moment we match the blocks * tpb to equal units_of_work
+  const int blocks = ceil_divide(num_grouped_atoms_, tpb);
+
+  runner_.execute_potentials(bps_, N_, d_x, d_box, nullptr, nullptr,
+                             d_u_buffer_, stream);
+  gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
+                                   d_u_buffer_, d_init_u_, bps_.size(),
+                                   stream));
 
   gpuErrchk(cudaMemsetAsync(d_centroids_, 0,
                             num_mols_ * 3 * sizeof(*d_centroids_), stream));
@@ -192,13 +204,6 @@ void MonteCarloBarostat<RealType>::move(const int N,
   gpuErrchk(cudaMemcpyAsync(d_x_proposed_, d_x, N_ * 3 * sizeof(*d_x),
                             cudaMemcpyDeviceToDevice, stream));
 
-  const int tpb = DEFAULT_THREADS_PER_BLOCK;
-  // TBD: For larger systems (20k >) may be better to reduce the number of
-  // blocks, rather than matching the number of blocks to be
-  // ceil_divide(units_of_work, tpb). The kernels already support this, but at
-  // the moment we match the blocks * tpb to equal units_of_work
-  const int blocks = ceil_divide(num_grouped_atoms_, tpb);
-
   k_find_group_centroids<RealType>
       <<<blocks, tpb, 0, stream>>>(num_grouped_atoms_, d_x_proposed_,
                                    d_atom_idxs_, d_mol_idxs_, d_centroids_);
@@ -207,15 +212,9 @@ void MonteCarloBarostat<RealType>::move(const int N,
   // Scale centroids
   k_rescale_positions<RealType, true, true, true><<<blocks, tpb, 0, stream>>>(
       num_grouped_atoms_, d_x_proposed_, d_length_scale_, d_box,
-      d_box_proposed_, // Box will be rescaled by length_scale
+      d_box_proposed_, // Proposed box will be d_box rescaled by length_scale
       d_atom_idxs_, d_mol_idxs_, d_mol_offsets_, d_centroids_);
   gpuErrchk(cudaPeekAtLastError());
-
-  runner_.execute_potentials(bps_, N_, d_x, d_box, nullptr, nullptr,
-                             d_u_buffer_, stream);
-  gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                   d_u_buffer_, d_init_u_, bps_.size(),
-                                   stream));
 
   runner_.execute_potentials(bps_, N_, d_x_proposed_, d_box_proposed_, nullptr,
                              nullptr, d_u_proposed_buffer_, stream);
@@ -223,7 +222,7 @@ void MonteCarloBarostat<RealType>::move(const int N,
                                    d_u_proposed_buffer_, d_final_u_,
                                    bps_.size(), stream));
 
-  RealType pressure = pressure_ * static_cast<RealType>(AVOGADRO * 1e-25);
+  const RealType pressure = pressure_ * static_cast<RealType>(AVOGADRO * 1e-25);
   const RealType kT = static_cast<RealType>(BOLTZ) * temperature_;
 
   k_decide_move<RealType><<<ceil_divide(N_, tpb), tpb, 0, stream>>>(
@@ -236,7 +235,7 @@ void MonteCarloBarostat<RealType>::move(const int N,
 
 template <typename RealType>
 void MonteCarloBarostat<RealType>::set_pressure(const RealType pressure) {
-  pressure_ = static_cast<RealType>(pressure);
+  pressure_ = pressure;
   // Could have equilibrated and be a large number of steps from shifting volume
   // adjustment, ie num attempted = 300 and num accepted = 150
   this->reset_counters();
