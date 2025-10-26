@@ -34,25 +34,32 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
                     const int *__restrict__ mol_offsets,             // [N]
                     const unsigned long long *__restrict__ centroids // [N*3]
 ) {
-  if (!(SCALE_X | SCALE_Y | SCALE_Z)) {
-    return;
-  }
+  static_assert(SCALE_X | SCALE_Y | SCALE_Z);
 
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   RealType center_x = box[0 * 3 + 0] * static_cast<RealType>(0.5);
   RealType center_y = box[1 * 3 + 1] * static_cast<RealType>(0.5);
   RealType center_z = box[2 * 3 + 2] * static_cast<RealType>(0.5);
 
-  RealType scale = static_cast<RealType>(length_scale[0]);
+  RealType scale = *length_scale;
   if (idx == 0) {
     if (SCALE_X) {
       scaled_box[0 * 3 + 0] = box[0 * 3 + 0] * scale;
+    } else {
+      // Perform copy
+      scaled_box[0 * 3 + 0] = box[0 * 3 + 0];
     }
     if (SCALE_Y) {
       scaled_box[1 * 3 + 1] = box[1 * 3 + 1] * scale;
+    } else {
+      // Perform copy
+      scaled_box[1 * 3 + 1] = box[1 * 3 + 1];
     }
     if (SCALE_Z) {
       scaled_box[2 * 3 + 2] = box[2 * 3 + 2] * scale;
+    } else {
+      // Perform copy
+      scaled_box[2 * 3 + 2] = box[2 * 3 + 2];
     }
   }
   while (idx < N) {
@@ -78,6 +85,10 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
       RealType scaled_box_x = box[0 * 3 + 0] * scale;
       RealType new_center_x = scaled_box_x * floor(centroid_x / scaled_box_x);
       coords[atom_idx * 3 + 0] += displacement_x - new_center_x;
+    } else {
+      // Still need to image to avoid drift
+      coords[atom_idx * 3 + 0] -=
+          box[0 * 3 + 0] * floor(coords[atom_idx * 3 + 0] / box[0 * 3 + 0]);
     }
 
     if (SCALE_Y) {
@@ -87,6 +98,10 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
       RealType scaled_box_y = box[1 * 3 + 1] * scale;
       RealType new_center_y = scaled_box_y * floor(centroid_y / scaled_box_y);
       coords[atom_idx * 3 + 1] += displacement_y - new_center_y;
+    } else {
+      // Still need to image to avoid drift
+      coords[atom_idx * 3 + 1] -=
+          box[1 * 3 + 1] * floor(coords[atom_idx * 3 + 1] / box[1 * 3 + 1]);
     }
 
     if (SCALE_Z) {
@@ -96,6 +111,10 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
       RealType scaled_box_z = box[2 * 3 + 2] * scale;
       RealType new_center_z = scaled_box_z * floor(centroid_z / scaled_box_z);
       coords[atom_idx * 3 + 2] += displacement_z - new_center_z;
+    } else {
+      // Still need to image to avoid drift
+      coords[atom_idx * 3 + 2] -=
+          box[2 * 3 + 2] * floor(coords[atom_idx * 3 + 2] / box[2 * 3 + 2]);
     }
 
     idx += gridDim.x * blockDim.x;
@@ -139,9 +158,7 @@ k_setup_barostat_move(const bool adaptive,
                       RealType *__restrict__ d_volume,                  // [1]
                       RealType *__restrict__ d_metropolis_hastings_rand // [1]
 ) {
-  if (!(SCALE_X | SCALE_Y | SCALE_Z)) {
-    return;
-  }
+  static_assert(SCALE_X | SCALE_Y | SCALE_Z);
 
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= 1) {
@@ -227,7 +244,7 @@ k_decide_move(const int N, const bool adaptive, const int num_molecules,
       num_attempted[0]++;
       if (adaptive && num_attempted[0] >= 10) {
         if (num_accepted[0] < 0.25 * num_attempted[0]) {
-          d_volume_scale[0] /= 1.1;
+          *d_volume_scale /= 1.1;
           // Reset the counters
           num_attempted[0] = 0;
           num_accepted[0] = 0;

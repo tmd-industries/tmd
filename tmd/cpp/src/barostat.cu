@@ -179,12 +179,9 @@ void MonteCarloBarostat<RealType>::move(const int N,
   if (this->step_ % this->interval_ != 0) {
     return;
   }
-  const int tpb = DEFAULT_THREADS_PER_BLOCK;
-  // TBD: For larger systems (20k >) may be better to reduce the number of
-  // blocks, rather than matching the number of blocks to be
-  // ceil_divide(units_of_work, tpb). The kernels already support this, but at
-  // the moment we match the blocks * tpb to equal units_of_work
-  const int blocks = ceil_divide(num_grouped_atoms_, tpb);
+
+  gpuErrchk(cudaMemsetAsync(d_centroids_, 0,
+                            num_mols_ * 3 * sizeof(*d_centroids_), stream));
 
   runner_.execute_potentials(bps_, N_, d_x, d_box, nullptr, nullptr,
                              d_u_buffer_, stream);
@@ -192,8 +189,28 @@ void MonteCarloBarostat<RealType>::move(const int N,
                                    d_u_buffer_, d_init_u_, bps_.size(),
                                    stream));
 
-  gpuErrchk(cudaMemsetAsync(d_centroids_, 0,
-                            num_mols_ * 3 * sizeof(*d_centroids_), stream));
+  this->propose_move(N, d_x, d_box, stream);
+
+  runner_.execute_potentials(bps_, N_, d_x_proposed_, d_box_proposed_, nullptr,
+                             nullptr, d_u_proposed_buffer_, stream);
+  gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
+                                   d_u_proposed_buffer_, d_final_u_,
+                                   bps_.size(), stream));
+
+  this->decide_move(N, d_x, d_box, stream);
+};
+
+template <typename RealType>
+void MonteCarloBarostat<RealType>::propose_move(const int N,
+                                                const RealType *d_x,
+                                                const RealType *d_box,
+                                                cudaStream_t stream) {
+  const int tpb = DEFAULT_THREADS_PER_BLOCK;
+  // TBD: For larger systems (20k >) may be better to reduce the number of
+  // blocks, rather than matching the number of blocks to be
+  // ceil_divide(units_of_work, tpb). The kernels already support this, but at
+  // the moment we match the blocks * tpb to equal units_of_work
+  const int blocks = ceil_divide(num_grouped_atoms_, tpb);
 
   k_setup_barostat_move<RealType, true, true, true><<<1, 1, 0, stream>>>(
       adaptive_scaling_enabled_, d_rand_state_, d_box, d_volume_delta_,
@@ -215,12 +232,14 @@ void MonteCarloBarostat<RealType>::move(const int N,
       d_box_proposed_, // Proposed box will be d_box rescaled by length_scale
       d_atom_idxs_, d_mol_idxs_, d_mol_offsets_, d_centroids_);
   gpuErrchk(cudaPeekAtLastError());
+}
 
-  runner_.execute_potentials(bps_, N_, d_x_proposed_, d_box_proposed_, nullptr,
-                             nullptr, d_u_proposed_buffer_, stream);
-  gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                   d_u_proposed_buffer_, d_final_u_,
-                                   bps_.size(), stream));
+template <typename RealType>
+void MonteCarloBarostat<RealType>::decide_move(const int N, RealType *d_x,
+                                               RealType *d_box,
+                                               cudaStream_t stream) {
+  const int tpb = DEFAULT_THREADS_PER_BLOCK;
+  const int blocks = ceil_divide(num_grouped_atoms_, tpb);
 
   const RealType pressure = pressure_ * static_cast<RealType>(AVOGADRO * 1e-25);
   const RealType kT = static_cast<RealType>(BOLTZ) * temperature_;
@@ -231,7 +250,7 @@ void MonteCarloBarostat<RealType>::move(const int N,
       d_init_u_, d_final_u_, d_box, d_box_proposed_, d_x, d_x_proposed_,
       d_num_accepted_, d_num_attempted_);
   gpuErrchk(cudaPeekAtLastError());
-};
+}
 
 template <typename RealType>
 void MonteCarloBarostat<RealType>::set_pressure(const RealType pressure) {

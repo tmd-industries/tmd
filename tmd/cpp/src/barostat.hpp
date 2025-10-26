@@ -39,7 +39,7 @@ public:
 
   ~MonteCarloBarostat();
 
-  // inplace_move() may modify d_x and d_box
+  // move() may modify d_x and d_box
   virtual void move(const int N, RealType *d_x, RealType *d_box,
                     cudaStream_t stream) override;
 
@@ -60,6 +60,11 @@ protected:
   bool adaptive_scaling_enabled_; // Whether or no to adapt d_volume_scale_
 
   void reset_counters();
+
+  virtual void propose_move(const int N, const RealType *d_x,
+                            const RealType *d_box, cudaStream_t stream);
+  virtual void decide_move(const int N, RealType *d_x, RealType *d_box,
+                           cudaStream_t stream);
 
   std::vector<std::shared_ptr<BoundPotential<RealType>>> bps_;
 
