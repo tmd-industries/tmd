@@ -43,13 +43,13 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
   RealType scale = static_cast<RealType>(length_scale[0]);
   if (idx == 0) {
     if (SCALE_X) {
-      scaled_box[0 * 3 + 0] *= scale;
+      scaled_box[0 * 3 + 0] = box[0 * 3 + 0] * scale;
     }
     if (SCALE_Y) {
-      scaled_box[1 * 3 + 1] *= scale;
+      scaled_box[1 * 3 + 1] = box[1 * 3 + 1] * scale;
     }
     if (SCALE_Z) {
-      scaled_box[2 * 3 + 2] *= scale;
+      scaled_box[2 * 3 + 2] = box[2 * 3 + 2] * scale;
     }
   }
   while (idx < N) {

@@ -188,11 +188,8 @@ void MonteCarloBarostat<RealType>::move(const int N,
       d_volume_scale_, d_length_scale_, d_volume_, d_metropolis_hasting_rand_);
   gpuErrchk(cudaPeekAtLastError());
 
-  // Create duplicates of the coords/box that we can modify
+  // Create duplicates of the coords that we can modify
   gpuErrchk(cudaMemcpyAsync(d_x_proposed_, d_x, N_ * 3 * sizeof(*d_x),
-                            cudaMemcpyDeviceToDevice, stream));
-  gpuErrchk(cudaMemcpyAsync(d_box_proposed_, d_box,
-                            3 * 3 * sizeof(*d_box_proposed_),
                             cudaMemcpyDeviceToDevice, stream));
 
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
