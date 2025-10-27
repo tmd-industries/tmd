@@ -108,6 +108,9 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
   k_initialize_curand_states<<<1, 1, 0>>>(1, seed_, d_rand_state_);
   gpuErrchk(cudaPeekAtLastError());
 
+  // Zero out the box proposals, as kernels currently only touch diagonal
+  gpuErrchk(cudaMemset(d_box_proposed_, 0, 3 * 3 * sizeof(*d_box_proposed_)));
+
   this->reset_counters();
 };
 
