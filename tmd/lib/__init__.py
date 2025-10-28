@@ -113,9 +113,9 @@ class AnisotropicMonteCarloBarostat:
     scale_z: bool = True
 
     def impl(self, bound_potentials, precision=np.float32):
-        klass: type[custom_ops.AnisotropicMonteCarloBarostat_f32] | type[custom_ops.AnisotropicMonteCarloBarostat_f64] = (
-            custom_ops.AnisotropicMonteCarloBarostat_f32
-        )
+        klass: (
+            type[custom_ops.AnisotropicMonteCarloBarostat_f32] | type[custom_ops.AnisotropicMonteCarloBarostat_f64]
+        ) = custom_ops.AnisotropicMonteCarloBarostat_f32
         if precision == np.float64:
             klass = custom_ops.AnisotropicMonteCarloBarostat_f64
         return klass(

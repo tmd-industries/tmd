@@ -45,7 +45,7 @@ from tmd.fe.rest.single_topology import InterpolationFxnName
 from tmd.fe.stored_arrays import StoredArrays
 from tmd.fe.utils import get_mol_masses, get_romol_conf
 from tmd.ff import Forcefield, ForcefieldParams
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops, AnisotropicMonteCarloBarostat
+from tmd.lib import AnisotropicMonteCarloBarostat, LangevinIntegrator, MonteCarloBarostat, custom_ops
 from tmd.lib.custom_ops import BoundPotential_f32, Context_f32, SummedPotential_f32
 from tmd.md.barostat.utils import compute_box_center, get_bond_list, get_group_indices
 from tmd.md.builders import HostConfig
@@ -1285,8 +1285,8 @@ def assert_ensembles_compatible(state_a: InitialState, state_b: InitialState):
 
     if state_a.barostat and state_b.barostat:
         # assert (A, B) are compatible NPT ensembles
-        baro_a: MonteCarloBarostat = state_a.barostat
-        baro_b: MonteCarloBarostat = state_b.barostat
+        baro_a: MonteCarloBarostat | AnisotropicMonteCarloBarostat = state_a.barostat
+        baro_b: MonteCarloBarostat | AnisotropicMonteCarloBarostat = state_b.barostat
 
         assert baro_a.pressure == baro_b.pressure
         assert baro_a.temperature == baro_b.temperature

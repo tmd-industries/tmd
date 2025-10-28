@@ -54,7 +54,7 @@ from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.single_topology import AtomMapFlags, SingleTopology, assert_default_system_constraints
 from tmd.fe.utils import bytes_to_id, get_mol_name, get_romol_conf
 from tmd.ff import Forcefield
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat, AnisotropicMonteCarloBarostat
+from tmd.lib import AnisotropicMonteCarloBarostat, LangevinIntegrator, MonteCarloBarostat
 from tmd.md import builders, minimizer
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.builders import HostConfig
@@ -221,11 +221,21 @@ def setup_in_env(
 
     if host.num_membrane_atoms == 0:
         # TBD: Remove the +1 to the seed, and remove the docstring mention of it
-        baro = MonteCarloBarostat(
+        baro: MonteCarloBarostat | AnisotropicMonteCarloBarostat = MonteCarloBarostat(
             len(hmr_masses), DEFAULT_PRESSURE, temperature, group_idxs, barostat_interval, run_seed + 1
         )
     else:
-        baro = AnisotropicMonteCarloBarostat(len(hmr_masses), DEFAULT_PRESSURE, temperature, group_idxs, barostat_interval, run_seed + 1, scale_x=False, scale_y=False, scale_z=True)
+        baro: MonteCarloBarostat | AnisotropicMonteCarloBarostat = AnisotropicMonteCarloBarostat(
+            len(hmr_masses),
+            DEFAULT_PRESSURE,
+            temperature,
+            group_idxs,
+            barostat_interval,
+            run_seed + 1,
+            scale_x=False,
+            scale_y=False,
+            scale_z=True,
+        )
 
     x0 = np.concatenate([host.conf, ligand_conf])
 
