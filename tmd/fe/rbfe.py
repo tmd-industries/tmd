@@ -236,6 +236,7 @@ def setup_in_env(
             scale_y=False,
             scale_z=True,
         )
+    assert baro is not None
 
     x0 = np.concatenate([host.conf, ligand_conf])
 
@@ -876,9 +877,11 @@ def estimate_relative_free_energy_bisection(
         for i in range(trajectories):
             writer = CIFWriter([host_config.omm_topology, mol_a, mol_b], f"res{i}.cif")
             frame = trajectories[i].frames[-1]
-            host_coords = frame[:host_config.conf.shape[0]]
-            ligand_coords = frame[host_config.conf.shape[0]:]
-            writer.write_frame(np.concatenate([host_coords, convert_single_topology_mols(ligand_coords, single_topology)]) * 10.0)
+            host_coords = frame[: host_config.conf.shape[0]]
+            ligand_coords = frame[host_config.conf.shape[0] :]
+            writer.write_frame(
+                np.concatenate([host_coords, convert_single_topology_mols(ligand_coords, single_topology)]) * 10.0
+            )
             writer.close()
 
         final_result = results[-1]
@@ -976,8 +979,8 @@ def estimate_relative_free_energy_bisection_hrex_impl(
         for i in range(len(trajectories_by_state)):
             writer = CIFWriter([host_config.omm_topology, st.mol_a, st.mol_b], f"res{i}.cif")
             frame = trajectories_by_state[i].frames[-1]
-            host_coords = frame[:host_config.conf.shape[0]]
-            ligand_coords = frame[host_config.conf.shape[0]:]
+            host_coords = frame[: host_config.conf.shape[0]]
+            ligand_coords = frame[host_config.conf.shape[0] :]
             writer.write_frame(np.concatenate([host_coords, convert_single_topology_mols(ligand_coords, st)]) * 10.0)
             writer.close()
 
@@ -1053,11 +1056,10 @@ def estimate_relative_free_energy_bisection_hrex_impl(
         for i in range(len(trajectories_by_state)):
             writer = CIFWriter([host_config.omm_topology, st.mol_a, st.mol_b], f"post_hrex_res{i}.cif")
             frame = trajectories_by_state[i].frames[-1]
-            host_coords = frame[:host_config.conf.shape[0]]
-            ligand_coords = frame[host_config.conf.shape[0]:]
+            host_coords = frame[: host_config.conf.shape[0]]
+            ligand_coords = frame[host_config.conf.shape[0] :]
             writer.write_frame(np.concatenate([host_coords, convert_single_topology_mols(ligand_coords, st)]) * 10.0)
             writer.close()
-
 
         plots = make_pair_bar_plots(pair_bar_result, temperature, combined_prefix)
 
@@ -1214,7 +1216,7 @@ def estimate_relative_free_energy_bisection_hrex(
         combined_prefix,
         min_overlap,
         host_config=host_config,
-        st=single_topology
+        st=single_topology,
     )
 
 
