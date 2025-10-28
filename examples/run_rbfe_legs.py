@@ -14,6 +14,7 @@
 # limitations under the License.
 
 from argparse import ArgumentParser
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -29,14 +30,12 @@ from rdkit import Chem
 # This is needed for pickled mols to preserve their properties
 Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 
-from rbfe_common import run_rbfe_leg
+from rbfe_common import COMPLEX_LEG, SOLVENT_LEG, VACUUM_LEG, run_rbfe_leg, write_result_csvs
 
 from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF
 from tmd.fe import atom_mapping
 from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, WaterSamplingParams
-from tmd.fe.rbfe import (
-    DEFAULT_NUM_WINDOWS,
-)
+from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
 from tmd.fe.utils import read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.md.exchange.utils import get_radius_of_mol_pair
@@ -61,7 +60,7 @@ def main():
         "--target_overlap", default=0.667, type=float, help="Overlap to optimize final HREX schedule to"
     )
     parser.add_argument("--seed", default=2025, type=int, help="Seed")
-    parser.add_argument("--legs", default=["vacuum", "solvent", "complex"], nargs="+")
+    parser.add_argument("--legs", default=[SOLVENT_LEG, COMPLEX_LEG, VACUUM_LEG], nargs="+")
     parser.add_argument("--forcefield", default=DEFAULT_FF)
     parser.add_argument(
         "--n_gpus", default=None, type=int, help="Number of GPUs to use, defaults to all GPUs if not provided"
@@ -97,6 +96,20 @@ def main():
     )
     parser.add_argument(
         "--serial", action="store_true", help="Run without spawning subprocesses, useful when wanting to profile."
+    )
+    parser.add_argument(
+        "--force_overwrite",
+        action="store_true",
+        help="Overwrite existing predictions, otherwise will skip the completed legs",
+    )
+    parser.add_argument(
+        "--experimental_field", default="kcal/mol experimental dG", help="Field that contains the experimental label."
+    )
+    parser.add_argument(
+        "--experimental_units",
+        default="kcal/mol",
+        choices=["kcal/mol", "kJ/mol", "uM", "nM"],
+        help="Units of the experimental label.",
     )
     args = parser.parse_args()
 
@@ -168,10 +181,14 @@ def main():
             args.n_windows,
             args.min_overlap,
             True,  # Always write out the trajectories
+            args.force_overwrite,
         )
         futures.append(fut)
-    for fut in futures:
-        fut.result()
+    leg_results = defaultdict(dict)
+    for leg, fut in zip(args.legs, futures):
+        res = fut.result()
+        leg_results[(mol_a, mol_b)][leg] = res
+    write_result_csvs(file_client, mols_by_name, leg_results, args.experimental_field, args.experimental_units)
 
 
 if __name__ == "__main__":

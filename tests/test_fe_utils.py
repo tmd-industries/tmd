@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +19,7 @@ import pytest
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from tmd.constants import DEFAULT_TEMP
+from tmd.constants import DEFAULT_TEMP, KCAL_TO_KJ
 from tmd.fe import model_utils, utils
 from tmd.fe.model_utils import image_frame, image_molecule
 from tmd.ff import Forcefield
@@ -246,6 +247,25 @@ def test_experimental_conversions_to_kj():
     )
 
     np.testing.assert_allclose(utils.convert_uM_to_kJ_per_mole(0.15), -39.192853)
+
+
+def test_get_mol_experimental_value():
+    mol = Chem.AddHs(Chem.MolFromSmiles("c1ccccc1"))
+    # If mol has no field, should raise exception
+    with pytest.raises(KeyError):
+        utils.get_mol_experimental_value(mol, "IC50[uM]", "uM")
+
+    mol.SetProp("IC50[uM]", "0.15")
+    np.testing.assert_allclose(utils.get_mol_experimental_value(mol, "IC50[uM]", "uM"), -39.192853)
+    mol.SetProp("IC50[nM]", str(0.15 * 1000.0))
+    np.testing.assert_allclose(utils.get_mol_experimental_value(mol, "IC50[nM]", "nM"), -39.192853)
+    mol.SetProp("IC50[kj/mol]", str(utils.convert_uM_to_kJ_per_mole(0.15)))
+    np.testing.assert_allclose(utils.get_mol_experimental_value(mol, "IC50[kj/mol]", "kJ/mol"), -39.192853)
+    mol.SetProp("IC50[kcal/mol]", str(utils.convert_uM_to_kJ_per_mole(0.15) / KCAL_TO_KJ))
+    np.testing.assert_allclose(utils.get_mol_experimental_value(mol, "IC50[kcal/mol]", "kcal/mol"), -39.192853)
+
+    with pytest.raises(AssertionError):
+        utils.get_mol_experimental_value(mol, "IC50[uM]", "nosuchunit")
 
 
 def test_get_strained_atoms():

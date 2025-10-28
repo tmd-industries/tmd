@@ -54,7 +54,7 @@ from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.single_topology import AtomMapFlags, SingleTopology, assert_default_system_constraints
 from tmd.fe.utils import bytes_to_id, get_mol_name, get_romol_conf
 from tmd.ff import Forcefield
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat
+from tmd.lib import LangevinIntegrator, MonteCarloBarostat, AnisotropicMonteCarloBarostat
 from tmd.md import builders, minimizer
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.builders import HostConfig
@@ -218,10 +218,14 @@ def setup_in_env(
 
     potentials = system.get_U_fns()
     group_idxs = get_group_indices(get_bond_list(system.bond.potential), len(hmr_masses))
-    # TBD: Remove the +1 to the seed, and remove the docstring mention of it
-    baro = MonteCarloBarostat(
-        len(hmr_masses), DEFAULT_PRESSURE, temperature, group_idxs, barostat_interval, run_seed + 1
-    )
+
+    if host.num_membrane_atoms == 0:
+        # TBD: Remove the +1 to the seed, and remove the docstring mention of it
+        baro = MonteCarloBarostat(
+            len(hmr_masses), DEFAULT_PRESSURE, temperature, group_idxs, barostat_interval, run_seed + 1
+        )
+    else:
+        baro = AnisotropicMonteCarloBarostat(len(hmr_masses), DEFAULT_PRESSURE, temperature, group_idxs, barostat_interval, run_seed + 1, scale_x=False, scale_y=False, scale_z=True)
 
     x0 = np.concatenate([host.conf, ligand_conf])
 
@@ -857,6 +861,16 @@ def estimate_relative_free_energy_bisection(
             min_overlap=min_overlap,
         )
 
+        from tmd.fe.cif_writer import CIFWriter, convert_single_topology_mols
+
+        for i in range(trajectories):
+            writer = CIFWriter([host_config.omm_topology, mol_a, mol_b], f"res{i}.cif")
+            frame = trajectories[i].frames[-1]
+            host_coords = frame[:host_config.conf.shape[0]]
+            ligand_coords = frame[host_config.conf.shape[0]:]
+            writer.write_frame(np.concatenate([host_coords, convert_single_topology_mols(ligand_coords, single_topology)]) * 10.0)
+            writer.close()
+
         final_result = results[-1]
 
         plots = make_pair_bar_plots(final_result, temperature, combined_prefix)
@@ -887,6 +901,8 @@ def estimate_relative_free_energy_bisection_hrex_impl(
     optimize_initial_state_fn: Callable[[InitialState], InitialState],
     combined_prefix: str,
     min_overlap: Optional[float] = None,
+    host_config=None,
+    st=None,
 ) -> HREXSimulationResult:
     """
     Parameters
@@ -944,6 +960,16 @@ def estimate_relative_free_energy_bisection_hrex_impl(
             temperature=temperature,
             min_overlap=min_overlap,
         )
+
+        from tmd.fe.cif_writer import CIFWriter, convert_single_topology_mols
+
+        for i in range(len(trajectories_by_state)):
+            writer = CIFWriter([host_config.omm_topology, st.mol_a, st.mol_b], f"res{i}.cif")
+            frame = trajectories_by_state[i].frames[-1]
+            host_coords = frame[:host_config.conf.shape[0]]
+            ligand_coords = frame[host_config.conf.shape[0]:]
+            writer.write_frame(np.concatenate([host_coords, convert_single_topology_mols(ligand_coords, st)]) * 10.0)
+            writer.close()
 
         assert all(traj.final_velocities is not None for traj in trajectories_by_state)
 
@@ -1013,6 +1039,15 @@ def estimate_relative_free_energy_bisection_hrex_impl(
             initial_states_hrex,
             replace(md_params, n_eq_steps=0),  # using pre-equilibrated samples
         )
+
+        for i in range(len(trajectories_by_state)):
+            writer = CIFWriter([host_config.omm_topology, st.mol_a, st.mol_b], f"post_hrex_res{i}.cif")
+            frame = trajectories_by_state[i].frames[-1]
+            host_coords = frame[:host_config.conf.shape[0]]
+            ligand_coords = frame[host_config.conf.shape[0]:]
+            writer.write_frame(np.concatenate([host_coords, convert_single_topology_mols(ligand_coords, st)]) * 10.0)
+            writer.close()
+
 
         plots = make_pair_bar_plots(pair_bar_result, temperature, combined_prefix)
 
@@ -1168,6 +1203,8 @@ def estimate_relative_free_energy_bisection_hrex(
         make_optimized_initial_state_fn,
         combined_prefix,
         min_overlap,
+        host_config=host_config,
+        st=single_topology
     )
 
 
@@ -1251,7 +1288,7 @@ def run_complex(
     min_cutoff: Optional[float] = 0.7,
 ):
     complex_host_config = builders.build_membrane_system(
-    protein, "amber14/protein.ff14SB", forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
+        protein, "amber14/protein.ff14SB", forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
     )
     complex_host_config = setup_optimized_host(complex_host_config, [mol_a, mol_b], forcefield, seed=md_params.seed)
     complex_res = estimate_relative_free_energy_bisection_or_hrex(

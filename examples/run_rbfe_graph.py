@@ -1,5 +1,6 @@
 import json
 from argparse import ArgumentParser
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -15,13 +16,11 @@ from rdkit import Chem
 # This is needed for pickled mols to preserve their properties
 Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 
-from rbfe_common import run_rbfe_leg
+from rbfe_common import COMPLEX_LEG, SOLVENT_LEG, VACUUM_LEG, run_rbfe_leg, write_result_csvs
 
 from tmd.constants import DEFAULT_FF
 from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, WaterSamplingParams
-from tmd.fe.rbfe import (
-    DEFAULT_NUM_WINDOWS,
-)
+from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.md.exchange.utils import get_radius_of_mol_pair
@@ -46,7 +45,7 @@ def main():
         "--target_overlap", default=0.667, type=float, help="Overlap to optimize final HREX schedule to"
     )
     parser.add_argument("--seed", default=2025, type=int, help="Seed")
-    parser.add_argument("--legs", default=["vacuum", "solvent", "complex"], nargs="+")
+    parser.add_argument("--legs", default=[VACUUM_LEG, SOLVENT_LEG, COMPLEX_LEG], nargs="+")
     parser.add_argument("--forcefield", default=DEFAULT_FF)
     parser.add_argument(
         "--n_gpus", default=None, type=int, help="Number of GPUs to use, defaults to all GPUs if not provided"
@@ -86,6 +85,20 @@ def main():
         action="store_true",
         help="Store the trajectories of the edges. Can take up a large amount of space",
     )
+    parser.add_argument(
+        "--force_overwrite",
+        action="store_true",
+        help="Overwrite existing predictions, otherwise will skip the completed legs",
+    )
+    parser.add_argument(
+        "--experimental_field", default="kcal/mol experimental dG", help="Field that contains the experimental label."
+    )
+    parser.add_argument(
+        "--experimental_units",
+        default="kcal/mol",
+        choices=["kcal/mol", "kJ/mol", "uM", "nM"],
+        help="Units of the experimental label.",
+    )
     args = parser.parse_args()
 
     if "complex" in args.legs:
@@ -110,11 +123,14 @@ def main():
         for mol in mols_by_name.values():
             writer.write(mol)
     with open(dest_dir / "edges.json", "w") as ofs:
-        json.dump(edges_data, ofs)
+        json.dump(edges_data, ofs, indent=1)
 
     file_client = FileClient(dest_dir)
 
     ff = Forcefield.load_from_file(args.forcefield)
+
+    with open(dest_dir / "ff.py", "w") as ofs:
+        ofs.write(ff.serialize())
 
     num_gpus = args.n_gpus
     if num_gpus is None:
@@ -124,7 +140,7 @@ def main():
     pool = CUDAMPSPoolClient(num_gpus, workers_per_gpu=args.mps_workers, max_tasks_per_child=1)
     pool.verify()
     futures = []
-
+    future_id_to_leg = {}
     for edge in edges_data:
         mol_a = mols_by_name[edge["mol_a"]]
         mol_b = mols_by_name[edge["mol_b"]]
@@ -170,10 +186,21 @@ def main():
                 args.n_windows,
                 args.min_overlap,
                 args.store_trajectories,
+                args.force_overwrite,
             )
+            future_id_to_leg[fut.id] = (edge["mol_a"], edge["mol_b"], leg_name)
             futures.append(fut)
+    leg_results = defaultdict(dict)
     for fut in iterate_completed_futures(futures):
-        fut.result()
+        mol_a, mol_b, leg = future_id_to_leg[fut.id]
+        try:
+            data = fut.result()
+        except Exception as e:
+            print(f"Leg {leg} ({mol_a} -> {mol_b}) failed: {e}")
+            continue
+        leg_results[(mol_a, mol_b)][leg] = data
+
+    write_result_csvs(file_client, mols_by_name, leg_results, args.experimental_field, args.experimental_units)
 
 
 if __name__ == "__main__":
