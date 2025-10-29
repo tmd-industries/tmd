@@ -631,7 +631,7 @@ def test_get_group_indices():
     ref_idxs = [(0, 1, 2, 3), (4,)]
     assert_group_idxs_are_equal(ref_idxs, test_idxs)
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError, match="Group 0 is not constructed of consecutive atom indices"):
         # num_atoms <  an atom's index in bond_idxs
         get_group_indices([[0, 3]], num_atoms=3)
 
