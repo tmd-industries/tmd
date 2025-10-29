@@ -87,8 +87,8 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
       coords[atom_idx * 3 + 0] += displacement_x - new_center_x;
     } else {
       // Still need to image to avoid drift
-      // coords[atom_idx * 3 + 0] -=
-      //     box[0 * 3 + 0] * floor(coords[atom_idx * 3 + 0] / box[0 * 3 + 0]);
+      coords[atom_idx * 3 + 0] -=
+          box[0 * 3 + 0] * floor(centroid_x / box[0 * 3 + 0]);
     }
 
     if (SCALE_Y) {
@@ -100,8 +100,8 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
       coords[atom_idx * 3 + 1] += displacement_y - new_center_y;
     } else {
       // Still need to image to avoid drift
-      // coords[atom_idx * 3 + 1] -=
-      //     box[1 * 3 + 1] * floor(coords[atom_idx * 3 + 1] / box[1 * 3 + 1]);
+      coords[atom_idx * 3 + 1] -=
+          box[1 * 3 + 1] * floor(centroid_y / box[1 * 3 + 1]);
     }
 
     if (SCALE_Z) {
@@ -113,8 +113,8 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
       coords[atom_idx * 3 + 2] += displacement_z - new_center_z;
     } else {
       // Still need to image to avoid drift
-      // coords[atom_idx * 3 + 2] -=
-      //     box[2 * 3 + 2] * floor(coords[atom_idx * 3 + 2] / box[2 * 3 + 2]);
+      coords[atom_idx * 3 + 2] -=
+          box[2 * 3 + 2] * floor(centroid_z / box[2 * 3 + 2]);
     }
 
     idx += gridDim.x * blockDim.x;
