@@ -88,7 +88,7 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
     } else {
       // Still need to image to avoid drift
       coords[atom_idx * 3 + 0] -=
-          box[0 * 3 + 0] * floor(coords[atom_idx * 3 + 0] / box[0 * 3 + 0]);
+          box[0 * 3 + 0] * floor(centroid_x / box[0 * 3 + 0]);
     }
 
     if (SCALE_Y) {
@@ -101,7 +101,7 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
     } else {
       // Still need to image to avoid drift
       coords[atom_idx * 3 + 1] -=
-          box[1 * 3 + 1] * floor(coords[atom_idx * 3 + 1] / box[1 * 3 + 1]);
+          box[1 * 3 + 1] * floor(centroid_y / box[1 * 3 + 1]);
     }
 
     if (SCALE_Z) {
@@ -114,7 +114,7 @@ k_rescale_positions(const int N,                   // Number of atoms to shift
     } else {
       // Still need to image to avoid drift
       coords[atom_idx * 3 + 2] -=
-          box[2 * 3 + 2] * floor(coords[atom_idx * 3 + 2] / box[2 * 3 + 2]);
+          box[2 * 3 + 2] * floor(centroid_z / box[2 * 3 + 2]);
     }
 
     idx += gridDim.x * blockDim.x;
