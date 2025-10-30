@@ -79,3 +79,11 @@ class MonteCarloBarostat_f32:
 
 class MonteCarloBarostat_f64:
     pass
+
+
+class AnisotropicMonteCarloBarostat_f32:
+    pass
+
+
+class AnisotropicMonteCarloBarostat_f64:
+    pass
