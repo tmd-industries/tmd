@@ -87,7 +87,7 @@ def write_result_csvs(
             if compute_dg:
                 edge_ddg = leg_summaries[COMPLEX_LEG]["pred_dg"] - leg_summaries[SOLVENT_LEG]["pred_dg"]
                 edge_ddg_err = np.linalg.norm(
-                    [leg_summaries[COMPLEX_LEG]["pred_dg"], leg_summaries[SOLVENT_LEG]["pred_dg"]]
+                    [leg_summaries[COMPLEX_LEG]["pred_dg_err"], leg_summaries[SOLVENT_LEG]["pred_dg_err"]]
                 )
                 g.add_edge(name_a, name_b, edge_pred=edge_ddg, edge_pred_std=edge_ddg_err)
                 row.append(str(edge_ddg / KCAL_TO_KJ))
