@@ -348,8 +348,8 @@ void Neighborlist<RealType>::set_row_idxs_and_col_idxs(
 
   row_idx_buffer.copy_from(&row_idxs[0]);
   col_idx_buffer.copy_from(&col_idxs[0]);
-  // note, this passes in col/row as opposed to row/col
-  this->set_idxs_device(col_count, row_count, col_idx_buffer.data,
+
+  this->set_idxs_device(row_count, col_count, col_idx_buffer.data,
                         row_idx_buffer.data, static_cast<cudaStream_t>(0));
   gpuErrchk(cudaDeviceSynchronize());
 }
@@ -414,9 +414,9 @@ void Neighborlist<RealType>::resize_device(const int size,
 // set_idxs_device is for use when idxs exist on the GPU already and are used as
 // the new idxs to compute the neighborlist on.
 template <typename RealType>
-void Neighborlist<RealType>::set_idxs_device(const int NC, const int NR,
-                                             unsigned int *d_in_column_idxs,
+void Neighborlist<RealType>::set_idxs_device(const int NR, const int NC,
                                              unsigned int *d_in_row_idxs,
+                                             unsigned int *d_in_column_idxs,
                                              const cudaStream_t stream) {
 
   if (NC > N_) {

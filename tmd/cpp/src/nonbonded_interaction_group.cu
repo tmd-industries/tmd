@@ -517,8 +517,8 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
         (interaction_type_ == NonbondedInteractionType::DISJOINT) ? NR : 0;
     // Offset into the ends of the arrays that now contain the row and column
     // indices for the nblist
-    nblist_.set_idxs_device(NC, NR, d_arange_buffer_ + col_offset,
-                            d_arange_buffer_, stream);
+    nblist_.set_idxs_device(NR, NC, d_arange_buffer_,
+                            d_arange_buffer_ + col_offset, stream);
   }
 
   // Update the row and column counts

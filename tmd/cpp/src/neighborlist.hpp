@@ -70,8 +70,8 @@ public:
   void set_row_idxs_and_col_idxs(std::vector<unsigned int> &row_idxs,
                                  std::vector<unsigned int> &col_idxs);
 
-  void set_idxs_device(const int NC, const int NR, unsigned int *column_idxs,
-                       unsigned int *row_idxs, const cudaStream_t stream);
+  void set_idxs_device(const int NR, const int NC, unsigned int *row_idxs,
+                       unsigned int *column_idxs, const cudaStream_t stream);
 
   std::vector<unsigned int> num_tile_ixns();
 
