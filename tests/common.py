@@ -246,6 +246,23 @@ def hilbert_sort(conf, box):
     return perm
 
 
+def shift_random_coordinates_by_box(
+    coords: NDArray, box: NDArray, subset: NDArray | None = None, seed: int = 2025
+) -> NDArray:
+    """Utility function to shift random particles in coords by the box dimensions. Useful for verifying that PBCs are honored"""
+    assert box.shape == (3, 3)
+    assert coords.shape[-1] == 3 and len(coords.shape) == 2
+    coords_copy = np.array(coords)
+    rng = np.random.default_rng(seed)
+    if subset is None:
+        subset = np.arange(len(coords))
+    assert len(subset) <= len(coords)
+    particles_to_image = rng.choice(subset, size=rng.integers(1, len(coords)))
+    # Shift by 1 to 4 boxes away
+    coords_copy[particles_to_image] += rng.integers(1, 4, size=(len(particles_to_image), 3)) * np.diagonal(box)
+    return coords_copy
+
+
 class GradientTest(unittest.TestCase):
     def get_random_coords(self, N, D):
         x = np.random.rand(N, D).astype(dtype=np.float64)

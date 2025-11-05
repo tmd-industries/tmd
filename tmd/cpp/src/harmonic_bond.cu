@@ -13,20 +13,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "assert.h"
 #include "gpu_utils.cuh"
 #include "harmonic_bond.hpp"
 #include "k_harmonic_bond.cuh"
 #include "kernel_utils.cuh"
 #include "math_utils.cuh"
-#include <cub/cub.cuh>
 #include <vector>
 
 namespace tmd {
 
 template <typename RealType>
-HarmonicBond<RealType>::HarmonicBond(const std::vector<int> &bond_idxs)
-    : max_idxs_(bond_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      sum_storage_bytes_(0),
+HarmonicBond<RealType>::HarmonicBond(const int num_batches, const int num_atoms,
+                                     const std::vector<int> &bond_idxs,
+                                     const std::vector<int> &system_idxs)
+    : num_batches_(num_batches), num_atoms_(num_atoms),
+      max_idxs_(bond_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
+      nrg_accum_(num_batches_, max_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -44,6 +47,12 @@ HarmonicBond<RealType>::HarmonicBond(const std::vector<int> &bond_idxs)
     throw std::runtime_error("bond_idxs.size() must be exactly " +
                              std::to_string(IDXS_DIM) + "*k!");
   }
+  if (system_idxs.size() != max_idxs_) {
+    throw std::runtime_error("system_idxs.size() != (bond_idxs.size() / " +
+                             std::to_string(IDXS_DIM) + "), got " +
+                             std::to_string(system_idxs.size()) + " and " +
+                             std::to_string(max_idxs_));
+  }
 
   static_assert(IDXS_DIM == 2);
   for (int b = 0; b < cur_num_idxs_; b++) {
@@ -56,34 +65,43 @@ HarmonicBond<RealType>::HarmonicBond(const std::vector<int> &bond_idxs)
 
   cudaSafeMalloc(&d_bond_idxs_,
                  cur_num_idxs_ * IDXS_DIM * sizeof(*d_bond_idxs_));
+
+  cudaSafeMalloc(&d_bond_system_idxs_,
+                 cur_num_idxs_ * sizeof(*d_bond_system_idxs_));
+  cudaSafeMalloc(&d_u_buffer_, cur_num_idxs_ * sizeof(*d_u_buffer_));
+
   gpuErrchk(cudaMemcpy(d_bond_idxs_, &bond_idxs[0],
                        cur_num_idxs_ * IDXS_DIM * sizeof(*d_bond_idxs_),
                        cudaMemcpyHostToDevice));
-  cudaSafeMalloc(&d_u_buffer_, cur_num_idxs_ * sizeof(*d_u_buffer_));
 
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_, d_u_buffer_,
-                                   d_u_buffer_, cur_num_idxs_));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
+  gpuErrchk(cudaMemcpy(d_bond_system_idxs_, &system_idxs[0],
+                       cur_num_idxs_ * sizeof(*d_bond_system_idxs_),
+                       cudaMemcpyHostToDevice));
 };
 
 template <typename RealType> HarmonicBond<RealType>::~HarmonicBond() {
   gpuErrchk(cudaFree(d_bond_idxs_));
+  gpuErrchk(cudaFree(d_bond_system_idxs_));
   gpuErrchk(cudaFree(d_u_buffer_));
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
 };
 
 template <typename RealType>
 void HarmonicBond<RealType>::execute_device(
-    const int N, const int P, const RealType *d_x, const RealType *d_p,
-    const RealType *d_box, unsigned long long *d_du_dx,
+    const int batches, const int N, const int P, const RealType *d_x,
+    const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
+  // assert(batches == 1);
   if (cur_num_idxs_ > 0) {
     if (P != 2 * cur_num_idxs_) {
       throw std::runtime_error(
           "HarmonicBond::execute_device(): expected P == 2*B, got P=" +
           std::to_string(P) + ", 2*B=" + std::to_string(2 * cur_num_idxs_));
+    }
+    if (N != num_atoms_) {
+      throw std::runtime_error(
+          "HarmonicBond::execute_device(): Expected N == num_atoms, got N=" +
+          std::to_string(N) + ", num_atoms=" + std::to_string(num_atoms_));
     }
     const int tpb = DEFAULT_THREADS_PER_BLOCK;
     const int blocks = ceil_divide(cur_num_idxs_, tpb);
@@ -94,14 +112,14 @@ void HarmonicBond<RealType>::execute_device(
     kernel_idx |= d_u ? 1 << 2 : 0;
 
     kernel_ptrs_[kernel_idx]<<<blocks, tpb, 0, stream>>>(
-        cur_num_idxs_, d_x, d_box, d_p, d_bond_idxs_, d_du_dx, d_du_dp,
+        num_atoms_, cur_num_idxs_, d_x, d_box, d_p, d_bond_idxs_,
+        d_bond_system_idxs_, d_du_dx, d_du_dp,
         d_u == nullptr ? nullptr : d_u_buffer_);
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                       d_u_buffer_, d_u, cur_num_idxs_,
-                                       stream));
+      nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, d_bond_system_idxs_,
+                            d_u, stream);
     }
   }
 };
@@ -132,6 +150,10 @@ template <typename RealType> int *HarmonicBond<RealType>::get_idxs_device() {
 template <typename RealType>
 std::vector<int> HarmonicBond<RealType>::get_idxs_host() const {
   return device_array_to_vector<int>(cur_num_idxs_ * IDXS_DIM, d_bond_idxs_);
+}
+
+template <typename RealType> int HarmonicBond<RealType>::batch_size() const {
+  return num_batches_;
 }
 
 template class HarmonicBond<double>;

@@ -19,7 +19,6 @@
 #include "gpu_utils.cuh"
 #include "math_utils.cuh"
 #include "mol_utils.hpp"
-#include <cub/cub.cuh>
 #include <stdio.h>
 #include <variant>
 
@@ -39,8 +38,8 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
     : Mover<RealType>(interval), N_(N),
       adaptive_scaling_enabled_(adaptive_scaling_enabled), bps_(bps),
       pressure_(pressure), temperature_(temperature), seed_(seed),
-      group_idxs_(group_idxs), num_grouped_atoms_(0), sum_storage_bytes_(0),
-      runner_() {
+      group_idxs_(group_idxs), num_grouped_atoms_(0), runner_(),
+      nrg_accum_(1, bps_.size()) {
 
   // Trigger check that interval is valid
   this->set_interval(this->interval_);
@@ -93,11 +92,6 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
   cudaSafeMalloc(&d_atom_idxs_, num_grouped_atoms_ * sizeof(*d_atom_idxs_));
   cudaSafeMalloc(&d_mol_idxs_, num_grouped_atoms_ * sizeof(*d_mol_idxs_));
 
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_, d_u_buffer_,
-                                   d_u_buffer_, bps_.size()));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
-
   gpuErrchk(cudaMemcpy(d_atom_idxs_, &flattened_groups[0][0],
                        flattened_groups[1].size() * sizeof(*d_atom_idxs_),
                        cudaMemcpyHostToDevice));
@@ -134,7 +128,6 @@ MonteCarloBarostat<RealType>::~MonteCarloBarostat() {
   gpuErrchk(cudaFree(d_metropolis_hasting_rand_));
   gpuErrchk(cudaFree(d_num_accepted_));
   gpuErrchk(cudaFree(d_num_attempted_));
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
 };
 
 template <typename RealType>
@@ -220,15 +213,14 @@ void MonteCarloBarostat<RealType>::move(const int N,
 
   runner_.execute_potentials(bps_, N_, d_x, d_box, nullptr, nullptr,
                              d_u_buffer_, stream);
-  gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                   d_u_buffer_, d_init_u_, bps_.size(),
-                                   stream));
+  // nullptr for the d_system_idxs as batch size is fixed to 1
+  nrg_accum_.sum_device(bps_.size(), d_u_buffer_, nullptr, d_init_u_, stream);
 
   runner_.execute_potentials(bps_, N_, d_x_proposed_, d_box_proposed_, nullptr,
                              nullptr, d_u_proposed_buffer_, stream);
-  gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                   d_u_proposed_buffer_, d_final_u_,
-                                   bps_.size(), stream));
+  // nullptr for the d_system_idxs as batch size is fixed to 1
+  nrg_accum_.sum_device(bps_.size(), d_u_proposed_buffer_, nullptr, d_final_u_,
+                        stream);
 
   RealType pressure = pressure_ * static_cast<RealType>(AVOGADRO * 1e-25);
   const RealType kT = static_cast<RealType>(BOLTZ) * temperature_;

@@ -17,7 +17,9 @@
 #include <string>
 #include <vector>
 
+#include "assert.h"
 #include "device_buffer.hpp"
+#include "energy_accum.hpp"
 #include "fixed_point.hpp"
 #include "gpu_utils.cuh"
 #include "kernel_utils.cuh"
@@ -25,11 +27,12 @@
 #include "nonbonded_common.hpp"
 #include "nonbonded_interaction_group.hpp"
 #include "set_utils.hpp"
-#include <cub/cub.cuh>
 
 #include "k_nonbonded.cuh"
 
 static const int STEPS_PER_SORT = 200;
+
+static const int MAX_KERNEL_BLOCKS = 4096;
 
 namespace tmd {
 
@@ -93,7 +96,7 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
     : N_(N), NR_(row_atom_idxs.size()), NC_(col_atom_idxs.size()),
       interaction_type_(
           get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs)),
-      compute_col_grads_(true), sum_storage_bytes_(0),
+      compute_col_grads_(true), nrg_accum_(1, MAX_KERNEL_BLOCKS),
       kernel_ptrs_(
           {// enumerate over every possible kernel combination
            // Set threads to 1 if not computing energy to reduced unused shared
@@ -181,7 +184,7 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
   gpuErrchk(cudaPeekAtLastError());
 
   // this needs to be large enough to be safe when resized
-  int mnkb = this->get_max_nonbonded_kernel_blocks();
+  const int mnkb = this->get_max_nonbonded_kernel_blocks();
   cudaSafeMalloc(&d_u_buffer_, mnkb * sizeof(*d_u_buffer_));
 
   cudaSafeMalloc(&d_perm_, N_ * sizeof(*d_perm_));
@@ -198,11 +201,6 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
                           cudaHostAllocMapped));
   m_rebuild_nblist_[0] = 0;
   gpuErrchk(cudaHostGetDevicePointer(&d_rebuild_nblist_, m_rebuild_nblist_, 0));
-
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_, d_u_buffer_,
-                                   d_u_buffer_, mnkb));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
 
   if (!disable_hilbert_) {
     this->hilbert_sort_.reset(new HilbertSort<RealType>(N_));
@@ -233,8 +231,6 @@ NonbondedInteractionGroup<RealType>::~NonbondedInteractionGroup() {
   gpuErrchk(cudaFreeHost(m_rebuild_nblist_));
 
   gpuErrchk(cudaEventDestroy(nblist_flag_sync_event_));
-
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
 };
 
 template <typename RealType>
@@ -247,7 +243,7 @@ int NonbondedInteractionGroup<RealType>::get_max_nonbonded_kernel_blocks()
     const {
   int max_nonbonded_kernel_blocks =
       static_cast<int>(ceil(N_ * NONBONDED_BLOCKS_TO_ROW_ATOMS_RATIO));
-  return min(max_nonbonded_kernel_blocks, 4096);
+  return min(max_nonbonded_kernel_blocks, MAX_KERNEL_BLOCKS);
 }
 
 template <typename RealType>
@@ -316,9 +312,10 @@ void NonbondedInteractionGroup<RealType>::sort(const RealType *d_coords,
 
 template <typename RealType>
 void NonbondedInteractionGroup<RealType>::execute_device(
-    const int N, const int P, const RealType *d_x,
-    const RealType *d_p,   // N * PARAMS_PER_ATOM
-    const RealType *d_box, // 3 * 3
+    const int batches, const int N, const int P,
+    const RealType *d_x,   // [batches * N * 3]
+    const RealType *d_p,   // [batches * N * PARAMS_PER_ATOM]
+    const RealType *d_box, // [batches * 3 * 3]
     unsigned long long *d_du_dx, unsigned long long *d_du_dp, __int128 *d_u,
     cudaStream_t stream) {
   // (ytz) the nonbonded algorithm proceeds as follows:
@@ -339,6 +336,7 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   // e. inverse permute the forces, du/dps into the original index.
   // f. u is buffered into a per-particle array, and then reduced.
 
+  assert(batches == 1);
   if (N != N_) {
     throw std::runtime_error("NonbondedInteractionGroup::execute_device(): "
                              "expected N == N_, got N=" +
@@ -429,8 +427,8 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   gpuErrchk(cudaPeekAtLastError());
 
   if (d_u) {
-    gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                     d_u_buffer_, d_u, nkb, stream));
+    // nullptr for the d_system_idxs as batch size is fixed to 1
+    nrg_accum_.sum_device(nkb, d_u_buffer_, nullptr, d_u, stream);
   }
   // Increment steps
   steps_since_last_sort_++;

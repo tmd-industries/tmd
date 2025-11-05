@@ -13,12 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "assert.h"
 #include "gpu_utils.cuh"
 #include "k_nonbonded_pair_list.cuh"
 #include "kernels/kernel_utils.cuh"
 #include "math_utils.cuh"
 #include "nonbonded_pair_list.hpp"
-#include <cub/cub.cuh>
 #include <stdexcept>
 #include <vector>
 
@@ -26,11 +26,14 @@ namespace tmd {
 
 template <typename RealType, bool Negated>
 NonbondedPairList<RealType, Negated>::NonbondedPairList(
+    const int num_batches, const int num_atoms,
     const std::vector<int> &pair_idxs,   // [M, 2]
     const std::vector<RealType> &scales, // [M, 2]
+    const std::vector<int> &system_idxs, // [M]
     const RealType beta, const RealType cutoff)
-    : max_idxs_(pair_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      beta_(beta), cutoff_(cutoff), sum_storage_bytes_(0),
+    : num_batches_(num_batches), num_atoms_(num_atoms),
+      max_idxs_(pair_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
+      beta_(beta), cutoff_(cutoff), nrg_accum_(num_batches_, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -47,6 +50,13 @@ NonbondedPairList<RealType, Negated>::NonbondedPairList(
   if (pair_idxs.size() % IDXS_DIM != 0) {
     throw std::runtime_error("pair_idxs.size() must be even, but got " +
                              std::to_string(pair_idxs.size()));
+  }
+
+  if (system_idxs.size() != max_idxs_) {
+    throw std::runtime_error("system_idxs.size() != (pair_idxs.size() / " +
+                             std::to_string(IDXS_DIM) + "), got " +
+                             std::to_string(system_idxs.size()) + " and " +
+                             std::to_string(max_idxs_));
   }
 
   static_assert(IDXS_DIM == 2);
@@ -79,26 +89,35 @@ NonbondedPairList<RealType, Negated>::NonbondedPairList(
   gpuErrchk(cudaMemcpy(d_scales_, &scales[0],
                        cur_num_idxs_ * IDXS_DIM * sizeof(*d_scales_),
                        cudaMemcpyHostToDevice));
+  cudaSafeMalloc(&d_system_idxs_, cur_num_idxs_ * sizeof(*d_system_idxs_));
 
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_, d_u_buffer_,
-                                   d_u_buffer_, cur_num_idxs_));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
+  gpuErrchk(cudaMemcpy(d_system_idxs_, &system_idxs[0],
+                       cur_num_idxs_ * sizeof(*d_system_idxs_),
+                       cudaMemcpyHostToDevice));
 };
 
 template <typename RealType, bool Negated>
 NonbondedPairList<RealType, Negated>::~NonbondedPairList() {
   gpuErrchk(cudaFree(d_pair_idxs_));
   gpuErrchk(cudaFree(d_scales_));
+  gpuErrchk(cudaFree(d_system_idxs_));
   gpuErrchk(cudaFree(d_u_buffer_));
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
 };
 
 template <typename RealType, bool Negated>
 void NonbondedPairList<RealType, Negated>::execute_device(
-    const int N, const int P, const RealType *d_x, const RealType *d_p,
-    const RealType *d_box, unsigned long long *d_du_dx,
+    const int batches, const int N, const int P, const RealType *d_x,
+    const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
+
+  if (P != num_batches_ * num_atoms_ * PARAMS_PER_ATOM) {
+    throw std::runtime_error(
+        "NonbondedPairList::execute_device(): expected P == num_atoms_*" +
+        std::to_string(PARAMS_PER_ATOM) +
+        "*num_batces_, got P=" + std::to_string(P) + ", num_atoms_*" +
+        std::to_string(PARAMS_PER_ATOM) + "*" + std::to_string(num_batches_) +
+        "=" + std::to_string(num_atoms_ * PARAMS_PER_ATOM * num_batches_));
+  }
 
   if (cur_num_idxs_ > 0) {
     const int tpb = DEFAULT_THREADS_PER_BLOCK;
@@ -110,15 +129,15 @@ void NonbondedPairList<RealType, Negated>::execute_device(
     kernel_idx |= d_u ? 1 << 2 : 0;
 
     kernel_ptrs_[kernel_idx]<<<num_blocks_pairs, tpb, 0, stream>>>(
-        cur_num_idxs_, d_x, d_p, d_box, d_pair_idxs_, d_scales_, beta_, cutoff_,
-        d_du_dx, d_du_dp, d_u == nullptr ? nullptr : d_u_buffer_);
+        num_atoms_, cur_num_idxs_, d_x, d_p, d_box, d_pair_idxs_,
+        d_system_idxs_, d_scales_, beta_, cutoff_, d_du_dx, d_du_dp,
+        d_u == nullptr ? nullptr : d_u_buffer_);
 
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                       d_u_buffer_, d_u, cur_num_idxs_,
-                                       stream));
+      nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, d_system_idxs_, d_u,
+                            stream);
     }
   }
 }
@@ -200,6 +219,11 @@ template <typename RealType, bool Negated>
 std::vector<RealType>
 NonbondedPairList<RealType, Negated>::get_scales_host() const {
   return device_array_to_vector<RealType>(cur_num_idxs_ * IDXS_DIM, d_scales_);
+}
+
+template <typename RealType, bool Negated>
+int NonbondedPairList<RealType, Negated>::batch_size() const {
+  return num_batches_;
 }
 
 template class NonbondedPairList<double, true>;

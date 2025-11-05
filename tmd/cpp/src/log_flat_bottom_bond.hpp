@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include "energy_accum.hpp"
 #include "potential.hpp"
 #include <array>
 #include <vector>
@@ -25,37 +26,45 @@ template <typename RealType>
 class LogFlatBottomBond : public Potential<RealType> {
 
   typedef void (*k_log_flat_bond_fn)(
-      const int N, const RealType *__restrict__ coords,
+      const int N, const int B, const RealType *__restrict__ coords,
       const RealType *__restrict__ box, const RealType *__restrict__ params,
-      const int *__restrict__ idxs, const RealType beta,
-      unsigned long long *__restrict__ du_dx,
+      const int *__restrict__ idxs, const int *__restrict__ system_idxs,
+      const RealType beta, unsigned long long *__restrict__ du_dx,
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
+  const int num_batches_;
+  const int num_atoms_;
   const int max_idxs_;
   int cur_num_idxs_;
   const RealType beta_;
 
   int *d_bond_idxs_;
+  int *d_system_idxs_; // Which system each bond is associated with
   __int128 *d_u_buffer_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
   std::array<k_log_flat_bond_fn, 8> kernel_ptrs_;
 
 public:
   static const int IDXS_DIM = 2;
 
-  LogFlatBottomBond(const std::vector<int> &bond_idxs, RealType beta); // [B, 2]
+  LogFlatBottomBond(const int num_batches, const int num_atoms,
+                    const std::vector<int> &bond_idxs,
+                    const std::vector<int> &system_idxs,
+                    const RealType beta); // [B, 2]
 
   ~LogFlatBottomBond();
 
-  virtual void execute_device(const int N, const int P, const RealType *d_x,
-                              const RealType *d_p, const RealType *d_box,
+  virtual void execute_device(const int batches, const int N, const int P,
+                              const RealType *d_x, const RealType *d_p,
+                              const RealType *d_box,
                               unsigned long long *d_du_dx,
                               unsigned long long *d_du_dp, __int128 *d_u,
                               cudaStream_t stream) override;
+
+  virtual int batch_size() const override;
 
   int num_bonds() const { return cur_num_idxs_; }
 
