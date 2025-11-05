@@ -60,11 +60,11 @@ def write_result_csvs(
     legs = list(sorted(set(leg for legs in leg_results.values() for leg in legs.keys())))
     for leg in legs:
         ddg_csv_header.append(f"{leg}_pred_dg (kcal/mol)")
-        ddg_csv_header.append(f"{leg}_pred_err (kcal/mol)")
+        ddg_csv_header.append(f"{leg}_pred_dg_err (kcal/mol)")
     compute_dg = SOLVENT_LEG in legs and COMPLEX_LEG in legs
     if compute_dg:
         ddg_csv_header.append("pred_ddg (kcal/mol)")
-        ddg_csv_header.append("pred_err (kcal/mol)")
+        ddg_csv_header.append("pred_ddg_err (kcal/mol)")
         ddg_csv_header.append("exp_ddg (kcal/mol)")
     g = nx.DiGraph()
     ddg_path = file_client.full_path("ddg_results.csv")
@@ -87,7 +87,7 @@ def write_result_csvs(
             if compute_dg:
                 edge_ddg = leg_summaries[COMPLEX_LEG]["pred_dg"] - leg_summaries[SOLVENT_LEG]["pred_dg"]
                 edge_ddg_err = np.linalg.norm(
-                    [leg_summaries[COMPLEX_LEG]["pred_dg"], leg_summaries[SOLVENT_LEG]["pred_dg"]]
+                    [leg_summaries[COMPLEX_LEG]["pred_dg_err"], leg_summaries[SOLVENT_LEG]["pred_dg_err"]]
                 )
                 g.add_edge(name_a, name_b, edge_pred=edge_ddg, edge_pred_std=edge_ddg_err)
                 row.append(str(edge_ddg / KCAL_TO_KJ))
