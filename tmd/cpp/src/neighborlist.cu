@@ -27,15 +27,9 @@
 
 namespace tmd {
 
-// static int get_idx_total_blocks(const std::vector<int> &idx_counts,
-//                                 const int tile_size) {
-//   int total_blocks = 0;
-//   // Need to round up for each set of columns to ensure correct padding
-//   for (int i = 0; i < idx_counts.size(); i++) {
-//     total_blocks += ceil_divide(idx_counts[i], tile_size);
-//   }
-//   return total_blocks;
-// }
+void __global__ k_print_val(unsigned int *vals, size_t offset) {
+  printf("k_print_val %lu %u\n", offset, vals[offset]);
+};
 
 template <typename RealType>
 Neighborlist<RealType>::Neighborlist(const int num_systems, const int N,
@@ -197,6 +191,7 @@ Neighborlist<RealType>::get_nblist_host(const int num_systems, const int N,
   gpuErrchk(cudaMemcpy(&h_ixn_atoms[0], d_ixn_atoms_,
                        MAX_ATOM_BUFFER * sizeof(*d_ixn_atoms_),
                        cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaDeviceSynchronize());
 
   std::vector<std::vector<std::vector<int>>> ixn_list(
       num_systems,
@@ -204,10 +199,13 @@ Neighborlist<RealType>::get_nblist_host(const int num_systems, const int N,
   for (int system_idx = 0; system_idx < num_systems_; system_idx++) {
     int tile_offset = system_idx * max_blocks * max_blocks;
     int atom_offset = system_idx * max_ixns_per_system;
+    // printf("I %d offset %d\n", system_idx, atom_offset);
     for (int i = 0; i < h_ixn_count[system_idx]; i++) {
       int tile_idx = h_ixn_tiles[tile_offset + i];
       for (int j = 0; j < TILE_SIZE; j++) {
         int atom_j_idx = h_ixn_atoms[atom_offset + i * TILE_SIZE + j];
+        // printf("Here we are loc %d - %d\n", atom_offset + i * TILE_SIZE + j,
+        //        atom_j_idx);
         if (atom_j_idx < N) {
           ixn_list[system_idx][tile_idx].push_back(atom_j_idx);
         }
@@ -236,27 +234,32 @@ void Neighborlist<RealType>::build_nblist_device(
   // (ytz): TBD shared memory, stream
   if (this->compute_upper_triangular()) {
     k_find_blocks_with_ixns<RealType, true><<<dimGrid, tpb, 0, stream>>>(
-        num_systems_, N_, d_column_idx_counts_, d_row_idx_counts_,
-        d_column_idxs_, d_row_idxs_, d_column_block_bounds_ctr_,
-        d_column_block_bounds_ext_, d_column_block_bounds_ctr_,
-        d_column_block_bounds_ext_, d_coords, d_box, d_ixn_count_, d_ixn_tiles_,
-        d_ixn_atoms_, d_trim_atoms_, cutoff, padding);
+        num_systems_, N_, this->max_ixn_count(), d_column_idx_counts_,
+        d_row_idx_counts_, d_column_idxs_, d_row_idxs_,
+        d_column_block_bounds_ctr_, d_column_block_bounds_ext_,
+        d_column_block_bounds_ctr_, d_column_block_bounds_ext_, d_coords, d_box,
+        d_ixn_count_, d_ixn_tiles_, d_ixn_atoms_, d_trim_atoms_, cutoff,
+        padding);
   } else {
     k_find_blocks_with_ixns<RealType, false><<<dimGrid, tpb, 0, stream>>>(
-        num_systems_, N_, d_column_idx_counts_, d_row_idx_counts_,
-        d_column_idxs_, d_row_idxs_, d_column_block_bounds_ctr_,
-        d_column_block_bounds_ext_, d_row_block_bounds_ctr_,
-        d_row_block_bounds_ext_, d_coords, d_box, d_ixn_count_, d_ixn_tiles_,
-        d_ixn_atoms_, d_trim_atoms_, cutoff, padding);
+        num_systems_, N_, this->max_ixn_count(), d_column_idx_counts_,
+        d_row_idx_counts_, d_column_idxs_, d_row_idxs_,
+        d_column_block_bounds_ctr_, d_column_block_bounds_ext_,
+        d_row_block_bounds_ctr_, d_row_block_bounds_ext_, d_coords, d_box,
+        d_ixn_count_, d_ixn_tiles_, d_ixn_atoms_, d_trim_atoms_, cutoff,
+        padding);
   }
   gpuErrchk(cudaPeekAtLastError());
 
   dim3 compactGrid(row_blocks, num_systems_, 1);
 
   k_compact_trim_atoms<<<compactGrid, tpb, 0, stream>>>(
-      num_systems_, N_, Y, d_trim_atoms_, d_ixn_count_, d_ixn_tiles_,
-      d_ixn_atoms_);
+      num_systems_, N_, this->max_ixn_count(), Y, d_row_idx_counts_,
+      d_trim_atoms_, d_ixn_count_, d_ixn_tiles_, d_ixn_atoms_);
   gpuErrchk(cudaPeekAtLastError());
+
+  // k_print_val<<<1, 1, 0, stream>>>(d_ixn_atoms_, 288);
+  // gpuErrchk(cudaPeekAtLastError());
 }
 
 template <typename RealType>
@@ -312,13 +315,96 @@ void Neighborlist<RealType>::set_row_idxs(std::vector<unsigned int> &row_idxs) {
 
 template <typename RealType>
 void Neighborlist<RealType>::set_row_idxs_and_col_idxs(
+    std::vector<std::vector<unsigned int>> &row_idxs,
+    std::vector<std::vector<unsigned int>> &col_idxs) {
+  if (row_idxs.size() != num_systems_) {
+    throw std::runtime_error(
+        "number of row indice sets must match the number of systems");
+  }
+  if (col_idxs.size() != num_systems_) {
+    throw std::runtime_error(
+        "number of col indice sets must match the number of systems");
+  }
+  std::vector<int> row_counts;
+  std::vector<int> col_counts;
+
+  for (auto subset : row_idxs) {
+    if (subset.size() == 0) {
+      throw std::runtime_error("row idxs can't be empty");
+    }
+    std::set<unsigned int> unique_subset(subset.begin(), subset.end());
+    if (unique_subset.size() != subset.size()) {
+      throw std::runtime_error("row atom indices must be unique");
+    }
+    if (subset.size() >= N_) {
+      throw std::runtime_error("number of idxs must be less than N");
+    }
+    if (*std::max_element(subset.begin(), subset.end()) >= N_) {
+      throw std::runtime_error("indices values must be less than N");
+    }
+    row_counts.push_back(subset.size());
+  }
+  for (auto subset : col_idxs) {
+    if (subset.size() == 0) {
+      throw std::runtime_error("col idxs can't be empty");
+    }
+    std::set<unsigned int> unique_subset(subset.begin(), subset.end());
+    if (unique_subset.size() != subset.size()) {
+      throw std::runtime_error("col atom indices must be unique");
+    }
+    if (subset.size() > N_) {
+      throw std::runtime_error("number of col idxs must be <= N");
+    }
+    if (*std::max_element(subset.begin(), subset.end()) >= N_) {
+      throw std::runtime_error("indices values must be less than N");
+    }
+    col_counts.push_back(subset.size());
+  }
+
+  constexpr int tpb = DEFAULT_THREADS_PER_BLOCK;
+  DeviceBuffer<int> d_row_idx_counts(row_counts);
+  DeviceBuffer<int> d_col_idx_counts(col_counts);
+
+  DeviceBuffer<unsigned int> row_idx_buffer(num_systems_ * max_system_size_);
+  DeviceBuffer<unsigned int> col_idx_buffer(num_systems_ * max_system_size_);
+
+  cudaStream_t stream = static_cast<cudaStream_t>(0);
+
+  k_initialize_array<unsigned int>
+      <<<ceil_divide(col_idx_buffer.length, tpb), tpb, 0, stream>>>(
+          col_idx_buffer.length, col_idx_buffer.data, N_);
+  gpuErrchk(cudaPeekAtLastError());
+
+  k_initialize_array<unsigned int>
+      <<<ceil_divide(row_idx_buffer.length, tpb), tpb, 0, stream>>>(
+          row_idx_buffer.length, row_idx_buffer.data, N_);
+  gpuErrchk(cudaPeekAtLastError());
+
+  for (int i = 0; i < num_systems_; i++) {
+    gpuErrchk(cudaMemcpyAsync(row_idx_buffer.data + i * max_system_size_,
+                              &row_idxs[i][0],
+                              row_counts[i] * sizeof(*row_idx_buffer.data),
+                              cudaMemcpyHostToDevice, stream));
+    gpuErrchk(cudaMemcpyAsync(col_idx_buffer.data + i * max_system_size_,
+                              &col_idxs[i][0],
+                              col_counts[i] * sizeof(*col_idx_buffer.data),
+                              cudaMemcpyHostToDevice, stream));
+  }
+
+  this->set_idxs_device(d_row_idx_counts.data, d_col_idx_counts.data,
+                        row_idx_buffer.data, col_idx_buffer.data, stream);
+  gpuErrchk(cudaStreamSynchronize(stream));
+}
+
+template <typename RealType>
+void Neighborlist<RealType>::set_row_idxs_and_col_idxs(
     std::vector<unsigned int> &row_idxs, std::vector<unsigned int> &col_idxs) {
   if (row_idxs.size() == 0) {
-    throw std::runtime_error("idxs can't be empty");
+    throw std::runtime_error("row idxs can't be empty");
   }
   std::set<unsigned int> unique_row_idxs(row_idxs.begin(), row_idxs.end());
   if (unique_row_idxs.size() != row_idxs.size()) {
-    throw std::runtime_error("atom indices must be unique");
+    throw std::runtime_error("row atom indices must be unique");
   }
   if (row_idxs.size() >= N_) {
     throw std::runtime_error("number of idxs must be less than N");
@@ -327,11 +413,11 @@ void Neighborlist<RealType>::set_row_idxs_and_col_idxs(
     throw std::runtime_error("indices values must be less than N");
   }
   if (col_idxs.size() == 0) {
-    throw std::runtime_error("idxs can't be empty");
+    throw std::runtime_error("col idxs can't be empty");
   }
   std::set<unsigned int> unique_col_idxs(col_idxs.begin(), col_idxs.end());
   if (unique_col_idxs.size() != col_idxs.size()) {
-    throw std::runtime_error("atom indices must be unique");
+    throw std::runtime_error("col atom indices must be unique");
   }
   if (col_idxs.size() > N_) {
     throw std::runtime_error("number of col idxs must be <= N");
@@ -349,8 +435,8 @@ void Neighborlist<RealType>::set_row_idxs_and_col_idxs(
   row_idx_buffer.copy_from(&row_idxs[0]);
   col_idx_buffer.copy_from(&col_idxs[0]);
 
-  this->set_idxs_device(row_count, col_count, col_idx_buffer.data,
-                        row_idx_buffer.data, static_cast<cudaStream_t>(0));
+  this->set_idxs_device(row_count, col_count, row_idx_buffer.data,
+                        col_idx_buffer.data, static_cast<cudaStream_t>(0));
   gpuErrchk(cudaDeviceSynchronize());
 }
 
@@ -381,7 +467,8 @@ void Neighborlist<RealType>::reset_row_idxs_device(const cudaStream_t stream) {
       num_systems_, d_row_idx_counts_, static_cast<unsigned int>(N_));
   gpuErrchk(cudaPeekAtLastError());
 
-  // TBD: Figure out how to make this non-janky
+  // TBD: Figure out the cleanest way to sync the state of host counts and
+  // device counts
   std::fill(row_idx_counts_.begin(), row_idx_counts_.end(), N_);
   std::fill(column_idx_counts_.begin(), column_idx_counts_.end(), N_);
 }
@@ -441,7 +528,7 @@ void Neighborlist<RealType>::set_idxs_device(const int NR, const int NC,
           num_systems_ * max_system_size_, d_row_idxs_, N_);
   gpuErrchk(cudaPeekAtLastError());
 
-  // This assumes that all replicas will share the same idxs. Overload version
+  // This assumes that all replicas will share the same idxs. Overloaded version
   // will do things differently
   for (int i = 0; i < num_systems_; i++) {
     // The indices must already be on the GPU and are copied into the
@@ -466,6 +553,77 @@ void Neighborlist<RealType>::set_idxs_device(const int NR, const int NC,
       <<<ceil_divide(num_systems_, tpb), tpb, 0, stream>>>(
           num_systems_, d_row_idx_counts_, NR);
   gpuErrchk(cudaPeekAtLastError());
+
+  // TBD: Decide jank of where num_systems_ gets applied
+  const unsigned long long MAX_ATOM_BUFFER =
+      num_systems_ * this->max_ixn_count();
+  // Clear the atom ixns, to avoid reuse
+  // Set to max value, ie greater than N. Note that Memset is on bytes, which is
+  // why it is UCHAR_MAX
+  gpuErrchk(cudaMemsetAsync(d_ixn_atoms_, UCHAR_MAX,
+                            MAX_ATOM_BUFFER * sizeof(*d_ixn_atoms_), stream));
+}
+
+// Overloaded version of set_idxs_device to use when batching
+template <typename RealType>
+void Neighborlist<RealType>::set_idxs_device(
+    const int *d_row_counts, const int *d_col_counts,
+    unsigned int *d_in_row_idxs, // [num_systems, max_system_size] expected to
+                                 // be padded with max_system_size
+    unsigned int *d_in_column_idxs, // [num_systems, max_system_size] expected
+                                    // to be padded with max_system_size
+    const cudaStream_t stream) {
+
+  std::vector<int> h_row_counts(num_systems_);
+  std::vector<int> h_col_counts(num_systems_);
+
+  gpuErrchk(cudaMemcpyAsync(&h_row_counts[0], d_row_counts,
+                            num_systems_ * sizeof(*d_row_counts),
+                            cudaMemcpyDeviceToHost, stream));
+  gpuErrchk(cudaMemcpyAsync(&h_col_counts[0], d_col_counts,
+                            num_systems_ * sizeof(*d_col_counts),
+                            cudaMemcpyDeviceToHost, stream));
+
+  // TBD: See if this becomes an issue
+  gpuErrchk(cudaStreamSynchronize(stream));
+
+  for (auto row_size : h_row_counts) {
+    if (row_size > N_) {
+      throw std::runtime_error("NR > N_");
+    }
+    if (row_size == 0) {
+      throw std::runtime_error(
+          "Number of column and row indices must be non-zero");
+    }
+  }
+  row_idx_counts_.assign(h_row_counts.begin(), h_row_counts.end());
+
+  for (auto column_size : h_col_counts) {
+    if (column_size > N_) {
+      throw std::runtime_error("NC > N_");
+    }
+    if (column_size == 0) {
+      throw std::runtime_error(
+          "Number of column and row indices must be non-zero");
+    }
+  }
+  column_idx_counts_.assign(h_col_counts.begin(), h_col_counts.end());
+
+  gpuErrchk(
+      cudaMemcpyAsync(d_column_idxs_, d_in_column_idxs,
+                      num_systems_ * max_system_size_ * sizeof(*d_column_idxs_),
+                      cudaMemcpyDeviceToDevice, stream));
+  gpuErrchk(
+      cudaMemcpyAsync(d_row_idxs_, d_in_row_idxs,
+                      num_systems_ * max_system_size_ * sizeof(*d_row_idxs_),
+                      cudaMemcpyDeviceToDevice, stream));
+
+  gpuErrchk(cudaMemcpyAsync(d_column_idx_counts_, d_col_counts,
+                            num_systems_ * sizeof(*d_column_idx_counts_),
+                            cudaMemcpyDeviceToDevice, stream));
+  gpuErrchk(cudaMemcpyAsync(d_row_idx_counts_, d_row_counts,
+                            num_systems_ * sizeof(*d_row_idx_counts_),
+                            cudaMemcpyDeviceToDevice, stream));
 
   // TBD: Decide jank of where num_systems_ gets applied
   const unsigned long long MAX_ATOM_BUFFER =

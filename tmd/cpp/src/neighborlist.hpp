@@ -70,8 +70,21 @@ public:
   void set_row_idxs_and_col_idxs(std::vector<unsigned int> &row_idxs,
                                  std::vector<unsigned int> &col_idxs);
 
+  // Override to handle batches of row/column indices
+  void
+  set_row_idxs_and_col_idxs(std::vector<std::vector<unsigned int>> &row_idxs,
+                            std::vector<std::vector<unsigned int>> &col_idxs);
+
   void set_idxs_device(const int NR, const int NC, unsigned int *row_idxs,
                        unsigned int *column_idxs, const cudaStream_t stream);
+
+  void set_idxs_device(
+      const int *d_row_counts, const int *d_col_counts,
+      unsigned int *d_in_row_idxs, // [num_systems, max_system_size] expected to
+                                   // be padded with max_system_size
+      unsigned int *d_in_column_idxs, // [num_systems, max_system_size] expected
+                                      // to be padded with max_system_size
+      const cudaStream_t stream);
 
   std::vector<unsigned int> num_tile_ixns();
 

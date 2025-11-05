@@ -251,6 +251,29 @@ void declare_neighborlist(py::module &m, const char *typestr) {
             nblist.set_row_idxs_and_col_idxs(row_idxs, col_idxs);
           },
           py::arg("row_idxs"), py::arg("col_idxs"))
+      .def(
+          "set_row_idxs_and_col_idxs",
+          [](Neighborlist<RealType> &nblist,
+             const std::vector<py::array_t<unsigned int, py::array::c_style>>
+                 &row_idxs_i,
+             const std::vector<py::array_t<unsigned int, py::array::c_style>>
+                 &col_idxs_i) {
+            const auto num_sets = row_idxs_i.size();
+            if (num_sets != col_idxs_i.size()) {
+              throw std::runtime_error(
+                  "Number of sets of row and column indices must match");
+            }
+            std::vector<std::vector<unsigned int>> row_idxs;
+            for (auto row_idx_subset : row_idxs_i) {
+              row_idxs.push_back(py_array_to_vector(row_idx_subset));
+            }
+            std::vector<std::vector<unsigned int>> col_idxs;
+            for (auto col_idx_subset : col_idxs_i) {
+              col_idxs.push_back(py_array_to_vector(col_idx_subset));
+            }
+            nblist.set_row_idxs_and_col_idxs(row_idxs, col_idxs);
+          },
+          py::arg("row_idxs"), py::arg("col_idxs"))
       .def("reset_row_idxs", &Neighborlist<RealType>::reset_row_idxs)
       .def("get_num_systems", &Neighborlist<RealType>::get_num_systems)
       .def("get_tile_ixn_count", &Neighborlist<RealType>::num_tile_ixns)

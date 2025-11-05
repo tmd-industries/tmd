@@ -75,6 +75,9 @@ void __global__ k_find_block_bounds(
   if (tile_idx >= num_tiles) {
     return;
   }
+  if (blockIdx.x * blockDim.x + threadIdx.x == 0) {
+    ixn_counts[system_idx] = 0;
+  }
 
   RealType pos_x;
   RealType pos_y;
@@ -101,11 +104,12 @@ void __global__ k_find_block_bounds(
   int row_idx = tile_idx * TILE_SIZE + (threadIdx.x % WARP_SIZE);
   // Reset the ixn counts
 
-  if (row_idx == 0) {
-    ixn_counts[system_idx] = 0;
-  }
   if (row_idx < num_row_idxs) {
     int atom_idx = row_idxs[N * system_idx + row_idx];
+    // if (system_idx == 3) {
+    //   printf("Row Count %d Row %d Atom Idx %d\n", num_row_idxs, row_idx,
+    //          atom_idx);
+    // }
 
     pos_x = coords[system_idx * N * 3 + atom_idx * 3 + 0];
     pos_y = coords[system_idx * N * 3 + atom_idx * 3 + 1];
@@ -173,12 +177,15 @@ void __global__ k_find_block_bounds(
   }
 }
 
-void __global__
-k_compact_trim_atoms(const int num_systems, const int N, const int Y,
-                     const unsigned int *__restrict__ trim_atoms,
-                     unsigned int *__restrict__ interactionCount,
-                     int *__restrict__ interactingTiles,
-                     unsigned int *__restrict__ interactingAtoms) {
+void __global__ k_compact_trim_atoms(
+    const int num_systems, const int N, const int atom_buffer_size_per_system,
+    const int Y,
+    const unsigned int
+        *system_row_counts, // [num_systems] Number of rows idxs for each system
+    const unsigned int *__restrict__ trim_atoms,
+    unsigned int *__restrict__ interactionCount,
+    int *__restrict__ interactingTiles,
+    unsigned int *__restrict__ interactingAtoms) {
 
   // we can probably get away with using only 32 if we do some fancier remainder
   // tricks, but this isn't a huge save
@@ -193,8 +200,9 @@ k_compact_trim_atoms(const int num_systems, const int N, const int Y,
   const int tile_offset = system_idx * max_tiles;
   const int output_tile_offset = tile_offset * max_tiles;
   // Offset into the interacting atoms
-  const int interacting_atom_offset =
-      system_idx * ((max_tiles * (max_tiles + 1)) / 2) * WARP_SIZE;
+  const int interacting_atom_offset = system_idx * atom_buffer_size_per_system;
+  const int max_row_block =
+      ceil_divide(system_row_counts[system_idx], WARP_SIZE);
 
   ixn_j_buffer[threadIdx.x] = N;
   ixn_j_buffer[WARP_SIZE + threadIdx.x] = N;
@@ -202,6 +210,9 @@ k_compact_trim_atoms(const int num_systems, const int N, const int Y,
   const int indexInWarp = threadIdx.x % WARP_SIZE;
   const int warpMask = (1 << indexInWarp) - 1;
   const int row_block_idx = blockIdx.x;
+  if (row_block_idx >= max_row_block) {
+    return;
+  }
 
   __shared__ volatile int sync_start[1];
   int neighborsInBuffer = 0;
@@ -211,6 +222,7 @@ k_compact_trim_atoms(const int num_systems, const int N, const int Y,
     int atom_j_idx =
         trim_atoms[tile_offset * Y * WARP_SIZE + row_block_idx * Y * WARP_SIZE +
                    trim_block_idx * WARP_SIZE + threadIdx.x];
+
     bool interacts = atom_j_idx < N;
 
     int includeAtomFlags = __ballot_sync(FULL_MASK, interacts);
@@ -280,6 +292,8 @@ template <typename RealType, bool UPPER_TRIAG>
 void __global__ k_find_blocks_with_ixns(
     const int num_systems,                    // Number of systems
     const int N,                              // Total number of atoms
+    const int atom_buffer_size_per_system,    // Number of interactions in each
+                                              // atom buffer for each system
     const unsigned int *system_column_counts, // [num_systems] Number of columns
                                               // idxs for each system
     const unsigned int
@@ -335,8 +349,7 @@ void __global__ k_find_blocks_with_ixns(
   const int tile_offset = system_idx * max_tiles;
   const int output_tile_offset = tile_offset * max_tiles;
   // Offset into the interacting atoms
-  const int interacting_atom_offset =
-      system_idx * ((max_tiles * (max_tiles + 1)) / 2) * WARP_SIZE;
+  const int interacting_atom_offset = system_idx * atom_buffer_size_per_system;
 
   unsigned int row_i_idx = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned int atom_i_idx =

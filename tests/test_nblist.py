@@ -210,7 +210,7 @@ def assert_ixn_lists_are_equal(ref_ixn, test_ixn):
 @pytest.mark.memcheck
 @pytest.mark.parametrize("num_systems", [1, 2])
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
-@pytest.mark.parametrize("num_atoms", [35, 64, 129, 1025, 1259, 2029])
+@pytest.mark.parametrize("num_atoms", [33, 35, 64, 129, 1025, 1259, 2029])
 def test_nblist_row_indices_are_order_independent(num_systems, precision, num_atoms):
     D = 3
     cutoff = 0.9
@@ -271,6 +271,74 @@ def test_nblist_row_indices_are_order_independent(num_systems, precision, num_at
 
 
 @pytest.mark.memcheck
+@pytest.mark.parametrize("num_systems", [1, 2, 4, 6, 12])
+@pytest.mark.parametrize("precision", [np.float32, np.float64])
+@pytest.mark.parametrize("upper_triangular", [False, True])
+@pytest.mark.parametrize("num_atoms", [35, 64, 129, 1025, 1259, 2029])
+@pytest.mark.parametrize("seed", [2025])
+def test_batched_nblist_with_arbitrary_row_idxs_and_col_idxs(seed, num_systems, num_atoms, upper_triangular, precision):
+    D = 3
+    cutoff = 0.9
+    padding = 0.1
+    water_coords = get_water_coords(D)
+
+    rng = np.random.default_rng(seed)
+
+    if precision == np.float32:
+        nblist = custom_ops.Neighborlist_f32(num_systems, num_atoms, upper_triangular)
+    elif precision == np.float64:
+        nblist = custom_ops.Neighborlist_f64(num_systems, num_atoms, upper_triangular)
+    else:
+        assert 0, "Unknown precision"
+    assert nblist.get_num_systems() == num_systems
+
+    coords = np.stack(
+        [
+            water_coords[rng.choice(np.arange(water_coords.shape[0]), num_atoms, replace=False)]
+            for _ in range(num_systems)
+        ]
+    )
+    boxes = np.stack([get_box_from_coords(replica) + np.eye(3) * padding for replica in coords])
+
+    row_indice_counts = rng.integers(1, num_atoms, size=num_systems)
+    col_indice_counts = rng.integers(1, num_atoms, size=num_systems)
+
+    # test partial rows
+    row_atom_idxs = [
+        rng.choice(np.arange(coords.shape[1], dtype=np.uint32), count, replace=False) for count in row_indice_counts
+    ]
+
+    col_atom_idxs = [
+        rng.choice(np.arange(coords.shape[1], dtype=np.uint32), count, replace=False) for count in col_indice_counts
+    ]
+
+    nblist.set_row_idxs_and_col_idxs(row_atom_idxs, col_atom_idxs)
+    test_ixns_list = nblist.get_nblist(coords.squeeze(), boxes.squeeze(), cutoff, padding)
+    assert len(test_ixns_list) == num_systems
+    for i, system_ixn_list in enumerate(test_ixns_list):
+        reference_ixns_list = build_reference_ixn_group_list(
+            coords[i], boxes[i], cutoff, padding, row_atom_idxs[i], col_atom_idxs[i], upper_triangular
+        )
+        assert_ixn_lists_are_equal(reference_ixns_list, system_ixn_list)
+
+    # test complete rows
+    col_atom_idxs = [
+        rng.choice(np.arange(num_atoms, dtype=np.uint32), num_atoms, replace=False) for _ in range(num_systems)
+    ]
+    row_atom_idxs = [np.array(col_idxs[: num_atoms // 4]) for col_idxs in col_atom_idxs]
+
+    nblist.set_row_idxs_and_col_idxs(row_atom_idxs, col_atom_idxs)
+    test_ixns_list = nblist.get_nblist(coords.squeeze(), boxes.squeeze(), cutoff, padding)
+
+    assert len(test_ixns_list) == num_systems
+    for i, system_ixn_list in enumerate(test_ixns_list):
+        reference_ixns_list = build_reference_ixn_group_list(
+            coords[i], boxes[i], cutoff, padding, row_atom_idxs[i], col_atom_idxs[i], upper_triangular
+        )
+        assert_ixn_lists_are_equal(reference_ixns_list, system_ixn_list)
+
+
+@pytest.mark.memcheck
 @pytest.mark.parametrize("num_systems", [1, 2, 12])
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 @pytest.mark.parametrize("upper_triangular", [False, True])
@@ -295,11 +363,9 @@ def test_nblist_with_arbitrary_row_idxs_and_col_idxs(num_systems, num_atoms, upp
     box = get_box_from_coords(coords) + np.eye(3) * padding
 
     # test partial rows
-    row_atom_idxs = np.random.choice(np.arange(coords.shape[0]), num_atoms // 3, replace=False)
-    row_atom_idxs = row_atom_idxs.astype(np.uint32)
+    row_atom_idxs = np.random.choice(np.arange(coords.shape[0], dtype=np.uint32), num_atoms // 3, replace=False)
 
-    col_atom_idxs = np.random.choice(np.arange(coords.shape[0]), num_atoms // 2, replace=False)
-    col_atom_idxs = col_atom_idxs.astype(np.uint32)
+    col_atom_idxs = np.random.choice(np.arange(coords.shape[0], dtype=np.uint32), num_atoms // 2, replace=False)
 
     reference_ixns_list = build_reference_ixn_group_list(
         coords, box, cutoff, padding, row_atom_idxs, col_atom_idxs, upper_triangular
@@ -396,25 +462,21 @@ def test_neighborlist_invalid_row_idxs():
         custom_ops.Neighborlist_f32(1, N, True),
         custom_ops.Neighborlist_f64(1, N, True),
     ):
-        with pytest.raises(RuntimeError) as e:
+        with pytest.raises(RuntimeError, match="idxs can't be empty"):
             nblist.set_row_idxs(np.zeros(0, dtype=np.uint32))
-        assert "idxs can't be empty" == str(e.value)
 
-        with pytest.raises(RuntimeError) as e:
+        with pytest.raises(RuntimeError, match="atom indices must be unique"):
             nblist.set_row_idxs(np.zeros(2, dtype=np.uint32))
-        assert "atom indices must be unique" == str(e.value)
 
-        with pytest.raises(RuntimeError) as e:
+        with pytest.raises(RuntimeError, match="number of idxs must be less than N"):
             nblist.set_row_idxs(np.arange(N * 5, dtype=np.uint32))
-        assert "number of idxs must be less than N" == str(e.value)
 
-        with pytest.raises(RuntimeError) as e:
+        with pytest.raises(RuntimeError, match="indices values must be less than N"):
             nblist.set_row_idxs(np.arange(N - 1, dtype=np.uint32) * N * 5)
-        assert "indices values must be less than N" == str(e.value)
 
 
 @pytest.mark.memcheck
-@pytest.mark.parametrize("num_systems", [1, 2, 4])
+@pytest.mark.parametrize("num_systems", [1, 2, 4, 12])
 def test_neighborlist_on_subset_of_system(num_systems):
     ligand, _, _ = get_hif2a_ligand_pair_single_topology()
     ligand_coords = get_romol_conf(ligand)
