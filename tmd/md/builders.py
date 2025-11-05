@@ -41,6 +41,7 @@ class HostConfig:
     box: NDArray
     num_water_atoms: int
     omm_topology: app.topology.Topology
+    num_membrane_atoms: int = 0
 
     def __post_init__(self):
         object.__setattr__(self, "masses", np.asarray(self.masses, dtype=np.float32))
@@ -170,6 +171,7 @@ def solvate_modeller(
     mols: list[Chem.Mol] | None,
     ionic_concentration: float = 0.0,
     neutralize: bool = False,
+    membrane: bool = False,
 ):
     """Solvates a system while handling ions and neutralizing the system by adding dummy ions then removing them.
 
@@ -198,6 +200,9 @@ def solvate_modeller(
 
     neutralize: bool
         Whether or not to neutralize the system.
+
+    membrane: bool
+        Whether or not to add a membrane to the system
     """
     dummy_chain_id = "DUMMY"
     add_dummy_ions = neutralize and mols is not None and len(mols) > 0
@@ -223,14 +228,22 @@ def solvate_modeller(
             coords = np.zeros((topology.getNumAtoms(), 3)) * unit.angstroms
             modeller.add(topology, coords)
     combined_templates = get_ion_residue_templates(modeller)
-    modeller.addSolvent(
-        ff,
-        boxSize=np.diag(box) * unit.nanometers,
-        ionicStrength=ionic_concentration * unit.molar,
-        model=sanitize_water_ff(water_ff),
-        neutralize=neutralize,
-        residueTemplates=combined_templates,
-    )
+    if not membrane:
+        modeller.addSolvent(
+            ff,
+            boxSize=np.diag(box) * unit.nanometers,
+            ionicStrength=ionic_concentration * unit.molar,
+            model=sanitize_water_ff(water_ff),
+            neutralize=neutralize,
+            residueTemplates=combined_templates,
+        )
+    else:
+        assert sanitize_water_ff(water_ff) == "tip3p", "Only supports tip3p waters"
+        modeller.addMembrane(
+            ff,
+            ionicStrength=ionic_concentration * unit.molar,
+            neutralize=neutralize,
+        )
     if add_dummy_ions:
         current_topo = modeller.getTopology()
         # Remove the chain filled with the dummy ions
@@ -317,6 +330,7 @@ def load_pdb_system(
         conf=host_coords,
         box=box,
         num_water_atoms=num_water_atoms,
+        num_membrane_atoms=0,
         omm_topology=modeller.topology,
         masses=np.asarray(masses),
     )
@@ -436,8 +450,152 @@ def build_protein_system(
         conf=solvated_host_coords,
         box=box,
         num_water_atoms=num_water_atoms,
+        num_membrane_atoms=0,
         omm_topology=modeller.topology,
         masses=np.asarray(masses),
+    )
+
+
+def build_membrane_system(
+    host_pdbfile: app.PDBFile | str,
+    protein_ff: str,
+    water_ff: str,
+    mols: list[Chem.Mol] | None = None,
+    ionic_concentration: float = 0.0,
+    neutralize: bool = False,
+    box_margin: float = 0.0,
+) -> HostConfig:
+    """
+    Build a solvated protein+membrane system with a 10A padding. Assumes the PDB file is posed such that the XY plane
+    will contain the membrane, this matches with OpenMM.
+
+    Note that this will produce different numbers of water molecules due to non-deterministic minimization in OpenMM
+
+    Parameters
+    ----------
+    host_pdbfile: str or app.PDBFile
+        PDB of the host structure
+
+    protein_ff: str
+        The protein forcefield name (excluding .xml) to parametrize the host_pdbfile with.
+
+    water_ff: str
+        The water forcefield name (excluding .xml) to parametrize the water with.
+
+    mols: optional list of mols
+        Molecules to be part of the system, will avoid placing water molecules that clash with the mols.
+        If water molecules provided in the PDB clash with the mols, will do nothing.
+
+    ionic_concentration: optional float
+        Concentration of ions, in molars, to add to the system. Defaults to 0.0, meaning no ions are added.
+
+    neutralize: optional bool
+        Whether or not to add ions to the system to ensure the system has a net charge of 0.0. Defaults to False.
+
+    box_margin: Amount of box_margin to add to box
+        Avoids clashes within the system
+
+    Returns
+    -------
+    HostConfig
+    """
+
+    assert protein_ff == "amber14/protein.ff14SB", "Requires the Amber14SB protein ForceField"
+    host_ff = app.ForceField(f"{protein_ff}.xml", f"{water_ff}.xml", "amber14/lipid17.xml")
+    if isinstance(host_pdbfile, str):
+        assert os.path.exists(host_pdbfile)
+        host_pdb = app.PDBFile(host_pdbfile)
+    elif isinstance(host_pdbfile, app.PDBFile):
+        host_pdb = host_pdbfile
+    else:
+        raise TypeError("host_pdbfile must be a string or an openmm PDBFile object")
+
+    modeller = app.Modeller(host_pdb.topology, host_pdb.positions)
+    host_coords = strip_units(host_pdb.positions)
+
+    water_residues_in_pdb = [residue for residue in host_pdb.topology.residues() if residue.name == WATER_RESIDUE_NAME]
+    num_host_atoms = host_coords.shape[0]
+    if len(water_residues_in_pdb) > 0:
+        host_water_atoms = len(water_residues_in_pdb) * 3
+        # Only consider non-water atoms as the host, does count excipients as the host
+        num_host_atoms = num_host_atoms - host_water_atoms
+        water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_residues_in_pdb])
+        expected_water_indices = np.arange(host_water_atoms) + num_host_atoms
+        np.testing.assert_equal(
+            water_indices, expected_water_indices, err_msg="Waters in PDB must be at the end of the file"
+        )
+
+    padding = 1.0
+    box = get_box_from_coords(host_coords)
+    box += np.eye(3) * padding
+
+    solvate_modeller(
+        modeller,
+        box,
+        host_ff,
+        water_ff,
+        mols=mols,
+        neutralize=neutralize,
+        ionic_concentration=ionic_concentration,
+        membrane=True,
+    )
+    solvated_host_coords = strip_units(modeller.positions)
+
+    if mols is not None:
+        replace_clashy_waters(modeller, box, mols, host_ff, water_ff)
+        solvated_host_coords = strip_units(modeller.positions)
+
+    num_water_atoms = (
+        len([residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]) * 3
+    )
+    num_membrane_atoms = len(solvated_host_coords) - len(host_coords) - num_water_atoms
+
+    assert modeller.getTopology().getNumAtoms() == solvated_host_coords.shape[0]
+
+    print(
+        "building a protein system with",
+        num_host_atoms,
+        "protein atoms,",
+        num_membrane_atoms,
+        "membrane atoms and",
+        num_water_atoms,
+        "water atoms",
+    )
+    combined_templates = get_ion_residue_templates(modeller)
+
+    solvated_omm_host_system = host_ff.createSystem(
+        modeller.topology,
+        nonbondedMethod=app.NoCutoff,
+        constraints=None,
+        rigidWater=False,
+        residueTemplates=combined_templates,
+    )
+
+    (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
+        solvated_omm_host_system, cutoff=1.2
+    )
+
+    solvated_host_system = HostSystem(
+        bond=bond,
+        angle=angle,
+        proper=proper,
+        improper=improper,
+        nonbonded_all_pairs=nonbonded,
+    )
+
+    # Determine box from the system's coordinates
+    box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
+
+    assert len(list(modeller.topology.atoms())) == len(solvated_host_coords)
+
+    return HostConfig(
+        host_system=solvated_host_system,
+        conf=solvated_host_coords,
+        box=box,
+        num_water_atoms=num_water_atoms,
+        omm_topology=modeller.topology,
+        masses=np.asarray(masses),
+        num_membrane_atoms=num_membrane_atoms,
     )
 
 
@@ -540,6 +698,7 @@ def build_water_system(
         conf=solvated_host_coords,
         box=box,
         num_water_atoms=num_water_atoms,
+        num_membrane_atoms=0,
         omm_topology=modeller.topology,
         masses=np.asarray(masses),
     )
