@@ -60,11 +60,11 @@ def write_result_csvs(
     legs = list(sorted(set(leg for legs in leg_results.values() for leg in legs.keys())))
     for leg in legs:
         ddg_csv_header.append(f"{leg}_pred_dg (kcal/mol)")
-        ddg_csv_header.append(f"{leg}_pred_err (kcal/mol)")
+        ddg_csv_header.append(f"{leg}_pred_dg_err (kcal/mol)")
     compute_dg = SOLVENT_LEG in legs and COMPLEX_LEG in legs
     if compute_dg:
         ddg_csv_header.append("pred_ddg (kcal/mol)")
-        ddg_csv_header.append("pred_err (kcal/mol)")
+        ddg_csv_header.append("pred_ddg_err (kcal/mol)")
         ddg_csv_header.append("exp_ddg (kcal/mol)")
     g = nx.DiGraph()
     ddg_path = file_client.full_path("ddg_results.csv")
