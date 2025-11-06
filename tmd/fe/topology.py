@@ -339,21 +339,13 @@ class BaseTopology:
         sig_ij = combining_rule_sigma(sig_params[l_idxs], sig_params[r_idxs])
         eps_ij = combining_rule_epsilon(eps_params[l_idxs], eps_params[r_idxs])
 
-        params = []
-        for q, sig, eps, (sf_q, sf_lj) in zip(q_ij, sig_ij, eps_ij, rescale_mask):
-            params.append(
-                (
-                    q * sf_q,
-                    sig,
-                    eps * sf_lj,
-                    0.0,  # w offset for intramolecular term
-                )
-            )
-        params = np.array(params)
+        rescale_mask = np.asarray(rescale_mask).reshape(-1, 2)
 
-        # corner case for molecule without nb terms (everything excluded)
-        if params.shape[0] == 0:
-            params = np.reshape(params, (0, 4))
+        params = np.empty((len(q_ij), 4), dtype=q_ij.dtype)
+        params[:, NBParamIdx.Q_IDX] = q_ij * rescale_mask[:, 0]
+        params[:, NBParamIdx.LJ_SIG_IDX] = sig_ij
+        params[:, NBParamIdx.LJ_EPS_IDX] = eps_ij * rescale_mask[:, 1]
+        params[:, NBParamIdx.W_IDX] = 0.0
 
         beta = _BETA
         cutoff = _CUTOFF  # solve for this analytically later
