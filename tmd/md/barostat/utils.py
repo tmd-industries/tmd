@@ -57,7 +57,8 @@ def get_group_indices(bond_list: list[tuple[int, int]], num_atoms: int) -> list[
     topology = nx.Graph(bond_list)
     components = [np.array(list(sorted(c))) for c in nx.algorithms.connected_components(topology)]
     for i in range(len(components)):
-        assert np.all(np.diff(components[i]) == 1)
+        if not np.all(np.diff(components[i]) == 1):
+            raise ValueError(f"Group {i} is not constructed of consecutive atom indices")
 
     found_set = set()
     for grp in components:
