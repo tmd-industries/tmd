@@ -1266,7 +1266,10 @@ def run_complex(
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = 0.7,
 ):
-    complex_host_config = builders.build_protein_system(
+    from dataclasses import replace
+
+    forcefield = replace(forcefield, protein_ff="amber14/protein.ff14SB")
+    complex_host_config = builders.build_membrane_system(
         protein, forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
     )
     complex_host_config = setup_optimized_host(complex_host_config, [mol_a, mol_b], forcefield, seed=md_params.seed)
