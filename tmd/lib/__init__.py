@@ -98,6 +98,42 @@ class MonteCarloBarostat:
         )
 
 
+@dataclass
+class AnisotropicMonteCarloBarostat:
+    N: int
+    pressure: float
+    temperature: float
+    group_idxs: Any  # TODO: address mixed convention for type of group_idxs
+    interval: int
+    seed: int
+    adaptive_scaling_enabled: bool = True
+    initial_volume_scale_factor: Optional[float] = None
+    scale_x: bool = True
+    scale_y: bool = True
+    scale_z: bool = True
+
+    def impl(self, bound_potentials, precision=np.float32):
+        klass: (
+            type[custom_ops.AnisotropicMonteCarloBarostat_f32] | type[custom_ops.AnisotropicMonteCarloBarostat_f64]
+        ) = custom_ops.AnisotropicMonteCarloBarostat_f32
+        if precision == np.float64:
+            klass = custom_ops.AnisotropicMonteCarloBarostat_f64
+        return klass(
+            self.N,
+            self.pressure,
+            self.temperature,
+            self.group_idxs,
+            self.interval,
+            bound_potentials,
+            self.seed,
+            self.adaptive_scaling_enabled,
+            self.initial_volume_scale_factor or 0.0,  # 0.0 is a special value meaning "use 1% of initial box volume",
+            self.scale_x,
+            self.scale_y,
+            self.scale_z,
+        )
+
+
 # wrapper to do automatic casting
 def Context(
     x0, v0, box, integrator, bps, movers=None, precision=np.float32
