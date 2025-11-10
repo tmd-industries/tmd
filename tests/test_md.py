@@ -657,7 +657,7 @@ def test_multiple_steps_local_consistency(freeze_reference):
     assert np.all(coords[local_idxs] != xs[-1][local_idxs], axis=1).sum() == expected_to_move
 
     # Get the particles within a certain distance of local idxs
-    nblist = custom_ops.Neighborlist_f32(len(coords), False)
+    nblist = custom_ops.Neighborlist_f32(1, len(coords), False)
     nblist.set_row_idxs(local_idxs.astype(np.uint32))
     # Add padding to the radius to account for probabilistic selection
     # note that we don't want to pass in padding here, since the padded_cutoff is padding/2+cutoff
