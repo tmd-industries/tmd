@@ -27,10 +27,6 @@
 
 namespace tmd {
 
-void __global__ k_print_val(unsigned int *vals, size_t offset) {
-  printf("k_print_val %lu %u\n", offset, vals[offset]);
-};
-
 template <typename RealType>
 Neighborlist<RealType>::Neighborlist(const int num_systems, const int N,
                                      const bool compute_upper_triangular)
@@ -199,13 +195,10 @@ Neighborlist<RealType>::get_nblist_host(const int num_systems, const int N,
   for (int system_idx = 0; system_idx < num_systems_; system_idx++) {
     int tile_offset = system_idx * max_blocks * max_blocks;
     int atom_offset = system_idx * max_ixns_per_system;
-    // printf("I %d offset %d\n", system_idx, atom_offset);
     for (int i = 0; i < h_ixn_count[system_idx]; i++) {
       int tile_idx = h_ixn_tiles[tile_offset + i];
       for (int j = 0; j < TILE_SIZE; j++) {
         int atom_j_idx = h_ixn_atoms[atom_offset + i * TILE_SIZE + j];
-        // printf("Here we are loc %d - %d\n", atom_offset + i * TILE_SIZE + j,
-        //        atom_j_idx);
         if (atom_j_idx < N) {
           ixn_list[system_idx][tile_idx].push_back(atom_j_idx);
         }
@@ -231,7 +224,6 @@ void Neighborlist<RealType>::build_nblist_device(
 
   dim3 dimGrid(row_blocks, Y, num_systems_); // block x, y, z dims
 
-  // (ytz): TBD shared memory, stream
   if (this->compute_upper_triangular()) {
     k_find_blocks_with_ixns<RealType, true><<<dimGrid, tpb, 0, stream>>>(
         num_systems_, N_, this->max_ixn_count(), d_column_idx_counts_,
@@ -257,9 +249,6 @@ void Neighborlist<RealType>::build_nblist_device(
       num_systems_, N_, this->max_ixn_count(), Y, d_row_idx_counts_,
       d_trim_atoms_, d_ixn_count_, d_ixn_tiles_, d_ixn_atoms_);
   gpuErrchk(cudaPeekAtLastError());
-
-  // k_print_val<<<1, 1, 0, stream>>>(d_ixn_atoms_, 288);
-  // gpuErrchk(cudaPeekAtLastError());
 }
 
 template <typename RealType>
