@@ -31,15 +31,14 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
     const int N,
     const RealType pressure,    // Expected in Bar
     const RealType temperature, // Kelvin
-    const std::vector<std::vector<int>> group_idxs, const int interval,
-    const std::vector<std::shared_ptr<BoundPotential<RealType>>> bps,
+    const std::vector<std::vector<int>> &group_idxs, const int interval,
+    const std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
     const int seed, const bool adaptive_scaling_enabled,
     const RealType initial_volume_scale_factor)
-    : Mover<RealType>(interval), N_(N),
+    : Mover<RealType>(interval), N_(N), num_mols_(group_idxs.size()),
       adaptive_scaling_enabled_(adaptive_scaling_enabled), bps_(bps),
       pressure_(pressure), temperature_(temperature), seed_(seed),
-      group_idxs_(group_idxs), num_grouped_atoms_(0), runner_(),
-      nrg_accum_(1, bps_.size()) {
+      num_grouped_atoms_(0), runner_(), nrg_accum_(1, bps_.size()) {
 
   // Trigger check that interval is valid
   this->set_interval(this->interval_);
@@ -53,12 +52,10 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
     std::cout << "warning pressure more than 10bar" << std::endl;
   }
 
-  const int num_mols = group_idxs_.size();
-
   verify_group_idxs(N, group_idxs);
   // Array of flattened atom indices, mol indices and mol offsets
   std::array<std::vector<int>, 3> flattened_groups =
-      prepare_group_idxs_for_gpu(group_idxs_);
+      prepare_group_idxs_for_gpu(group_idxs);
 
   num_grouped_atoms_ = flattened_groups[0].size();
 
@@ -85,7 +82,7 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
   gpuErrchk(cudaMemcpy(d_volume_scale_, &initial_volume_scale_factor,
                        1 * sizeof(*d_volume_scale_), cudaMemcpyHostToDevice));
 
-  cudaSafeMalloc(&d_centroids_, num_mols * 3 * sizeof(*d_centroids_));
+  cudaSafeMalloc(&d_centroids_, num_mols_ * 3 * sizeof(*d_centroids_));
   cudaSafeMalloc(&d_mol_offsets_,
                  flattened_groups[2].size() * sizeof(*d_mol_offsets_));
 
@@ -104,6 +101,9 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
 
   k_initialize_curand_states<<<1, 1, 0>>>(1, seed_, d_rand_state_);
   gpuErrchk(cudaPeekAtLastError());
+
+  // Zero out the box proposals, as kernels currently only touch diagonal
+  gpuErrchk(cudaMemset(d_box_proposed_, 0, 3 * 3 * sizeof(*d_box_proposed_)));
 
   this->reset_counters();
 };
@@ -176,45 +176,15 @@ void MonteCarloBarostat<RealType>::move(const int N,
     return;
   }
 
-  const int num_molecules = group_idxs_.size();
   gpuErrchk(cudaMemsetAsync(d_centroids_, 0,
-                            num_molecules * 3 * sizeof(*d_centroids_), stream));
-
-  k_setup_barostat_move<RealType><<<1, 1, 0, stream>>>(
-      adaptive_scaling_enabled_, d_rand_state_, d_box, d_volume_delta_,
-      d_volume_scale_, d_length_scale_, d_volume_, d_metropolis_hasting_rand_);
-  gpuErrchk(cudaPeekAtLastError());
-
-  // Create duplicates of the coords/box that we can modify
-  gpuErrchk(cudaMemcpyAsync(d_x_proposed_, d_x, N_ * 3 * sizeof(*d_x),
-                            cudaMemcpyDeviceToDevice, stream));
-  gpuErrchk(cudaMemcpyAsync(d_box_proposed_, d_box,
-                            3 * 3 * sizeof(*d_box_proposed_),
-                            cudaMemcpyDeviceToDevice, stream));
-
-  const int tpb = DEFAULT_THREADS_PER_BLOCK;
-  // TBD: For larger systems (20k >) may be better to reduce the number of
-  // blocks, rather than matching the number of blocks to be
-  // ceil_divide(units_of_work, tpb). The kernels already support this, but at
-  // the moment we match the blocks * tpb to equal units_of_work
-  const int blocks = ceil_divide(num_grouped_atoms_, tpb);
-
-  k_find_group_centroids<RealType>
-      <<<blocks, tpb, 0, stream>>>(num_grouped_atoms_, d_x_proposed_,
-                                   d_atom_idxs_, d_mol_idxs_, d_centroids_);
-  gpuErrchk(cudaPeekAtLastError());
-
-  // Scale centroids
-  k_rescale_positions<RealType><<<blocks, tpb, 0, stream>>>(
-      num_grouped_atoms_, d_x_proposed_, d_length_scale_, d_box,
-      d_box_proposed_, // Box will be rescaled by length_scale
-      d_atom_idxs_, d_mol_idxs_, d_mol_offsets_, d_centroids_);
-  gpuErrchk(cudaPeekAtLastError());
+                            num_mols_ * 3 * sizeof(*d_centroids_), stream));
 
   runner_.execute_potentials(bps_, N_, d_x, d_box, nullptr, nullptr,
                              d_u_buffer_, stream);
   // nullptr for the d_system_idxs as batch size is fixed to 1
   nrg_accum_.sum_device(bps_.size(), d_u_buffer_, nullptr, d_init_u_, stream);
+
+  this->propose_move(N, d_x, d_box, stream);
 
   runner_.execute_potentials(bps_, N_, d_x_proposed_, d_box_proposed_, nullptr,
                              nullptr, d_u_proposed_buffer_, stream);
@@ -222,20 +192,64 @@ void MonteCarloBarostat<RealType>::move(const int N,
   nrg_accum_.sum_device(bps_.size(), d_u_proposed_buffer_, nullptr, d_final_u_,
                         stream);
 
-  RealType pressure = pressure_ * static_cast<RealType>(AVOGADRO * 1e-25);
+  this->decide_move(N, d_x, d_box, stream);
+};
+
+template <typename RealType>
+void MonteCarloBarostat<RealType>::propose_move(const int N,
+                                                const RealType *d_x,
+                                                const RealType *d_box,
+                                                cudaStream_t stream) {
+  const int tpb = DEFAULT_THREADS_PER_BLOCK;
+  // TBD: For larger systems (20k >) may be better to reduce the number of
+  // blocks, rather than matching the number of blocks to be
+  // ceil_divide(units_of_work, tpb). The kernels already support this, but at
+  // the moment we match the blocks * tpb to equal units_of_work
+  const int blocks = ceil_divide(num_grouped_atoms_, tpb);
+
+  k_setup_barostat_move<RealType, true, true, true><<<1, 1, 0, stream>>>(
+      adaptive_scaling_enabled_, d_rand_state_, d_box, d_volume_delta_,
+      d_volume_scale_, d_length_scale_, d_volume_, d_metropolis_hasting_rand_);
+  gpuErrchk(cudaPeekAtLastError());
+
+  // Create duplicates of the coords that we can modify
+  gpuErrchk(cudaMemcpyAsync(d_x_proposed_, d_x, N_ * 3 * sizeof(*d_x),
+                            cudaMemcpyDeviceToDevice, stream));
+
+  k_find_group_centroids<RealType>
+      <<<blocks, tpb, 0, stream>>>(num_grouped_atoms_, d_x_proposed_,
+                                   d_atom_idxs_, d_mol_idxs_, d_centroids_);
+  gpuErrchk(cudaPeekAtLastError());
+
+  // Scale centroids
+  k_rescale_positions<RealType, true, true, true><<<blocks, tpb, 0, stream>>>(
+      num_grouped_atoms_, d_x_proposed_, d_length_scale_, d_box,
+      d_box_proposed_, // Proposed box will be d_box rescaled by length_scale
+      d_atom_idxs_, d_mol_idxs_, d_mol_offsets_, d_centroids_);
+  gpuErrchk(cudaPeekAtLastError());
+}
+
+template <typename RealType>
+void MonteCarloBarostat<RealType>::decide_move(const int N, RealType *d_x,
+                                               RealType *d_box,
+                                               cudaStream_t stream) {
+  const int tpb = DEFAULT_THREADS_PER_BLOCK;
+  const int blocks = ceil_divide(num_grouped_atoms_, tpb);
+
+  const RealType pressure = pressure_ * static_cast<RealType>(AVOGADRO * 1e-25);
   const RealType kT = static_cast<RealType>(BOLTZ) * temperature_;
 
   k_decide_move<RealType><<<ceil_divide(N_, tpb), tpb, 0, stream>>>(
-      N_, adaptive_scaling_enabled_, num_molecules, kT, pressure,
+      N_, adaptive_scaling_enabled_, num_mols_, kT, pressure,
       d_metropolis_hasting_rand_, d_volume_, d_volume_delta_, d_volume_scale_,
       d_init_u_, d_final_u_, d_box, d_box_proposed_, d_x, d_x_proposed_,
       d_num_accepted_, d_num_attempted_);
   gpuErrchk(cudaPeekAtLastError());
-};
+}
 
 template <typename RealType>
 void MonteCarloBarostat<RealType>::set_pressure(const RealType pressure) {
-  pressure_ = static_cast<RealType>(pressure);
+  pressure_ = pressure;
   // Could have equilibrated and be a large number of steps from shifting volume
   // adjustment, ie num attempted = 300 and num accepted = 150
   this->reset_counters();

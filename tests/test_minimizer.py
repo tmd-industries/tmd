@@ -37,14 +37,13 @@ from tmd.utils import path_to_internal_file
 
 
 @pytest.mark.parametrize(
-    "pdb_path, sdf_path, mol_a_name, mol_b_name, run_one_test",
+    "pdb_path, sdf_path, mol_a_name, mol_b_name",
     [
         pytest.param(
             path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb"),
             path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf"),
             "43",
             "234",
-            False,
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
@@ -52,7 +51,6 @@ from tmd.utils import path_to_internal_file
             path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf"),
             "20",
             "43",
-            False,
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
@@ -60,7 +58,6 @@ from tmd.utils import path_to_internal_file
             path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf"),
             "41",
             "43",
-            False,
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
@@ -68,7 +65,6 @@ from tmd.utils import path_to_internal_file
             path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf"),
             "34",
             "37",
-            False,
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
@@ -76,7 +72,6 @@ from tmd.utils import path_to_internal_file
             path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf"),
             "26",
             "37",
-            False,
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
@@ -84,11 +79,17 @@ from tmd.utils import path_to_internal_file
             path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf"),
             "43",
             "234",
-            True,
+        ),
+        # Failure around waters not getting deleted and causing crashes in the minimizer
+        pytest.param(
+            path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "cdk8_structure.pdb"),
+            path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "ligands.sdf"),
+            "43",
+            "44",
         ),
     ],
 )
-def test_fire_minimize_host_protein(pdb_path, sdf_path, mol_a_name, mol_b_name, run_one_test):
+def test_fire_minimize_host_protein(pdb_path, sdf_path, mol_a_name, mol_b_name):
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     with sdf_path as ligand_path:
         mols_by_name = read_sdf_mols_by_name(ligand_path)
@@ -196,8 +197,8 @@ def test_pre_equilibrate_host_all_ligands(host_name, data_dir, pdb_name, sdf_nam
         with path_to_internal_file(data_dir, pdb_name) as host_path:
             host_config = builders.build_protein_system(str(host_path), ff.protein_ff, ff.water_ff, mols=mols)
     x_host, x_box = minimizer.pre_equilibrate_host(mols, host_config, ff)
-    assert np.any(x_box != host_config.box)
-    assert np.all(x_host != host_config.conf)
+    assert np.all(x_box == host_config.box, axis=1).sum() == 0
+    assert np.all(x_host == host_config.conf, axis=1).sum() == 0
 
 
 def test_fire_minimize_host_adamantane():

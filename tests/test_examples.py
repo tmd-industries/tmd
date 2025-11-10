@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,6 +19,7 @@ import pickle
 import subprocess
 import sys
 from collections.abc import Sequence
+from csv import DictReader
 from importlib import resources
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -95,15 +97,7 @@ def test_run_rbfe_graph_local(
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
         mols = read_sdf(hif2a_dir / "ligands.sdf")
 
-        temp_mols = NamedTemporaryFile(suffix=".sdf")
-        writer = Chem.SDWriter(temp_mols.name)
-        rng = np.random.default_rng(seed)
-        for mol in rng.choice(mols, replace=False, size=3):
-            writer.write(mol)
-
-        writer.close()
         config = dict(
-            sdf_path=temp_mols.name,
             pdb_path=hif2a_dir / "5tbm_prepared.pdb",
             seed=seed,
             n_eq_steps=n_eq_steps,
@@ -114,10 +108,25 @@ def test_run_rbfe_graph_local(
             forcefield=DEFAULT_FF,
             mps_workers=mps_workers,
             output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_graph_local_{seed}",
+            experimental_field="IC50[uM](SPA)",
+            experimental_units="uM",
         )
+
+        temp_mols = NamedTemporaryFile(suffix=".sdf")
+        writer = Chem.SDWriter(temp_mols.name)
+        rng = np.random.default_rng(seed)
+        num_mols = 3
+        for i, mol in enumerate(rng.choice(mols, replace=False, size=num_mols)):
+            if i == num_mols - 1:
+                # One mol should not have an experimental field
+                mol.ClearProp(config["experimental_field"])
+            writer.write(mol)
+
+        writer.close()
 
         def verify_run(edges: Sequence[dict], output_dir: Path):
             assert output_dir.is_dir()
+            leg_names = ["vacuum", "solvent", "complex"]
             for edge in edges:
                 mol_a = edge["mol_a"]
                 mol_b = edge["mol_b"]
@@ -135,7 +144,7 @@ def test_run_rbfe_graph_local(
 
                 assert Forcefield.load_from_file(edge_dir / "ff.py") is not None
 
-                for leg in ["vacuum", "solvent", "complex"]:
+                for leg in leg_names:
                     leg_dir = edge_dir / leg
                     assert leg_dir.is_dir()
                     assert (leg_dir / "results.npz").is_file()
@@ -173,6 +182,36 @@ def test_run_rbfe_graph_local(
                     assert 2 <= results["n_windows"] <= config["n_windows"]
                     assert isinstance(results["overlaps"], np.ndarray)
                     assert all(isinstance(overlap, float) for overlap in results["overlaps"])
+            assert (output_dir / "dg_results.csv").is_file()
+            dg_rows = list(DictReader(open(output_dir / "dg_results.csv")))
+            expected_dg_keys = {"mol", "smiles", "pred_dg (kcal/mol)", "pred_dg_err (kcal/mol)", "exp_dg (kcal/mol)"}
+            for row in dg_rows:
+                assert set(row.keys()) == expected_dg_keys
+                assert len(row["mol"]) > 0
+                assert len(row["smiles"]) > 0
+                exp_dg = row["exp_dg (kcal/mol)"]
+                if exp_dg != "":
+                    assert np.isfinite(float(exp_dg))
+
+            assert (output_dir / "ddg_results.csv").is_file()
+            ddg_rows = list(DictReader(open(output_dir / "ddg_results.csv")))
+            expected_ddg_keys = {
+                "mol_a",
+                "mol_b",
+                "pred_ddg (kcal/mol)",
+                "pred_ddg_err (kcal/mol)",
+                "exp_ddg (kcal/mol)",
+            }
+            for leg in leg_names:
+                expected_ddg_keys.add(f"{leg}_pred_dg (kcal/mol)")
+                expected_ddg_keys.add(f"{leg}_pred_dg_err (kcal/mol)")
+            for row in ddg_rows:
+                assert set(row.keys()) == expected_ddg_keys
+                assert len(row["mol_a"]) > 0
+                assert len(row["mol_b"]) > 0
+                exp_ddg = row["exp_ddg (kcal/mol)"]
+                if exp_ddg != "":
+                    assert np.isfinite(float(exp_ddg))
 
         with NamedTemporaryFile(suffix=".json") as temp:
             # Build a graph
@@ -184,6 +223,7 @@ def test_run_rbfe_graph_local(
                 assert all(isinstance(edge, dict) for edge in edges)
                 for expected_key in ["mol_a", "mol_b", "core"]:
                     assert all(expected_key in edge for edge in edges)
+            config["sdf_path"] = temp_mols.name
             config["graph_json"] = temp.name
             proc = run_example("run_rbfe_graph.py", get_cli_args(config))
             assert proc.returncode == 0
@@ -328,19 +368,19 @@ def test_run_rbfe_legs(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         "vacuum": (
-            "c88fcd6df806b1bc020d93bfadaca7b38243407668894775be98383efab310d6",
+            "fa3fafbda47b2e21ba3d80d07d2aff41d59ade3a3b30cbaa153364777185283b",
             "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
-            "016af8696f58e58daf3135e87fddc3d0630b5cfc409bb10c649a1cecc6630bb2",
+            "7f84f079fd7829941989dfe757df77bc28bb0f634147879720dc556881dd4195",
         ),
         "solvent": (
-            "021016fff390b7d809cd823fcd6ad937b31b31e2f8696b5e6bd9538b5bfbb1fb",
-            "7418a19e501f5e16afd594fa20e0987e78c4a84d71bc5e27239d9fc1c2bad030",
-            "6282b7176c07507a33d49722a0231424e03dac2214c93872761d082c72033adc",
+            "009ca0fb958b522cc2c944d2a39cf77973a4bfa8bcfa9358b9d4d1c8bee02806",
+            "a839526092dce8883e246ba43bde84d644d12c04dddbde935e90c3c6cd906563",
+            "e0ed87de3b6f4040999bbe2a19313b35e0afffc4a1addfba72ab61bdce80546c",
         ),
         "complex": (
-            "5d84c259f99fb7ce5c00cea37aa1631343ee6ec5177b3d8b98e918da40bdaaed",
-            "c3155850324a1e35e9ee22afc26ac6ab91d7fdefe3493c804257fa3bf4b3f8e8",
-            "0a77feb5d5ab00ba97527687f1f5225757d4d1494c80f611e0a78e0ec977cdb3",
+            "5ad91b50eca1048fdaac537bae4576564106c1b2e5d7a6d37727677a1fcfda39",
+            "b6634c8f3bb6f6b07bc8b3b69f7862138979619e340b2d2903298e230643081a",
+            "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -356,6 +396,9 @@ def test_run_rbfe_legs(
             n_windows=n_windows,
             forcefield=DEFAULT_FF,
             output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_{mol_a}_{mol_b}_{leg}_{seed}",
+            force_overwrite=None,  # Force overwrite any existing data
+            experimental_field="IC50[uM](SPA)",
+            experimental_units="uM",
         )
 
         def verify_run(output_dir: Path):
@@ -510,24 +553,24 @@ def test_run_rbfe_legs_local(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         ("solvent", 400): (
-            "5f52d070da344b75acfff8226f36a100a527ec1fceb5fb38327534907ce2bf59",
-            "0f12df7037533d831096b5181384d460b5352318cfd9ef75f4df291c81827b6a",
-            "0124c318b3816dcbc9806f379cd6e0b76b121b67c1f513b98a6b318fc9c76892",
+            "e9850fe856beb174c3645ed7f3a92ac3658e9db1a41e7af8570fb06a2d036bd5",
+            "041c105260026bf390c184eb8bb974aab76703a6f6e1891ddc1ffbc66c758053",
+            "d48741d0423055736f60e228debc3e6cfee1b9da5d67b9dde272dc3d8dd2447d",
         ),
         ("complex", 400): (
-            "49284c33a9a2e142646e35aca622673fe8199704f2175f04157c6de7931f8509",
-            "3ac81481973e36836f81c9c4b9cc716425b0f89e05921b6c5e9da3afe35570a4",
-            "123c7200fef520551c5bdecd958f66bbb2a5b2ad876e298f32b05b14b42055c3",
+            "eaa694622390618e562021b15720103b583bd30a60722fbc26c0ee6a699bc623",
+            "a07bccd5d85e44aaf694437674966c590480b7eeb010d19201bfcb3ca9b76173",
+            "ccf5b9d8ed5ec7b5ff34d71074f631ee42250d713c91e0fe8c9e526eddec86f2",
         ),
         ("solvent", 390): (
-            "6c8a58092cdf826c5207000b8c8a7f15e6cd6dfbf5bc6516d1955842c1c4e18b",
-            "873c9be5968d389be2bc0e3a91f45a1f5fe578cef10cd4217165aa4899b79e6c",
-            "2ad56b8ddc1f1bdacef06d94c01cdf2ed1d1bbcbdcd612b1706458853d527818",
+            "0df396aac058bdc2b7313bef9cc6a6d3b8075dba4779176360ca75ec2092f90f",
+            "072b72fb884d0f00de3085ecc628df6d42916fb62d42b679bcd9683411a1779b",
+            "6b3e0281f4d5ebe4abe7d69eddc27d7f64dcd97f0c2c3282f8e77f2b952515a8",
         ),
         ("complex", 390): (
-            "1682206575ce0aa72c424bc4f31e807c23b1ebe35a0f243a7f78530dfbf0ee63",
-            "29d0be040935381e28b5582a5bbd04553d44d51d1d7698a4dbb893d5756434c5",
-            "f1dbb6c5625183be643a16199535faa69c82298dacf38a9af9ed307afca78de5",
+            "35f1c8e44fb80b96964561f3baf92a53768c02c19afde6a8f1de2694bdcbf23a",
+            "9e1185b1111d125394fbcd32ee6a16a9da18542191fa7681ae9b615ffd5c90c4",
+            "f7709fa4c691ca730a1200e5cfced5db2e275954ed97858928b6918affaf7d6a",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -545,6 +588,9 @@ def test_run_rbfe_legs_local(
             output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}_{local_steps}",
             local_md_steps=local_steps,
             local_md_radius=2.0,
+            force_overwrite=None,  # Force overwrite any existing data
+            experimental_field="IC50[uM](SPA)",
+            experimental_units="uM",
         )
 
         def verify_run(output_dir: Path):
@@ -557,6 +603,7 @@ def test_run_rbfe_legs_local(
             assert (output_dir / "atom_mapping.svg").is_file()
             assert (output_dir / "core.pkl").is_file()
             assert (output_dir / "ff.py").is_file()
+            assert output_dir / "ddg_results.csv"
 
             assert Forcefield.load_from_file(output_dir / "ff.py") is not None
 

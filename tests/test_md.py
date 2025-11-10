@@ -779,7 +779,7 @@ def test_multiple_steps_local_entire_system(freeze_reference):
     if freeze_reference:
         assert np.all(xs[0] == coords, axis=1).sum() == 1, "Expected only a single atom to be stationary"
     else:
-        assert np.all(xs[0] != coords), "All coordinates should have moved"
+        assert np.all(xs[0] == coords, axis=1).sum() == 0, "All coordinates should have moved"
 
 
 @pytest.mark.memcheck

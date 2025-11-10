@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
 from dataclasses import replace
 
 import numpy as np
@@ -34,7 +35,15 @@ from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 
 
 @pytest.mark.memcheck
-def test_barostat_validation():
+@pytest.mark.parametrize(
+    "klass",
+    [
+        # Only test float32 to avoid additional conversion
+        custom_ops.MonteCarloBarostat_f32,
+        custom_ops.AnisotropicMonteCarloBarostat_f32,
+    ],
+)
+def test_barostat_validation(klass):
     temperature = DEFAULT_TEMP  # kelvin
     pressure = DEFAULT_PRESSURE  # bar
     barostat_interval = 3  # step count
@@ -55,13 +64,11 @@ def test_barostat_validation():
 
     # Invalid interval
     with pytest.raises(RuntimeError, match="interval must be greater than 0"):
-        custom_ops.MonteCarloBarostat_f32(
-            coords.shape[0], pressure, temperature, [[0, 1]], -1, u_impls, seed, True, 0.0
-        )
+        klass(coords.shape[0], pressure, temperature, [[0, 1]], -1, u_impls, seed, True, 0.0)
 
     # Atom index over N
     with pytest.raises(RuntimeError, match="Grouped indices must be between 0 and N"):
-        custom_ops.MonteCarloBarostat_f32(
+        klass(
             coords.shape[0],
             pressure,
             temperature,
@@ -75,15 +82,11 @@ def test_barostat_validation():
 
     # Atom index < 0
     with pytest.raises(RuntimeError, match="Grouped indices must be between 0 and N"):
-        custom_ops.MonteCarloBarostat_f32(
-            coords.shape[0], pressure, temperature, [[-1, 0]], barostat_interval, u_impls, seed, True, 0.0
-        )
+        klass(coords.shape[0], pressure, temperature, [[-1, 0]], barostat_interval, u_impls, seed, True, 0.0)
 
     # Atom index in two groups
     with pytest.raises(RuntimeError, match="All grouped indices must be unique"):
-        custom_ops.MonteCarloBarostat_f32(
-            coords.shape[0], pressure, temperature, [[0, 1], [1, 2]], barostat_interval, u_impls, seed, True, 0.0
-        )
+        klass(coords.shape[0], pressure, temperature, [[0, 1], [1, 2]], barostat_interval, u_impls, seed, True, 0.0)
 
 
 @pytest.mark.memcheck
@@ -262,13 +265,14 @@ def test_barostat_partial_group_idxs():
 @pytest.mark.parametrize(
     "box_width, iterations",
     [
-        pytest.param(3.0, 20, marks=pytest.mark.memcheck),
+        pytest.param(3.0, 30, marks=pytest.mark.memcheck),
         # fyork: This test only fails 50-50 times. It tests a race condition in which the coordinates could be corrupted.
         # Needs to be a large system to trigger the failure.
         (10.0, 1000),
     ],
 )
-def test_barostat_is_deterministic(box_width, iterations):
+@pytest.mark.parametrize("klass", [custom_ops.MonteCarloBarostat_f32, custom_ops.AnisotropicMonteCarloBarostat_f32])
+def test_barostat_is_deterministic(box_width, iterations, klass):
     """Verify that the barostat results in the same box size shift after a fixed number of steps
     This is important to debugging as well as providing the ability to replicate
     simulations
@@ -310,9 +314,7 @@ def test_barostat_is_deterministic(box_width, iterations):
 
     v_0 = sample_velocities(masses, temperature, seed)
 
-    baro = custom_ops.MonteCarloBarostat_f32(
-        coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
-    )
+    baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
 
     ctxt = custom_ops.Context_f32(
         coords.astype(np.float32),
@@ -327,9 +329,7 @@ def test_barostat_is_deterministic(box_width, iterations):
     # Verify that the volume of the box has changed
     assert compute_box_volume(atm_box) != compute_box_volume(box)
 
-    baro = custom_ops.MonteCarloBarostat_f32(
-        coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
-    )
+    baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
     ctxt = custom_ops.Context_f32(
         coords.astype(np.float32),
         v_0.astype(np.float32),
@@ -404,7 +404,14 @@ def test_barostat_varying_pressure():
 
 
 # test that barostat only proposes properly re-centered coordinates
-def test_barostat_recentering_upon_acceptance():
+@pytest.mark.parametrize(
+    "klass",
+    [
+        custom_ops.MonteCarloBarostat_f32,
+        custom_ops.AnisotropicMonteCarloBarostat_f32,
+    ],
+)
+def test_barostat_recentering_upon_acceptance(klass):
     lam = 1.0
     temperature = DEFAULT_TEMP
     pressure = DEFAULT_PRESSURE
@@ -440,9 +447,7 @@ def test_barostat_recentering_upon_acceptance():
 
     v_0 = sample_velocities(masses, temperature, seed)
 
-    baro = custom_ops.MonteCarloBarostat_f32(
-        coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
-    )
+    baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
     ctxt = custom_ops.Context_f32(
         coords.astype(np.float32),
         v_0.astype(np.float32),
@@ -477,7 +482,8 @@ def test_barostat_recentering_upon_acceptance():
     assert num_accepted > 0
 
 
-def test_molecular_ideal_gas():
+@pytest.mark.parametrize("klass", [custom_ops.MonteCarloBarostat_f32, custom_ops.AnisotropicMonteCarloBarostat_f32])
+def test_molecular_ideal_gas(klass):
     """
 
 
@@ -490,7 +496,7 @@ def test_molecular_ideal_gas():
     # simulation parameters
     timestep = 1.5e-3
     collision_rate = 1.0
-    n_moves = 10000
+    n_moves = 100_000
     barostat_interval = 5
     seed = 2021
 
@@ -562,7 +568,7 @@ def test_molecular_ideal_gas():
         new_coords = rescaler.scale_centroids(coords, initial_center, length_scale)
         new_box = complex_box * length_scale
 
-        baro = custom_ops.MonteCarloBarostat_f32(
+        baro = klass(
             new_coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
         )
 
@@ -574,12 +580,8 @@ def test_molecular_ideal_gas():
             u_impls,
             movers=[baro],
         )
-        vols = []
-        for move in range(n_moves // barostat_interval):
-            ctxt.multiple_steps(barostat_interval)
-            new_box = ctxt.get_box()
-            volume = np.linalg.det(new_box)
-            vols.append(volume)
+        _, boxes = ctxt.multiple_steps(n_moves, barostat_interval)
+        vols = [compute_box_volume(box) for box in boxes]
         volume_trajs.append(vols)
 
     equil_time = len(volume_trajs[0]) // 2  # TODO: don't hard-code this?
@@ -631,13 +633,14 @@ def test_get_group_indices():
     ref_idxs = [(0, 1, 2, 3), (4,)]
     assert_group_idxs_are_equal(ref_idxs, test_idxs)
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError, match="Group 0 is not constructed of consecutive atom indices"):
         # num_atoms <  an atom's index in bond_idxs
         get_group_indices([[0, 3]], num_atoms=3)
 
 
 @pytest.mark.memcheck
-def test_barostat_scaling_behavior():
+@pytest.mark.parametrize("klass", [custom_ops.MonteCarloBarostat_f32, custom_ops.AnisotropicMonteCarloBarostat_f32])
+def test_barostat_scaling_behavior(klass):
     """Verify that it is possible to retrieve and set the volume scaling factor. Also check that the adaptive behavior of the scaling can be disabled"""
     temperature = DEFAULT_TEMP
     timestep = 1.5e-3
@@ -676,9 +679,7 @@ def test_barostat_scaling_behavior():
 
     v_0 = sample_velocities(masses, temperature, seed)
 
-    baro = custom_ops.MonteCarloBarostat_f32(
-        coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
-    )
+    baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
     # Initial volume scaling is 0
     assert baro.get_volume_scale_factor() == 0.0
     assert baro.get_adaptive_scaling()
@@ -723,7 +724,7 @@ def test_barostat_scaling_behavior():
     assert baro.get_volume_scale_factor() != 0.0
 
     # Check that the adaptive_scaling_enabled, initial_volume_scale_factor constructor arguments works as expected
-    baro = custom_ops.MonteCarloBarostat_f32(
+    baro = klass(
         coords.shape[0],
         pressure,
         temperature,
@@ -736,3 +737,100 @@ def test_barostat_scaling_behavior():
     )
     assert not baro.get_adaptive_scaling()
     assert baro.get_volume_scale_factor() == np.float32(1.23)
+
+
+@pytest.mark.parametrize("scale_x, scale_y, scale_z", itertools.product([False, True], repeat=3))
+def test_anisotropic_barostat(scale_x, scale_y, scale_z):
+    """Verify anisotropic barostat only scales a subset of the dimensions"""
+    iterations = 50
+    temperature = DEFAULT_TEMP
+    timestep = 1.5e-3
+    barostat_interval = 2
+    collision_rate = 1.0
+    seed = 2021
+    np.random.seed(seed)
+
+    pressure = DEFAULT_PRESSURE
+
+    mol_a, _, _ = get_hif2a_ligand_pair_single_topology()
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(
+        mol_a, ff, lamb=0.0, minimize_energy=False
+    )
+
+    # get list of molecules for barostat by looking at bond table
+    harmonic_bond_potential = get_potential_by_type(unbound_potentials, HarmonicBond)
+    bond_list = get_bond_list(harmonic_bond_potential)
+    group_indices = get_group_indices(bond_list, len(masses))
+
+    u_impls = []
+    for params, unbound_pot in zip(sys_params, unbound_potentials):
+        bp = unbound_pot.bind(params)
+        bp_impl = bp.to_gpu(precision=np.float32).bound_impl
+        u_impls.append(bp_impl)
+
+    integrator = LangevinIntegrator(
+        temperature,
+        timestep,
+        collision_rate,
+        masses,
+        seed,
+    )
+
+    v_0 = sample_velocities(masses, temperature, seed)
+
+    if not (scale_x or scale_y or scale_z):
+        with pytest.raises(RuntimeError, match="must scale at least one dimension"):
+            custom_ops.AnisotropicMonteCarloBarostat_f32(
+                coords.shape[0],
+                pressure,
+                temperature,
+                group_indices,
+                barostat_interval,
+                u_impls,
+                seed,
+                True,
+                0.0,
+                scale_x,
+                scale_y,
+                scale_z,
+            )
+        return
+
+    # Reduce the default scaling factor
+    baro = custom_ops.AnisotropicMonteCarloBarostat_f32(
+        coords.shape[0],
+        pressure,
+        temperature,
+        group_indices,
+        barostat_interval,
+        u_impls,
+        seed,
+        True,
+        0.0011,
+        scale_x,
+        scale_y,
+        scale_z,
+    )
+    assert baro.get_adaptive_scaling()
+
+    ctxt = custom_ops.Context_f32(
+        coords.astype(np.float32),
+        v_0.astype(np.float32),
+        box.astype(np.float32),
+        integrator.impl(),
+        u_impls,
+        movers=[baro],
+    )
+    xs, boxes = ctxt.multiple_steps(barostat_interval * iterations, barostat_interval)
+
+    adjusted_dims = np.array([scale_x, scale_y, scale_z])
+
+    # Verify that all of the boxes are only changing in one dimension at a time
+    assert all([(np.diag(box) != np.diag(new_box)).sum() <= 1 for box, new_box in zip(boxes, boxes[1:])])
+
+    assert np.all(np.diag(box)[adjusted_dims] != np.diag(boxes[-1])[adjusted_dims])
+    # Verify that the volume scaling is non-zero
+    scaling = baro.get_volume_scale_factor()
+    assert scaling > 0

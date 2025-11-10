@@ -21,6 +21,7 @@
 #include <set>
 
 #include "all_atom_energies.hpp"
+#include "anisotropic_barostat.hpp"
 #include "barostat.hpp"
 #include "bd_exchange_move.hpp"
 #include "bound_potential.hpp"
@@ -228,8 +229,6 @@ void declare_neighborlist(py::module &m, const char *typestr) {
             nblist.set_row_idxs_and_col_idxs(row_idxs, col_idxs);
           },
           py::arg("row_idxs"), py::arg("col_idxs"))
-      .def("set_compute_upper_triangular",
-           &Neighborlist<RealType>::set_compute_upper_triangular)
       .def("reset_row_idxs", &Neighborlist<RealType>::reset_row_idxs)
       .def("get_tile_ixn_count", &Neighborlist<RealType>::num_tile_ixns)
       .def("get_max_ixn_count", &Neighborlist<RealType>::max_ixn_count)
@@ -2929,6 +2928,35 @@ void declare_barostat(py::module &m, const char *typestr) {
 }
 
 template <typename RealType>
+void declare_anisotropic_barostat(py::module &m, const char *typestr) {
+
+  using Class = AnisotropicMonteCarloBarostat<RealType>;
+  std::string pyclass_name =
+      std::string("AnisotropicMonteCarloBarostat_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>, MonteCarloBarostat<RealType>,
+             Mover<RealType>>(m, pyclass_name.c_str(), py::buffer_protocol(),
+                              py::dynamic_attr())
+      .def(py::init(
+               [](const int N, const RealType pressure,
+                  const RealType temperature,
+                  std::vector<std::vector<int>> &group_idxs, const int interval,
+                  std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
+                  const int seed, const bool adaptive_scaling_enabled,
+                  const RealType initial_volume_scale_factor,
+                  const bool scale_x, const bool scale_y, const bool scale_z) {
+                 return new Class(N, pressure, temperature, group_idxs,
+                                  interval, bps, seed, adaptive_scaling_enabled,
+                                  initial_volume_scale_factor, scale_x, scale_y,
+                                  scale_z);
+               }),
+           py::arg("N"), py::arg("pressure"), py::arg("temperature"),
+           py::arg("group_idxs"), py::arg("interval"), py::arg("bps"),
+           py::arg("seed"), py::arg("adaptive_scaling_enabled"),
+           py::arg("initial_volume_scale_factor"), py::arg("scale_x") = true,
+           py::arg("scale_y") = true, py::arg("scale_z") = true);
+}
+
+template <typename RealType>
 void declare_summed_potential(py::module &m, const char *typestr) {
 
   using Class = SummedPotential<RealType>;
@@ -3419,6 +3447,9 @@ PYBIND11_MODULE(custom_ops, m) {
   declare_mover<float>(m, "f32");
   declare_barostat<double>(m, "f64");
   declare_barostat<float>(m, "f32");
+
+  declare_anisotropic_barostat<double>(m, "f64");
+  declare_anisotropic_barostat<float>(m, "f32");
 
   declare_integrator<double>(m, "f64");
   declare_integrator<float>(m, "f32");

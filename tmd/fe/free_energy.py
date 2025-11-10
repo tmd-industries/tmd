@@ -67,6 +67,11 @@ WATER_SAMPLER_MOVERS = (
     custom_ops.TIBDExchangeMove_f64,
 )
 
+BAROSTAT_MOVERS = (
+    custom_ops.MonteCarloBarostat_f32,
+    custom_ops.MonteCarloBarostat_f64,
+)
+
 
 @dataclass(frozen=True)
 class RESTParams:
@@ -1022,18 +1027,37 @@ def run_sims_bisection(
     get_initial_state = cache(make_initial_state)
     rng = np.random.default_rng(md_params.seed)
 
+    # Set up a single context and potentisl for generating the BarResult objects
+    context = get_context(get_initial_state(lambdas[0]), md_params=md_params)
+    bound_potentials = context.get_potentials()
+    assert len(bound_potentials) == len(get_initial_state(lambdas[0]).potentials)
+    unbound_impls = [bp.get_potential() for bp in bound_potentials]
+
     @cache
     def get_samples(lamb: float) -> Trajectory:
         initial_state = get_initial_state(lamb)
+        context.set_x_t(initial_state.x0)
+        context.set_v_t(initial_state.v0)
+        context.set_box(initial_state.box0)
+        for bp, state_bp in zip(bound_potentials, initial_state.potentials):
+            bp.set_params(state_bp.params)  # type: ignore
+        for mover in context.get_movers():
+            mover.set_step(0)
+            if isinstance(mover, WATER_SAMPLER_MOVERS):
+                mover.set_params(get_water_sampler_params(initial_state))
+            elif isinstance(mover, BAROSTAT_MOVERS):
+                assert initial_state.barostat is not None
+                # If initial_volume_scale factor is None, set to 0.0. Which indicates 1% of box volume.
+                mover.set_volume_scale_factor(initial_state.barostat.initial_volume_scale_factor or 0.0)
         # Update the seed of the MDParams to ensure Local MD doesn't select the same sequence of reference atoms
-        traj = sample(
-            initial_state, replace(md_params, seed=rng.integers(np.iinfo(np.int32).max)), max_buffer_frames=100
+        traj = sample_with_context(
+            context,
+            replace(md_params, seed=rng.integers(np.iinfo(np.int32).max)),
+            temperature,
+            initial_state.ligand_idxs,
+            max_buffer_frames=100,
         )
         return traj
-
-    # Set up a single set of unbound potentials for generating the BarResult objects
-    potentials_0 = get_initial_state(lambdas[0]).potentials
-    unbound_impls = [p.potential.to_gpu(np.float32).unbound_impl for p in potentials_0]
 
     @cache
     def get_bar_result(lamb1: float, lamb2: float) -> BarResult:

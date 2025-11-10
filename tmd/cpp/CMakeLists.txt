@@ -122,6 +122,7 @@ pybind11_add_module(${LIBRARY_NAME} SHARED NO_EXTRAS
   src/verlet_integrator.cu
   src/context.cu
   src/barostat.cu
+  src/anisotropic_barostat.cu
   src/rotations.cu
   src/hilbert_sort.cu
   src/local_md_potentials.cu

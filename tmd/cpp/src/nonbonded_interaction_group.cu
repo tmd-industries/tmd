@@ -607,8 +607,7 @@ void NonbondedInteractionGroup<RealType>::validate_idxs(
       get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs);
 
   if (new_ixn_type != this->interaction_type_) {
-    throw std::runtime_error(
-        "switching interaction types is probably not what you want");
+    throw std::runtime_error("switching interaction types is not supported");
   }
 
   return;

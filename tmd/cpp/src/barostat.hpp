@@ -29,18 +29,18 @@ namespace tmd {
 template <typename RealType> class MonteCarloBarostat : public Mover<RealType> {
 
 public:
-  MonteCarloBarostat(const int N,
-                     const RealType pressure,    // in bar
-                     const RealType temperature, // in kelvin
-                     std::vector<std::vector<int>> group_idxs,
-                     const int interval,
-                     std::vector<std::shared_ptr<BoundPotential<RealType>>> bps,
-                     const int seed, const bool adapt_volume_scale_factor,
-                     const RealType initial_volume_scale_factor);
+  MonteCarloBarostat(
+      const int N,
+      const RealType pressure,    // in bar
+      const RealType temperature, // in kelvin
+      const std::vector<std::vector<int>> &group_idxs, const int interval,
+      const std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
+      const int seed, const bool adapt_volume_scale_factor,
+      const RealType initial_volume_scale_factor);
 
   ~MonteCarloBarostat();
 
-  // inplace_move() may modify d_x and d_box
+  // move() may modify d_x and d_box
   virtual void move(const int N, RealType *d_x, RealType *d_box,
                     cudaStream_t stream) override;
 
@@ -54,19 +54,24 @@ public:
 
   bool get_adaptive_scaling();
 
-private:
+protected:
   const int N_;
+  const int num_mols_;
 
   bool adaptive_scaling_enabled_; // Whether or no to adapt d_volume_scale_
 
   void reset_counters();
+
+  virtual void propose_move(const int N, const RealType *d_x,
+                            const RealType *d_box, cudaStream_t stream);
+  virtual void decide_move(const int N, RealType *d_x, RealType *d_box,
+                           cudaStream_t stream);
 
   std::vector<std::shared_ptr<BoundPotential<RealType>>> bps_;
 
   RealType pressure_;
   const RealType temperature_;
   const int seed_;
-  const std::vector<std::vector<int>> group_idxs_;
 
   // device rng
   curandState_t *d_rand_state_;         // [1]

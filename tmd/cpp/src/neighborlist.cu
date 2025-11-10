@@ -239,11 +239,6 @@ void Neighborlist<RealType>::compute_block_bounds_device(
 };
 
 template <typename RealType>
-void Neighborlist<RealType>::set_compute_upper_triangular(bool val) {
-  compute_upper_triangular_ = val;
-}
-
-template <typename RealType>
 void Neighborlist<RealType>::set_row_idxs(std::vector<unsigned int> row_idxs) {
   std::set<unsigned int> unique_row_idxs(row_idxs.begin(), row_idxs.end());
   std::vector<unsigned int> col_idxs =
@@ -415,11 +410,16 @@ int Neighborlist<RealType>::num_row_blocks() const {
 // interactions, and differs by a factor of TILE_SIZE
 template <typename RealType> int Neighborlist<RealType>::max_ixn_count() const {
   // The maximum number of tile-atom interactions, equal to # tile-tile
-  // interactions multiplied by TILE_SIZE (typically 32). Use the maximum value
+  // interactions multiplied by TILE_SIZE (typically 32).
+
+  // If computing upper triangular (typical MD), use the maximum value
   // of N to compute the size of the upper triangular matrix to support any set
   // of row indices.
+  // If computing the dense matrix, need the full NxN buffer
   const int n_blocks = ceil_divide(max_size_, TILE_SIZE);
-  int max_tile_tile_interactions = (n_blocks * (n_blocks + 1)) / 2;
+  int max_tile_tile_interactions = this->compute_upper_triangular()
+                                       ? (n_blocks * (n_blocks + 1)) / 2
+                                       : n_blocks * n_blocks;
   // Each tile-tile interaction can have TILE_SIZE tile-atom interactions
   return max_tile_tile_interactions * TILE_SIZE;
 }

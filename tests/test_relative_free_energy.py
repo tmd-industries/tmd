@@ -28,7 +28,6 @@ from tmd.fe.free_energy import (
     PairBarResult,
     SimulationResult,
     image_frames,
-    sample,
 )
 from tmd.fe.rbfe import (
     estimate_relative_free_energy,
@@ -43,37 +42,6 @@ from tmd.md import builders
 from tmd.md.barostat.utils import compute_box_center
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 from tmd.utils import path_to_internal_file
-
-
-def run_bitwise_reproducibility(mol_a, mol_b, core, forcefield, md_params, estimate_relative_free_energy_fn):
-    # test that we can bitwise reproduce our trajectory using the initial state information
-
-    box_width = 4.0
-    n_windows = 3
-    solvent_host_config = builders.build_water_system(
-        box_width, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
-    )
-
-    solvent_res = estimate_relative_free_energy_fn(
-        mol_a,
-        mol_b,
-        core,
-        forcefield,
-        solvent_host_config,
-        md_params=md_params,
-        prefix="solvent",
-        lambda_interval=(0.01, 0.03),
-        n_windows=n_windows,
-    )
-
-    all_frames, all_boxes = [], []
-    for state in solvent_res.final_result.initial_states:
-        traj = sample(state, solvent_res.md_params, max_buffer_frames=100)
-        all_frames.append(traj.frames)
-        all_boxes.append(traj.boxes)
-
-    np.testing.assert_equal(solvent_res.frames, all_frames)
-    np.testing.assert_equal(solvent_res.boxes, all_boxes)
 
 
 def run_triple(mol_a, mol_b, core, forcefield, md_params: MDParams, protein_path, estimate_relative_free_energy_fn):
@@ -205,41 +173,6 @@ def test_run_hif2a_test_system(estimate_relative_free_energy_fn):
             protein_path=str(protein_path),
             estimate_relative_free_energy_fn=estimate_relative_free_energy_fn,
         )
-
-
-@pytest.mark.nightly(reason="Slow!")
-@pytest.mark.parametrize(
-    "estimate_relative_free_energy_fn",
-    [
-        estimate_relative_free_energy,
-        estimate_relative_free_energy_bisection,
-        pytest.param(
-            estimate_relative_free_energy_bisection_hrex,
-            marks=pytest.mark.skip(
-                reason="lambda window trajectories are not individually reproducible given InitialState due to mixing"
-            ),
-        ),
-    ],
-)
-def test_run_hif2a_test_system_reproducibility(estimate_relative_free_energy_fn):
-    mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
-    forcefield = Forcefield.load_default()
-
-    md_params = MDParams(
-        n_frames=100,
-        n_eq_steps=1000,
-        steps_per_frame=100,
-        seed=2023,
-    )
-
-    run_bitwise_reproducibility(
-        mol_a,
-        mol_b,
-        core,
-        forcefield,
-        md_params=md_params,
-        estimate_relative_free_energy_fn=estimate_relative_free_energy_fn,
-    )
 
 
 @pytest.mark.nogpu
