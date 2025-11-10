@@ -29,7 +29,7 @@ private:
   int NC_;             // Number of atoms in column, N_ by default
   int NR_;             // Number of atoms in row, N_ by default
 
-  bool compute_upper_triangular_;
+  const bool compute_upper_triangular_;
 
   RealType *d_row_block_bounds_ctr_;
   RealType *d_row_block_bounds_ext_;
@@ -51,8 +51,6 @@ public:
   ~Neighborlist();
 
   void set_row_idxs(std::vector<unsigned int> idxs);
-
-  void set_compute_upper_triangular(bool val);
 
   void reset_row_idxs();
 

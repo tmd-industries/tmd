@@ -216,8 +216,6 @@ void declare_neighborlist(py::module &m, const char *typestr) {
             nblist.set_row_idxs_and_col_idxs(row_idxs, col_idxs);
           },
           py::arg("row_idxs"), py::arg("col_idxs"))
-      .def("set_compute_upper_triangular",
-           &Neighborlist<RealType>::set_compute_upper_triangular)
       .def("reset_row_idxs", &Neighborlist<RealType>::reset_row_idxs)
       .def("get_tile_ixn_count", &Neighborlist<RealType>::num_tile_ixns)
       .def("get_max_ixn_count", &Neighborlist<RealType>::max_ixn_count)

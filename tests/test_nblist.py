@@ -405,7 +405,6 @@ def test_neighborlist_on_subset_of_system():
     atom_idxs = atom_idxs.astype(np.uint32)
 
     reference_subset_ixns = build_reference_ixn_list_with_subset(coords, box, cutoff, padding, atom_idxs)
-    reference_complete_ixns = build_reference_ixn_list(coords, box, cutoff, padding)
 
     for nblist in (
         custom_ops.Neighborlist_f32(N, False),
@@ -418,21 +417,13 @@ def test_neighborlist_on_subset_of_system():
             assert len(reference_subset_ixns) == len(test_ixn_list), "Number of blocks with interactions don't agree"
 
             assert_ixn_lists_are_equal(reference_subset_ixns, test_ixn_list)
-        # Verify that you can reset the indices and go back to the regular neighborlist
-        nblist.reset_row_idxs()
-        nblist.set_compute_upper_triangular(True)
-
-        test_ixn_list = nblist.get_nblist(coords, box, cutoff, padding)
-        # compute the sparsity of the tile
-        assert len(reference_complete_ixns) == len(test_ixn_list), "Number of blocks with interactions don't agree"
-
-        assert_ixn_lists_are_equal(reference_complete_ixns, test_ixn_list)
 
 
 @pytest.mark.memcheck
 @pytest.mark.parametrize("block_size", [32])
 @pytest.mark.parametrize("tiles", [2, 10, 100])
-def test_nblist_max_interactions(block_size, tiles):
+@pytest.mark.parametrize("upper_triangular", [False, True])
+def test_nblist_max_interactions(block_size, tiles, upper_triangular):
     """Verify that if all particles in the system interact, that the neighborlist correctly assigns large enough buffers"""
     rng = np.random.default_rng(2023)
     cutoff = 9.9  # Set a large cutoff, so everything overlaps
@@ -441,7 +432,7 @@ def test_nblist_max_interactions(block_size, tiles):
     coords = rng.random(size=(block_size * tiles, 3))
     box = np.eye(3) * 100.0
 
-    nblist = custom_ops.Neighborlist_f32(coords.shape[0], True)
+    nblist = custom_ops.Neighborlist_f32(coords.shape[0], upper_triangular)
     max_ixn_count = nblist.get_max_ixn_count()
     test_ixn_list = nblist.get_nblist(coords, box, cutoff, padding)
     assert np.mean(compute_tile_densities(nblist, coords, box, cutoff, padding)) == 1.0
