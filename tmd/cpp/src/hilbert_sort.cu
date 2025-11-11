@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,8 +26,8 @@
 namespace tmd {
 
 template <typename RealType>
-HilbertSort<RealType>::HilbertSort(const int N)
-    : N_(N),
+HilbertSort<RealType>::HilbertSort(const int num_systems, const int N)
+    : num_systems_(num_systems), N_(N),
       d_bin_to_idx_(HILBERT_GRID_DIM * HILBERT_GRID_DIM * HILBERT_GRID_DIM),
       d_sort_keys_in_(N), d_sort_keys_out_(N), d_sort_vals_in_(N),
       d_sort_storage_(0), d_sort_storage_bytes_(0) {
@@ -55,9 +56,10 @@ HilbertSort<RealType>::HilbertSort(const int N)
 
   // estimate size needed to do radix sorting
   // reuse d_sort_keys_in_ rather than constructing a dummy output idxs buffer
-  gpuErrchk(cub::DeviceRadixSort::SortPairs(
+  gpuErrchk(cub::DeviceSegmentedRadixSort::SortPairs(
       nullptr, d_sort_storage_bytes_, d_sort_keys_in_.data,
-      d_sort_keys_out_.data, d_sort_vals_in_.data, d_sort_keys_in_.data, N_));
+      d_sort_keys_out_.data, d_sort_vals_in_.data, d_sort_keys_in_.data,
+      num_items N_));
 
   d_sort_storage_.realloc(d_sort_storage_bytes_);
 }
@@ -78,14 +80,14 @@ void HilbertSort<RealType>::sort_device(
   }
 
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
-  const int B = ceil_divide(N, tpb);
+  const dim3 dimGrid(ceil_divide(N, tpb), num_systems_, 1);
 
-  k_coords_to_kv_gather<RealType><<<B, tpb, 0, stream>>>(
+  k_coords_to_kv_gather<RealType><<<dimGrid, tpb, 0, stream>>>(
       N, d_atom_idxs, d_coords, d_box, d_bin_to_idx_.data, d_sort_keys_in_.data,
       d_sort_vals_in_.data);
   gpuErrchk(cudaPeekAtLastError());
 
-  gpuErrchk(cub::DeviceRadixSort::SortPairs(
+  gpuErrchk(cub::DeviceSegmentedRadixSort::SortPairs(
       d_sort_storage_.data, d_sort_storage_bytes_, d_sort_keys_in_.data,
       d_sort_keys_out_.data, d_sort_vals_in_.data, d_output_perm, N,
       0,                                 // begin bit

@@ -46,6 +46,7 @@ class NonbondedInteractionGroup : public Potential<RealType> {
                                  __int128 *__restrict__ u_buffer);
 
 private:
+  const int num_systems_;
   const int
       N_; // total number of atoms, i.e. first dimension of input coords, params
   int NR_; // number of row atoms

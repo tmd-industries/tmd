@@ -89,14 +89,15 @@ bool is_upper_triangular(NonbondedInteractionType ixn_type) {
 
 template <typename RealType>
 NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
-    const int N, const std::vector<int> &row_atom_idxs,
+    const int num_systems, const int N, const std::vector<int> &row_atom_idxs,
     const std::vector<int> &col_atom_idxs, const RealType beta,
     const RealType cutoff, const bool disable_hilbert_sort,
     const RealType nblist_padding)
-    : N_(N), NR_(row_atom_idxs.size()), NC_(col_atom_idxs.size()),
+    : num_systems_(num_systems), N_(N), NR_(row_atom_idxs.size()),
+      NC_(col_atom_idxs.size()),
       interaction_type_(
           get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs)),
-      compute_col_grads_(true), nrg_accum_(1, MAX_KERNEL_BLOCKS),
+      compute_col_grads_(true), nrg_accum_(num_systems_, MAX_KERNEL_BLOCKS),
       kernel_ptrs_(
           {// enumerate over every possible kernel combination
            // Set threads to 1 if not computing energy to reduced unused shared
@@ -168,7 +169,7 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
                                 1, 1, 1, 1>}),
 
       beta_(beta), cutoff_(cutoff), steps_since_last_sort_(0),
-      nblist_(1, N_, is_upper_triangular(interaction_type_)),
+      nblist_(num_systems_, N_, is_upper_triangular(interaction_type_)),
       nblist_padding_(nblist_padding), hilbert_sort_(nullptr),
       disable_hilbert_(disable_hilbert_sort) {
 
@@ -203,7 +204,7 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
   gpuErrchk(cudaHostGetDevicePointer(&d_rebuild_nblist_, m_rebuild_nblist_, 0));
 
   if (!disable_hilbert_) {
-    this->hilbert_sort_.reset(new HilbertSort<RealType>(N_));
+    this->hilbert_sort_.reset(new HilbertSort<RealType>(num_systems_, N_));
   }
 
   this->set_atom_idxs(row_atom_idxs, col_atom_idxs);
@@ -336,7 +337,12 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   // e. inverse permute the forces, du/dps into the original index.
   // f. u is buffered into a per-particle array, and then reduced.
 
-  assert(batches == 1);
+  if (batches != num_systems_) {
+    throw std::runtime_error("NonbondedInteractionGroup::execute_device():"
+                             "expected batches == num_systems_, got batches=" +
+                             std::to_string(batches) +
+                             ", num_systems_=" + std::to_string(num_systems_));)
+  }
   if (N != N_) {
     throw std::runtime_error("NonbondedInteractionGroup::execute_device(): "
                              "expected N == N_, got N=" +

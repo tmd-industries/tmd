@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +24,7 @@ namespace tmd {
 template <typename RealType> class HilbertSort {
 
 private:
+  const int num_systems_;
   const int N_;
   // used for hilbert sorting
   DeviceBuffer<unsigned int>
@@ -36,8 +38,9 @@ private:
   size_t d_sort_storage_bytes_;
 
 public:
-  // N - number of atoms
-  HilbertSort(const int N);
+  HilbertSort(const int num_systems,
+              const int N // number of atoms
+  );
 
   ~HilbertSort();
 
