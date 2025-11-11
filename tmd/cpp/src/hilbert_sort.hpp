@@ -44,11 +44,11 @@ public:
 
   ~HilbertSort();
 
-  void sort_device(const int N, const unsigned int *d_atom_idxs,
+  void sort_device(const int num_systems, const int N, const unsigned int *d_atom_idxs,
                    const RealType *d_coords, const RealType *d_box,
                    unsigned int *d_output_perm, cudaStream_t stream);
 
-  std::vector<unsigned int> sort_host(const int N, const RealType *h_coords,
+  std::vector<unsigned int> sort_host(const int num_systems, const int N, const RealType *h_coords,
                                       const RealType *h_box);
 };
 

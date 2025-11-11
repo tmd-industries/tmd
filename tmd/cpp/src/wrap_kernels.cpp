@@ -289,16 +289,24 @@ void declare_hilbert_sort(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("HilbertSort_") + typestr;
   py::class_<Class, std::shared_ptr<Class>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const int N) { return new HilbertSort<RealType>(N); }),
-           py::arg("size"))
+      .def(py::init([](const int num_systems, const int N) { return new HilbertSort<RealType>(num_systems, N); }),
+           py::arg("num_systems"), py::arg("size"))
       .def(
           "sort",
           [](HilbertSort<RealType> &sorter,
              const py::array_t<double, py::array::c_style> &coords,
              const py::array_t<double, py::array::c_style> &box)
               -> const py::array_t<uint32_t, py::array::c_style> {
-            const int N = coords.shape()[0];
-            verify_coords_and_box(coords, box);
+
+            int num_systems = 1;
+            int N;
+            if (coords.ndim() == 3) {
+              num_systems = coords.shape()[0];
+              N = coords.shape()[1];
+            } else {
+              verify_coords_and_box(coords, box);
+              N = coords.shape()[0];
+            }
 
             std::vector<RealType> real_coords =
                 py_array_to_vector_with_cast<double, RealType>(coords);
@@ -306,7 +314,7 @@ void declare_hilbert_sort(py::module &m, const char *typestr) {
                 py_array_to_vector_with_cast<double, RealType>(box);
 
             std::vector<unsigned int> sort_perm =
-                sorter.sort_host(N, real_coords.data(), real_box.data());
+                sorter.sort_host(num_systems, N, real_coords.data(), real_box.data());
             py::array_t<uint32_t, py::array::c_style> output_perm(
                 sort_perm.size(), sort_perm.data());
             return output_perm;
@@ -2766,7 +2774,7 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                 }
 
                 return new NonbondedInteractionGroup<RealType>(
-                    N, row_atom_idxs, col_atom_idxs, beta, cutoff,
+                    1, N, row_atom_idxs, col_atom_idxs, beta, cutoff,
                     disable_hilbert_sort, nblist_padding);
               }),
           py::arg("num_atoms"), py::arg("row_atom_idxs_i"), py::arg("beta"),

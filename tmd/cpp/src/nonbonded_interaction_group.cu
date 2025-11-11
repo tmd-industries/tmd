@@ -341,7 +341,7 @@ void NonbondedInteractionGroup<RealType>::execute_device(
     throw std::runtime_error("NonbondedInteractionGroup::execute_device():"
                              "expected batches == num_systems_, got batches=" +
                              std::to_string(batches) +
-                             ", num_systems_=" + std::to_string(num_systems_));)
+                             ", num_systems_=" + std::to_string(num_systems_));
   }
   if (N != N_) {
     throw std::runtime_error("NonbondedInteractionGroup::execute_device(): "

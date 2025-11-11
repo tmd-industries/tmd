@@ -133,7 +133,7 @@ public:
   void set_atom_idxs(const std::vector<int> &row_atom_idxs,
                      const std::vector<int> &col_atom_idxs);
 
-  NonbondedInteractionGroup(const int N, const std::vector<int> &row_atom_idxs,
+  NonbondedInteractionGroup(const int num_systems, const int N, const std::vector<int> &row_atom_idxs,
                             const std::vector<int> &col_atom_idxs,
                             const RealType beta, const RealType cutoff,
                             const bool disable_hilbert_sort = false,
