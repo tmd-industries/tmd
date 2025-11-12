@@ -1,5 +1,4 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,12 +25,11 @@
 namespace tmd {
 
 template <typename RealType>
-HilbertSort<RealType>::HilbertSort(const int num_systems, const int N)
-    : num_systems_(num_systems), N_(N),
+HilbertSort<RealType>::HilbertSort(const int N)
+    : N_(N),
       d_bin_to_idx_(HILBERT_GRID_DIM * HILBERT_GRID_DIM * HILBERT_GRID_DIM),
-      d_sort_keys_in_(num_systems_ * N), d_sort_keys_out_(num_systems_ * N),
-      d_sort_vals_in_(num_systems_ * N), d_sort_storage_(0),
-      d_sort_storage_bytes_(0) {
+      d_sort_keys_in_(N), d_sort_keys_out_(N), d_sort_vals_in_(N),
+      d_sort_storage_(0), d_sort_storage_bytes_(0) {
   // initialize hilbert curve which maps each of the HILBERT_GRID_DIM x
   // HILBERT_GRID_DIM x HILBERT_GRID_DIM cells into an index.
   std::vector<unsigned int> bin_to_idx(HILBERT_GRID_DIM * HILBERT_GRID_DIM *
@@ -68,78 +66,53 @@ template <typename RealType> HilbertSort<RealType>::~HilbertSort(){};
 
 template <typename RealType>
 void HilbertSort<RealType>::sort_device(
-    const int num_systems,
-    const unsigned int *d_system_counts, // [num_systems]
-    const unsigned int *d_atom_idxs,     // [num_systems, N_]
-    const RealType *d_coords,            // [num_systems, N_, 3]
-    const RealType *d_box,               // [num_systems, 3, 3]
-    unsigned int *d_output_perm,         //[num_systems, N_]
-    cudaStream_t stream) {
-  if (num_systems != num_systems_) {
-    throw std::runtime_error("number of systems doesn't match");
+    const int N, const unsigned int *d_atom_idxs, const RealType *d_coords,
+    const RealType *d_box, unsigned int *d_output_perm, cudaStream_t stream) {
+  if (N > N_) {
+    throw std::runtime_error(
+        "number of idxs to sort must be less than or equal to N");
   }
 
-  // TBD: There is probably a more efficient way of doing this. The sorts are
-  // fixed cost even with Local MD or interaction groups
+  if (N == 0) {
+    return;
+  }
 
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
-  const dim3 dimGrid(ceil_divide(N_, tpb), num_systems_, 1);
+  const int B = ceil_divide(N, tpb);
 
-  constexpr unsigned int max_key =
-      HILBERT_GRID_DIM * HILBERT_GRID_DIM * HILBERT_GRID_DIM;
-
-  // Set all of the keys to the max key, these values will be at the tail of the
-  // permutation
-  k_initialize_array<<<ceil_divide(num_systems_ * N_, tpb), tpb, 0, stream>>>(
-      num_systems_ * N_, d_sort_keys_in_.data, max_key);
+  k_coords_to_kv_gather<RealType><<<B, tpb, 0, stream>>>(
+      N, d_atom_idxs, d_coords, d_box, d_bin_to_idx_.data, d_sort_keys_in_.data,
+      d_sort_vals_in_.data);
   gpuErrchk(cudaPeekAtLastError());
 
-  k_coords_to_kv_gather<RealType><<<dimGrid, tpb, 0, stream>>>(
-      num_systems, N_, d_system_counts, d_atom_idxs, d_coords, d_box,
-      d_bin_to_idx_.data, d_sort_keys_in_.data, d_sort_vals_in_.data);
-  gpuErrchk(cudaPeekAtLastError());
-
-  // DeviceSegmentedRadixSort doesn't do quite the task, since the keys have to
-  // be contiguous and the output is not strided
-  for (int i = 0; i < num_systems; i++) {
-    gpuErrchk(cub::DeviceRadixSort::SortPairs(
-        d_sort_storage_.data, d_sort_storage_bytes_,
-        d_sort_keys_in_.data + i * N_, d_sort_keys_out_.data + i * N_,
-        d_sort_vals_in_.data + i * N_, d_output_perm + i * N_, N_,
-        0,                                 // begin bit
-        sizeof(*d_sort_keys_in_.data) * 8, // end bit
-        stream                             // cudaStream
-        ));
-  }
+  gpuErrchk(cub::DeviceRadixSort::SortPairs(
+      d_sort_storage_.data, d_sort_storage_bytes_, d_sort_keys_in_.data,
+      d_sort_keys_out_.data, d_sort_vals_in_.data, d_output_perm, N,
+      0,                                 // begin bit
+      sizeof(*d_sort_keys_in_.data) * 8, // end bit
+      stream                             // cudaStream
+      ));
 }
 
 template <typename RealType>
 std::vector<unsigned int>
-HilbertSort<RealType>::sort_host(const int num_systems, const int N,
-                                 const RealType *h_coords,
+HilbertSort<RealType>::sort_host(const int N, const RealType *h_coords,
                                  const RealType *h_box) {
 
-  std::vector<unsigned int> h_atom_idxs(num_systems * N);
-  for (int i = 0; i < num_systems; i++) {
-    std::iota(h_atom_idxs.begin() + i * N, h_atom_idxs.begin() + (i + 1) * N,
-              0);
-  }
+  std::vector<unsigned int> h_atom_idxs(N);
+  std::iota(h_atom_idxs.begin(), h_atom_idxs.end(), 0);
 
-  std::vector<unsigned int> h_system_counts(num_systems,
-                                            static_cast<unsigned int>(N));
-
-  DeviceBuffer<RealType> d_coords(num_systems * N * 3);
-  DeviceBuffer<RealType> d_box(num_systems * 3 * 3);
-  DeviceBuffer<unsigned int> d_system_counts(h_system_counts);
+  DeviceBuffer<RealType> d_coords(N * 3);
+  DeviceBuffer<RealType> d_box(3 * 3);
   DeviceBuffer<unsigned int> d_atom_idxs(h_atom_idxs);
-  DeviceBuffer<unsigned int> d_perm(num_systems * N);
+  DeviceBuffer<unsigned int> d_perm(N);
 
   d_coords.copy_from(h_coords);
   d_box.copy_from(h_box);
 
   cudaStream_t stream = static_cast<cudaStream_t>(0);
-  this->sort_device(num_systems, d_system_counts.data, d_atom_idxs.data,
-                    d_coords.data, d_box.data, d_perm.data, stream);
+  this->sort_device(N, d_atom_idxs.data, d_coords.data, d_box.data, d_perm.data,
+                    stream);
   gpuErrchk(cudaStreamSynchronize(stream));
 
   d_perm.copy_to(&h_atom_idxs[0]);

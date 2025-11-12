@@ -1,5 +1,4 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,7 +23,6 @@ namespace tmd {
 template <typename RealType> class HilbertSort {
 
 private:
-  const int num_systems_;
   const int N_;
   // used for hilbert sorting
   DeviceBuffer<unsigned int>
@@ -38,22 +36,16 @@ private:
   size_t d_sort_storage_bytes_;
 
 public:
-  HilbertSort(const int num_systems,
-              const int N // number of atoms
-  );
+  // N - number of atoms
+  HilbertSort(const int N);
 
   ~HilbertSort();
 
-  void sort_device(const int num_systems,
-                   const unsigned int *d_system_counts, // [num_systems]
-                   const unsigned int *d_atom_idxs,     // [num_systems, N_]
-                   const RealType *d_coords,            // [num_systems, N_, 3]
-                   const RealType *d_box,               // [num_systems, 3, 3]
-                   unsigned int *d_output_perm,         //[num_systems, N_]
-                   cudaStream_t stream);
+  void sort_device(const int N, const unsigned int *d_atom_idxs,
+                   const RealType *d_coords, const RealType *d_box,
+                   unsigned int *d_output_perm, cudaStream_t stream);
 
-  std::vector<unsigned int> sort_host(const int num_systems, const int N,
-                                      const RealType *h_coords,
+  std::vector<unsigned int> sort_host(const int N, const RealType *h_coords,
                                       const RealType *h_box);
 };
 
