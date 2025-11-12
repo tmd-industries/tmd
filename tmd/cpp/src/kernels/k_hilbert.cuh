@@ -29,9 +29,17 @@ static_assert(HILBERT_GRID_DIM <= HILBERT_MAX_GRID_DIM);
 // of a subset of coordinates
 template <typename RealType>
 void __global__ k_coords_to_kv_gather(
-    const int N, const unsigned int *__restrict__ atom_idxs,
-    const RealType *__restrict__ coords, const RealType *__restrict__ box,
-    const unsigned int *__restrict__ bin_to_idx,
-    unsigned int *__restrict__ keys, unsigned int *__restrict__ vals);
+    const int num_systems, const int atoms_per_system,
+    const unsigned int *__restrict__ system_counts, // [num_systems]
+    const unsigned int
+        *__restrict__ atom_idxs,         // [num_systems, atoms_per_system]
+    const RealType *__restrict__ coords, // [num_systems, atoms_per_system, 3]
+    const RealType *__restrict__ box,    // [num_systems, 3, 3]
+    const unsigned int
+        *__restrict__ bin_to_idx,    // [HILBERT_GRID_DIM, HILBERT_GRID_DIM,
+                                     // HILBERT_GRID_DIM]
+    unsigned int *__restrict__ keys, // [num_systems, atoms_per_system]
+    unsigned int *__restrict__ vals  // [num_systems, atoms_per_system]
+);
 
 } // namespace tmd
