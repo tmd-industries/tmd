@@ -210,6 +210,31 @@ def test_water_system_ion_concentration_and_neutralization(ionic_concentration, 
 
 
 @pytest.mark.nocuda
+def test_build_systems_large_batch_of_ligands():
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
+        host_pdbfile = str(pdb_path)
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as sdf_path:
+        mols = read_sdf(sdf_path)
+    batched_mols = mols * 25
+    assert len(batched_mols) > 1000
+    host_config = build_protein_system(
+        host_pdbfile, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, box_margin=0.1, mols=batched_mols
+    )
+
+    def verify_no_nearby_waters(host_config: HostConfig, mols: list[Chem.Mol]):
+        water_coords = host_config.conf[-host_config.num_water_atoms :]
+        box = host_config.box
+        for i, mol in enumerate(mols):
+            clashy_idxs = idxs_within_cutoff(water_coords, get_romol_conf(mol), box, cutoff=0.2)
+            assert len(clashy_idxs) == 0, f"Mol {i} has water within 2 angstroms"
+
+    verify_no_nearby_waters(host_config, batched_mols)
+
+    host_config = build_water_system(4.0, DEFAULT_WATER_FF, box_margin=0.1, mols=batched_mols)
+    verify_no_nearby_waters(host_config, batched_mols)
+
+
+@pytest.mark.nocuda
 @pytest.mark.parametrize("ionic_concentration", [0.0, 0.15])
 @pytest.mark.parametrize("neutralize", [False, True])
 def test_protein_system_ion_concentration_and_neutralization(ionic_concentration, neutralize):
