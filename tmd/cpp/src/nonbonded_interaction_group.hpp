@@ -32,18 +32,17 @@ enum class NonbondedInteractionType { DISJOINT, OVERLAPPING };
 template <typename RealType>
 class NonbondedInteractionGroup : public Potential<RealType> {
 
-  typedef void (*k_nonbonded_fn)(const int N, const unsigned int *NR,
-                                 const unsigned int *__restrict__ ixn_count,
-                                 const unsigned int *__restrict__ d_atom_idxs,
-                                 const RealType *__restrict__ coords,
-                                 const RealType *__restrict__ params, // [N]
-                                 const RealType *__restrict__ box,
-                                 const RealType beta, const RealType cutoff,
-                                 const int *__restrict__ ixn_tiles,
-                                 const unsigned int *__restrict__ ixn_atoms,
-                                 unsigned long long *__restrict__ du_dx,
-                                 unsigned long long *__restrict__ du_dp,
-                                 __int128 *__restrict__ u_buffer);
+  typedef void (*k_nonbonded_fn)(
+      const int num_systems, const int N, const int u_buffer_stride,
+      const unsigned int *row_indice_counts,
+      const unsigned int *__restrict__ ixn_count,
+      const unsigned int *__restrict__ d_atom_idxs,
+      const RealType *__restrict__ coords, const RealType *__restrict__ params,
+      const RealType *__restrict__ box, const RealType beta,
+      const RealType cutoff, const int *__restrict__ ixn_tiles,
+      const unsigned int *__restrict__ ixn_atoms,
+      unsigned long long *__restrict__ du_dx,
+      unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
   const int num_systems_;
@@ -59,8 +58,15 @@ private:
 
   std::array<k_nonbonded_fn, 32> kernel_ptrs_;
 
+  std::vector<int> column_idx_counts_; // [num_systems_] Number of atoms in
+                                       // column, N_ for each system by default
+  std::vector<int> row_idx_counts_; // [num_systems_] Number of atoms in row, N_
+                                    // for each system by default
+
   unsigned int *d_col_atom_idxs_;
+  int *d_col_atom_idxs_counts_;
   unsigned int *d_row_atom_idxs_;
+  int *d_row_atom_idxs_counts_;
 
   unsigned int *d_arange_buffer_;
 
@@ -73,7 +79,8 @@ private:
   Neighborlist<RealType> nblist_;
 
   RealType nblist_padding_;
-  __int128 *d_u_buffer_;   // [NONBONDED_KERNEL_BLOCKS]
+  __int128 *d_u_buffer_;   // [num_systems, NONBONDED_KERNEL_BLOCKS]
+  int *d_system_idxs_;     // [num_systems, NONBONDED_KERNEL_BLOCKS]
   RealType *d_nblist_x_;   // coords which were used to compute the nblist
   RealType *d_nblist_box_; // box which was used to rebuild the nblist
   int *m_rebuild_nblist_;  // mapped, zero-copy memory
@@ -108,6 +115,8 @@ private:
 
   int get_cur_nonbonded_kernel_blocks() const;
 
+  int get_max_atoms() const;
+
 public:
   RealType get_cutoff() const { return cutoff_; };
 
@@ -133,7 +142,8 @@ public:
   void set_atom_idxs(const std::vector<int> &row_atom_idxs,
                      const std::vector<int> &col_atom_idxs);
 
-  NonbondedInteractionGroup(const int num_systems, const int N, const std::vector<int> &row_atom_idxs,
+  NonbondedInteractionGroup(const int num_systems, const int N,
+                            const std::vector<int> &row_atom_idxs,
                             const std::vector<int> &col_atom_idxs,
                             const RealType beta, const RealType cutoff,
                             const bool disable_hilbert_sort = false,

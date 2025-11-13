@@ -167,44 +167,78 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
                                 1, 1, 1, 0>,
            &k_nonbonded_unified<RealType, NONBONDED_KERNEL_THREADS_PER_BLOCK, 1,
                                 1, 1, 1, 1>}),
-
+      column_idx_counts_(num_systems_), row_idx_counts_(num_systems_),
       beta_(beta), cutoff_(cutoff), steps_since_last_sort_(0),
       nblist_(num_systems_, N_, is_upper_triangular(interaction_type_)),
       nblist_padding_(nblist_padding), hilbert_sort_(nullptr),
       disable_hilbert_(disable_hilbert_sort) {
 
+  // Populate the initial row/column indices
+  std::fill(column_idx_counts_.begin(), column_idx_counts_.end(),
+            col_atom_idxs.size());
+  std::fill(row_idx_counts_.begin(), row_idx_counts_.end(),
+            row_atom_idxs.size());
   this->validate_idxs(N_, row_atom_idxs, col_atom_idxs, false);
 
-  cudaSafeMalloc(&d_col_atom_idxs_, N_ * sizeof(*d_col_atom_idxs_));
-  cudaSafeMalloc(&d_row_atom_idxs_, N_ * sizeof(*d_row_atom_idxs_));
+  cudaSafeMalloc(&d_col_atom_idxs_,
+                 num_systems_ * N_ * sizeof(*d_col_atom_idxs_));
+  cudaSafeMalloc(&d_col_atom_idxs_counts_,
+                 num_systems_ * sizeof(*d_col_atom_idxs_counts_));
+  gpuErrchk(
+      cudaMemcpy(d_col_atom_idxs_counts_, &column_idx_counts_[0],
+                 column_idx_counts_.size() * sizeof(*d_col_atom_idxs_counts_),
+                 cudaMemcpyHostToDevice));
 
-  cudaSafeMalloc(&d_arange_buffer_, N_ * sizeof(*d_arange_buffer_));
+  cudaSafeMalloc(&d_row_atom_idxs_,
+                 num_systems_ * N_ * sizeof(*d_row_atom_idxs_));
+  cudaSafeMalloc(&d_row_atom_idxs_counts_,
+                 num_systems_ * sizeof(*d_row_atom_idxs_counts_));
+  gpuErrchk(
+      cudaMemcpy(d_row_atom_idxs_counts_, &row_idx_counts_[0],
+                 row_idx_counts_.size() * sizeof(*d_row_atom_idxs_counts_),
+                 cudaMemcpyHostToDevice));
 
-  k_arange<<<ceil_divide(N_, DEFAULT_THREADS_PER_BLOCK),
-             DEFAULT_THREADS_PER_BLOCK, 0>>>(N_, d_arange_buffer_);
+  cudaSafeMalloc(&d_arange_buffer_,
+                 num_systems_ * N_ * sizeof(*d_arange_buffer_));
+
+  k_segment_arange<<<dim3(ceil_divide(N_, DEFAULT_THREADS_PER_BLOCK),
+                          num_systems_, 1),
+                     DEFAULT_THREADS_PER_BLOCK, 0>>>(num_systems_, N_,
+                                                     d_arange_buffer_);
   gpuErrchk(cudaPeekAtLastError());
 
   // this needs to be large enough to be safe when resized
   const int mnkb = this->get_max_nonbonded_kernel_blocks();
-  cudaSafeMalloc(&d_u_buffer_, mnkb * sizeof(*d_u_buffer_));
+  cudaSafeMalloc(&d_u_buffer_, num_systems_ * mnkb * sizeof(*d_u_buffer_));
+  cudaSafeMalloc(&d_system_idxs_,
+                 num_systems_ * mnkb * sizeof(*d_system_idxs_));
+  // Initialize all of the system_idxs
+  for (int i = 0; i < num_systems_; i++) {
+    k_initialize_array<<<ceil_divide(N_, DEFAULT_THREADS_PER_BLOCK),
+                         DEFAULT_THREADS_PER_BLOCK>>>(
+        mnkb, d_system_idxs_ + i * mnkb, i);
+    gpuErrchk(cudaPeekAtLastError());
+  }
 
-  cudaSafeMalloc(&d_perm_, N_ * sizeof(*d_perm_));
-  cudaSafeMalloc(&d_sorted_x_, N_ * 3 * sizeof(*d_sorted_x_));
-  cudaSafeMalloc(&d_sorted_p_, N_ * PARAMS_PER_ATOM * sizeof(*d_sorted_p_));
+  cudaSafeMalloc(&d_perm_, num_systems_ * N_ * sizeof(*d_perm_));
+  cudaSafeMalloc(&d_sorted_x_, num_systems_ * N_ * 3 * sizeof(*d_sorted_x_));
+  cudaSafeMalloc(&d_sorted_p_,
+                 num_systems_ * N_ * PARAMS_PER_ATOM * sizeof(*d_sorted_p_));
 
-  cudaSafeMalloc(&d_nblist_x_, N_ * 3 * sizeof(*d_nblist_x_));
-  gpuErrchk(
-      cudaMemset(d_nblist_x_, 0,
-                 N_ * 3 * sizeof(*d_nblist_x_))); // set non-sensical positions
-  cudaSafeMalloc(&d_nblist_box_, 3 * 3 * sizeof(*d_nblist_box_));
-  gpuErrchk(cudaMemset(d_nblist_box_, 0, 3 * 3 * sizeof(*d_nblist_box_)));
+  cudaSafeMalloc(&d_nblist_x_, num_systems_ * N_ * 3 * sizeof(*d_nblist_x_));
+  gpuErrchk(cudaMemset(d_nblist_x_, 0,
+                       num_systems_ * N_ * 3 *
+                           sizeof(*d_nblist_x_))); // set non-sensical positions
+  cudaSafeMalloc(&d_nblist_box_, num_systems_ * 3 * 3 * sizeof(*d_nblist_box_));
+  gpuErrchk(cudaMemset(d_nblist_box_, 0,
+                       num_systems_ * 3 * 3 * sizeof(*d_nblist_box_)));
   gpuErrchk(cudaHostAlloc(&m_rebuild_nblist_, 1 * sizeof(*m_rebuild_nblist_),
                           cudaHostAllocMapped));
   m_rebuild_nblist_[0] = 0;
   gpuErrchk(cudaHostGetDevicePointer(&d_rebuild_nblist_, m_rebuild_nblist_, 0));
 
   if (!disable_hilbert_) {
-    this->hilbert_sort_.reset(new HilbertSort<RealType>(num_systems_, N_));
+    this->hilbert_sort_.reset(new HilbertSort<RealType>(N_));
   }
 
   this->set_atom_idxs(row_atom_idxs, col_atom_idxs);
@@ -217,13 +251,16 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
 template <typename RealType>
 NonbondedInteractionGroup<RealType>::~NonbondedInteractionGroup() {
   gpuErrchk(cudaFree(d_col_atom_idxs_));
+  gpuErrchk(cudaFree(d_col_atom_idxs_counts_));
   gpuErrchk(cudaFree(d_row_atom_idxs_));
+  gpuErrchk(cudaFree(d_row_atom_idxs_counts_));
   gpuErrchk(cudaFree(d_arange_buffer_));
 
   gpuErrchk(cudaFree(d_perm_));
 
   gpuErrchk(cudaFree(d_sorted_x_));
   gpuErrchk(cudaFree(d_u_buffer_));
+  gpuErrchk(cudaFree(d_system_idxs_));
 
   gpuErrchk(cudaFree(d_sorted_p_));
 
@@ -266,7 +303,7 @@ void NonbondedInteractionGroup<RealType>::sort(const RealType *d_coords,
 
   // To compute the d_perm_ layout, we:
   // 1) Compute the permutation moving the row_idxs first.
-  // 2) Compute the permtuation moving the non-overlapping column indices.
+  // 2) Compute the permutation moving the non-overlapping column indices.
 
   // DISJOINT
   //        row_idxs   col_idxs
@@ -281,32 +318,44 @@ void NonbondedInteractionGroup<RealType>::sort(const RealType *d_coords,
   //          NR           NR   | NC-NR
   // perm [a b c d e] [f g h i]
 
-  if (!disable_hilbert_) {
-    this->hilbert_sort_->sort_device(NR_, d_row_atom_idxs_, d_coords, d_box,
-                                     d_perm_, stream);
-    if (this->interaction_type_ == NonbondedInteractionType::DISJOINT) {
-      this->hilbert_sort_->sort_device(NC_, d_col_atom_idxs_, d_coords, d_box,
-                                       d_perm_ + NR_, stream);
-    } else if (this->interaction_type_ ==
-               NonbondedInteractionType::OVERLAPPING) {
-      this->hilbert_sort_->sort_device(NC_ - NR_, d_col_atom_idxs_ + NR_,
-                                       d_coords, d_box, d_perm_ + NR_, stream);
-    }
-  } else {
-    gpuErrchk(cudaMemcpyAsync(d_perm_, d_row_atom_idxs_,
-                              NR_ * sizeof(*d_row_atom_idxs_),
-                              cudaMemcpyDeviceToDevice, stream));
-    if (this->interaction_type_ == NonbondedInteractionType::DISJOINT) {
-      gpuErrchk(cudaMemcpyAsync(d_perm_ + NR_, d_col_atom_idxs_,
-                                NC_ * sizeof(*d_col_atom_idxs_),
+  // Sort each system on its own.
+  // TBD: Batch the hilbert curve sort across replicas
+  for (int i = 0; i < num_systems_; i++) {
+    int NC = column_idx_counts_[i];
+    int NR = row_idx_counts_[i];
+    if (!disable_hilbert_) {
+      this->hilbert_sort_->sort_device(NR, d_row_atom_idxs_ + i * N_,
+                                       d_coords + i * N_ * 3, d_box + i * 9,
+                                       d_perm_ + i * N_, stream);
+      if (this->interaction_type_ == NonbondedInteractionType::DISJOINT) {
+        this->hilbert_sort_->sort_device(NC, d_col_atom_idxs_ + i * N_,
+                                         d_coords + i * N_ * 3, d_box + i * 9,
+                                         d_perm_ + i * N_ + NR, stream);
+      } else if (this->interaction_type_ ==
+                 NonbondedInteractionType::OVERLAPPING) {
+        this->hilbert_sort_->sort_device(
+            NC - NR, d_col_atom_idxs_ + i * N_ + NR, d_coords + i * N_ * 3,
+            d_box + i * 9, d_perm_ + i * N_ + NR, stream);
+      }
+
+    } else {
+      gpuErrchk(cudaMemcpyAsync(d_perm_ + i * N_, d_row_atom_idxs_ + i * N_,
+                                NR * sizeof(*d_row_atom_idxs_),
                                 cudaMemcpyDeviceToDevice, stream));
-    } else if (this->interaction_type_ ==
-               NonbondedInteractionType::OVERLAPPING) {
-      gpuErrchk(cudaMemcpyAsync(d_perm_ + NR_, d_col_atom_idxs_ + NR_,
-                                (NC_ - NR_) * sizeof(*d_col_atom_idxs_),
-                                cudaMemcpyDeviceToDevice, stream));
+      if (this->interaction_type_ == NonbondedInteractionType::DISJOINT) {
+        gpuErrchk(cudaMemcpyAsync(
+            d_perm_ + i * N_ + NR, d_col_atom_idxs_ + i * N_,
+            NC * sizeof(*d_col_atom_idxs_), cudaMemcpyDeviceToDevice, stream));
+      } else if (this->interaction_type_ ==
+                 NonbondedInteractionType::OVERLAPPING) {
+        gpuErrchk(cudaMemcpyAsync(d_perm_ + i * N_ + NR,
+                                  d_col_atom_idxs_ + i * N_ + NR,
+                                  (NC - NR) * sizeof(*d_col_atom_idxs_),
+                                  cudaMemcpyDeviceToDevice, stream));
+      }
     }
   }
+
   // Set the mapped memory to indicate that we need to rebuild
   m_rebuild_nblist_[0] = 1;
 }
@@ -365,13 +414,9 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
   const int B = ceil_divide(N_, tpb);
 
-  int K; // number of atoms involved in the interaction group
-  if (interaction_type_ == NonbondedInteractionType::DISJOINT) {
-    K = NR_ + NC_;
-  } else {
-    // NC_ contains NR_ already, since they're overlapping
-    K = NC_;
-  }
+  const int K = this->get_max_atoms();
+
+  const dim3 dimGrid(ceil_divide(K, tpb), num_systems_, 1);
 
   if (this->needs_sort()) {
     // Sorting always triggers a neighborlist rebuild
@@ -380,18 +425,36 @@ void NonbondedInteractionGroup<RealType>::execute_device(
     // (ytz) see if we need to rebuild the neighborlist.
     // Reuse the d_perm_ here to avoid having to make two kernels calls.
     k_check_rebuild_coords_and_box_gather<RealType>
-        <<<ceil_divide(K, tpb), tpb, 0, stream>>>(
-            K, d_perm_, d_x, d_nblist_x_, d_box, d_nblist_box_, nblist_padding_,
-            d_rebuild_nblist_);
+        <<<dimGrid, tpb, 0, stream>>>(num_systems_, N_, d_perm_, d_x,
+                                      d_nblist_x_, d_box, d_nblist_box_,
+                                      nblist_padding_, d_rebuild_nblist_);
     gpuErrchk(cudaPeekAtLastError());
     // we can optimize this away by doing the check on the GPU directly.
     gpuErrchk(cudaEventRecord(nblist_flag_sync_event_, stream));
   }
 
   k_gather_coords_and_params<RealType, 3, PARAMS_PER_ATOM>
-      <<<ceil_divide(K, tpb), tpb, 0, stream>>>(K, d_perm_, d_x, d_p,
-                                                d_sorted_x_, d_sorted_p_);
+      <<<dimGrid, tpb, 0, stream>>>(num_systems_, N_, d_perm_, d_x, d_p,
+                                    d_sorted_x_, d_sorted_p_);
   gpuErrchk(cudaPeekAtLastError());
+
+  // look up which kernel we need for this computation
+  int kernel_idx = 0;
+  kernel_idx |= this->compute_col_grads_ ? 1 << 0 : 0;
+  kernel_idx |= is_upper_triangular(this->interaction_type_) ? 1 << 1 : 0;
+  kernel_idx |= d_du_dp ? 1 << 2 : 0;
+  kernel_idx |= d_du_dx ? 1 << 3 : 0;
+  kernel_idx |= d_u ? 1 << 4 : 0;
+
+  const int mnkb = this->get_max_nonbonded_kernel_blocks();
+  const int nkb = this->get_cur_nonbonded_kernel_blocks();
+
+  // Zero out the energy buffer
+  if (d_u) {
+    cudaMemsetAsync(d_u_buffer_, 0, num_systems_ * mnkb * sizeof(*d_u_buffer_),
+                    stream);
+  }
+
   // Syncing to an event allows kernels put into the queue after the event was
   // recorded to keep running during the sync Note that if no event is recorded,
   // this is effectively a no-op, such as in the case of sorting.
@@ -412,32 +475,45 @@ void NonbondedInteractionGroup<RealType>::execute_device(
     // std::endl;
   }
 
-  // look up which kernel we need for this computation
-  int kernel_idx = 0;
-  kernel_idx |= this->compute_col_grads_ ? 1 << 0 : 0;
-  kernel_idx |= is_upper_triangular(this->interaction_type_) ? 1 << 1 : 0;
-  kernel_idx |= d_du_dp ? 1 << 2 : 0;
-  kernel_idx |= d_du_dx ? 1 << 3 : 0;
-  kernel_idx |= d_u ? 1 << 4 : 0;
-
-  int nkb = this->get_cur_nonbonded_kernel_blocks();
-  kernel_ptrs_
-      [kernel_idx]<<<nkb, NONBONDED_KERNEL_THREADS_PER_BLOCK, 0, stream>>>(
-          K, nblist_.get_num_row_idxs(), nblist_.get_ixn_count(), d_perm_,
-          d_sorted_x_, d_sorted_p_, d_box, beta_, cutoff_,
-          nblist_.get_ixn_tiles(), nblist_.get_ixn_atoms(), d_du_dx, d_du_dp,
-          d_u == nullptr
-              ? nullptr
-              : d_u_buffer_ // switch to nullptr if we don't request energies
-      );
+  kernel_ptrs_[kernel_idx]<<<dim3(nkb, num_systems_, 1),
+                             NONBONDED_KERNEL_THREADS_PER_BLOCK, 0, stream>>>(
+      num_systems_, N_, mnkb, nblist_.get_num_row_idxs(),
+      nblist_.get_ixn_count(), d_perm_, d_sorted_x_, d_sorted_p_, d_box, beta_,
+      cutoff_, nblist_.get_ixn_tiles(), nblist_.get_ixn_atoms(), d_du_dx,
+      d_du_dp,
+      d_u == nullptr
+          ? nullptr
+          : d_u_buffer_ // switch to nullptr if we don't request energies
+  );
   gpuErrchk(cudaPeekAtLastError());
 
   if (d_u) {
-    // nullptr for the d_system_idxs as batch size is fixed to 1
-    nrg_accum_.sum_device(nkb, d_u_buffer_, nullptr, d_u, stream);
+    // nullptr for the d_system_idxs if only simulating a single system
+    nrg_accum_.sum_device(mnkb, d_u_buffer_,
+                          num_systems_ > 1 ? d_system_idxs_ : nullptr, d_u,
+                          stream);
   }
   // Increment steps
   steps_since_last_sort_++;
+}
+
+// get_max_atoms returns the maximum number of atoms to consider for the
+// interaction group this is the max of any replica, which may have different
+// row/column atom indices
+template <typename RealType>
+int NonbondedInteractionGroup<RealType>::get_max_atoms() const {
+  int K; // number of atoms involved in the interaction group
+  const int max_NC =
+      *std::max_element(column_idx_counts_.begin(), column_idx_counts_.end());
+  if (interaction_type_ == NonbondedInteractionType::DISJOINT) {
+    const int max_NR =
+        *std::max_element(row_idx_counts_.begin(), row_idx_counts_.end());
+    K = max_NR + max_NC;
+  } else {
+    // NC_ contains NR_ already, since they're overlapping
+    K = max_NC;
+  }
+  return K;
 }
 
 template <typename RealType>
@@ -491,6 +567,12 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
       NC + NR > N_) {
     throw std::runtime_error("number of idxs must be less than or equal to N");
   }
+  // Set the permutation to all N_
+  k_initialize_array<<<ceil_divide(num_systems_ * N_,
+                                   DEFAULT_THREADS_PER_BLOCK),
+                       DEFAULT_THREADS_PER_BLOCK, 0, stream>>>(
+      num_systems_ * N_, d_perm_, static_cast<unsigned int>(N_));
+  gpuErrchk(cudaPeekAtLastError());
   if (NR > 0 && NC > 0) {
     // The indices must already be on the GPU and are copied into the
     // potential's buffers.
@@ -530,6 +612,8 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
   // Update the row and column counts
   this->NR_ = NR;
   this->NC_ = NC;
+  std::fill(column_idx_counts_.begin(), column_idx_counts_.end(), NC);
+  std::fill(row_idx_counts_.begin(), row_idx_counts_.end(), NR);
   // Reset the steps so that we do a new sort, forcing a new nblist rebuild
   this->steps_since_last_sort_ = 0;
 }

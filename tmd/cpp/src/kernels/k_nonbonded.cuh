@@ -25,19 +25,29 @@ namespace tmd {
 
 template <typename RealType>
 void __global__ k_check_rebuild_coords_and_box_gather(
-    const int N, const unsigned int *__restrict__ atom_idxs,
-    const RealType *__restrict__ new_coords,
-    const RealType *__restrict__ old_coords,
-    const RealType *__restrict__ new_box, const RealType *__restrict__ old_box,
-    const RealType padding, int *rebuild_flag) {
+    const int num_systems, const int N,
+    const unsigned int *__restrict__ atom_idxs, // [num_systems, N]
+    const RealType *__restrict__ new_coords,    // [num_systems, N, 3]
+    const RealType *__restrict__ old_coords,    // [num_systems, N, 3]
+    const RealType *__restrict__ new_box,       // [num_systems, 3, 3]
+    const RealType *__restrict__ old_box,       // [num_systems, 3, 3]
+    const RealType padding,
+    int *rebuild_flag // [1]
+) {
 
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (idx < 9) {
     // (ytz): box vectors have exactly 9 components
     // we can probably derive a looser bound later on.
-    if (old_box[idx] != new_box[idx]) {
-      rebuild_flag[0] = 1;
+    if (old_box[system_idx * 3 * 3 + idx] !=
+        new_box[system_idx * 3 * 3 + idx]) {
+      *rebuild_flag = 1;
+      return;
     }
   }
 
@@ -45,46 +55,58 @@ void __global__ k_check_rebuild_coords_and_box_gather(
     return;
   }
 
-  const int atom_idx = atom_idxs[idx];
-  // cast coords
-  RealType xi = old_coords[atom_idx * 3 + 0];
-  RealType yi = old_coords[atom_idx * 3 + 1];
-  RealType zi = old_coords[atom_idx * 3 + 2];
-  RealType xj = new_coords[atom_idx * 3 + 0];
-  RealType yj = new_coords[atom_idx * 3 + 1];
-  RealType zj = new_coords[atom_idx * 3 + 2];
+  const unsigned int atom_idx = atom_idxs[system_idx * N + idx];
+  if (atom_idx >= N) {
+    return;
+  }
+
+  RealType xi = old_coords[system_idx * N * 3 + atom_idx * 3 + 0];
+  RealType yi = old_coords[system_idx * N * 3 + atom_idx * 3 + 1];
+  RealType zi = old_coords[system_idx * N * 3 + atom_idx * 3 + 2];
+  RealType xj = new_coords[system_idx * N * 3 + atom_idx * 3 + 0];
+  RealType yj = new_coords[system_idx * N * 3 + atom_idx * 3 + 1];
+  RealType zj = new_coords[system_idx * N * 3 + atom_idx * 3 + 2];
   RealType dx = xi - xj;
   RealType dy = yi - yj;
   RealType dz = zi - zj;
   RealType d2ij = dx * dx + dy * dy + dz * dz;
   if (d2ij > static_cast<RealType>(0.25) * padding * padding) {
     // (ytz): this is *safe* but technically is a race condition
-    rebuild_flag[0] = 1;
+    *rebuild_flag = 1;
   }
 }
 
 template <typename RealType, int COORDS_DIM, int PARAMS_DIM>
 void __global__ k_gather_coords_and_params(
-    const int N, const unsigned int *__restrict__ idxs,
+    const int num_systems, const int N, const unsigned int *__restrict__ idxs,
     const RealType *__restrict__ coords, const RealType *__restrict__ params,
     RealType *__restrict__ gathered_coords,
     RealType *__restrict__ gathered_params) {
   static_assert(COORDS_DIM == 3);
   static_assert(PARAMS_DIM == PARAMS_PER_ATOM);
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= N) {
     return;
   }
 
-  const unsigned int atom_idx = idxs[idx];
+  const unsigned int atom_idx = idxs[system_idx * N + idx];
+  if (atom_idx >= N) {
+    return;
+  }
   // Coords have 3 dimensions, params have 4
 #pragma unroll COORDS_DIM
   for (int i = 0; i < COORDS_DIM; i++) {
-    gathered_coords[idx * COORDS_DIM + i] = coords[atom_idx * COORDS_DIM + i];
+    gathered_coords[system_idx * N * COORDS_DIM + idx * COORDS_DIM + i] =
+        coords[system_idx * N * COORDS_DIM + atom_idx * COORDS_DIM + i];
   }
 #pragma unroll PARAMS_DIM
   for (int i = 0; i < PARAMS_DIM; i++) {
-    gathered_params[idx * PARAMS_DIM + i] = params[atom_idx * PARAMS_DIM + i];
+    gathered_params[system_idx * N * PARAMS_DIM + idx * PARAMS_DIM + i] =
+        params[system_idx * N * PARAMS_DIM + atom_idx * PARAMS_DIM + i];
   }
 }
 
@@ -365,9 +387,11 @@ template <typename RealType, int THREADS_PER_BLOCK, bool COMPUTE_U,
           bool COMPUTE_DU_DX, bool COMPUTE_DU_DP, bool COMPUTE_UPPER_TRIANGLE,
           bool COMPUTE_COL_GRADS>
 void __global__ k_nonbonded_unified(
+    const int num_systems,
     const int N, // Number of atoms involved in the interaction group
-    const unsigned int *__restrict__ NR, // Number of row indices
-    const unsigned int *__restrict__ ixn_count,
+    const int u_buffer_stride,
+    const unsigned int *__restrict__ row_indice_counts, // Number of row indices
+    const unsigned int *__restrict__ ixn_count,         // [num_systems]
     const unsigned int
         *__restrict__ output_permutation, // [N] Permutation from atom idx ->
                                           // output buffer idx
@@ -375,7 +399,7 @@ void __global__ k_nonbonded_unified(
     const RealType *__restrict__ params,  // [N, PARAMS_PER_ATOM]
     const RealType *__restrict__ box,     // [3, 3]
     const RealType beta, const RealType cutoff,
-    const int *__restrict__ ixn_tiles,
+    const int *__restrict__ ixn_tiles, //[num_systems, tiles_per_system]
     const unsigned int *__restrict__ ixn_atoms,
     unsigned long long *__restrict__ du_dx,
     unsigned long long *__restrict__ du_dp,
@@ -383,12 +407,20 @@ void __global__ k_nonbonded_unified(
 ) {
   static_assert(THREADS_PER_BLOCK <= 256 &&
                 (THREADS_PER_BLOCK & (THREADS_PER_BLOCK - 1)) == 0);
-  __int128 energy_accumulator = 0;
 
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
   // Tile size is the same as warp size but it doesn't have to be.
-  // Can be used interchangably at the moment, but in the future we may have
+  // Can be used interchangeably at the moment, but in the future we may have
   // different tile sizes.
-  const int tile_size = WARP_SIZE;
+  constexpr int tile_size = WARP_SIZE;
+
+  const int tiles_per_system =
+      ceil_divide(N, tile_size) * ceil_divide(N, tile_size);
+
+  __int128 energy_accumulator = 0;
 
   const int tiles_per_block = blockDim.x / tile_size;
   const int stride = gridDim.x * tiles_per_block;
@@ -398,26 +430,41 @@ void __global__ k_nonbonded_unified(
 
   const RealType cutoff_squared = cutoff * cutoff;
 
-  const unsigned int interactions = *ixn_count;
+  const unsigned int interactions = ixn_count[system_idx];
+
+  const unsigned int NR = row_indice_counts[system_idx];
+
+  // Offset pointers for each replica
+  const RealType *coords_ptr = coords + system_idx * N * 3;
+  const RealType *box_ptr = box + system_idx * 3 * 3;
+  const RealType *params_ptr = params + system_idx * PARAMS_PER_ATOM * 3;
+  const unsigned int *perm_ptr = output_permutation + system_idx * N;
+  const unsigned int *ixn_atom_ptr = ixn_atoms + system_idx * N;
+  const int *tiles_ptr = ixn_tiles + system_idx * tiles_per_system;
+
+  unsigned long long *du_dx_ptr = du_dx + system_idx * N * 3;
+  unsigned long long *du_dp_ptr = du_dp + system_idx * N * PARAMS_PER_ATOM;
 
   while (tile_idx < interactions) {
 
-    int row_block_idx = ixn_tiles[tile_idx];
+    int row_block_idx = tiles_ptr[tile_idx];
     int index = row_block_idx * tile_size + tile_offset;
-    int atom_i_idx = index < *NR ? index : N;
-    int atom_j_idx = ixn_atoms[tile_idx * tile_size + tile_offset];
+    int atom_i_idx = index < NR ? index : N;
+    int atom_j_idx = ixn_atom_ptr[tile_idx * tile_size + tile_offset];
 
     // if any atom_j_idx is less than num_row_atoms, or if COMPUTE_COL_GRADS is
     // True, we always compute_j_grads for this tile.
     bool compute_j_grads =
-        COMPUTE_COL_GRADS || __any_sync(0xffffffff, atom_j_idx < *NR);
+        COMPUTE_COL_GRADS || __any_sync(0xffffffff, atom_j_idx < NR);
 
-    RealType w_i = atom_i_idx < N
-                       ? params[atom_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_W]
-                       : 0;
-    RealType w_j = atom_j_idx < N
-                       ? params[atom_j_idx * PARAMS_PER_ATOM + PARAM_OFFSET_W]
-                       : 0;
+    RealType w_i =
+        atom_i_idx < N
+            ? params_ptr[atom_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_W]
+            : 0;
+    RealType w_j =
+        atom_j_idx < N
+            ? params_ptr[atom_j_idx * PARAMS_PER_ATOM + PARAM_OFFSET_W]
+            : 0;
 
     int is_vanilla = w_i == 0 && w_j == 0;
 
@@ -427,29 +474,29 @@ void __global__ k_nonbonded_unified(
       if (tile_is_vanilla) {
         v_nonbonded_unified<RealType, 0, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 1>(
-            tile_idx, N, *NR, output_permutation, coords, params, box,
-            energy_accumulator, beta, cutoff_squared, ixn_tiles, ixn_atoms,
-            du_dx, du_dp);
+            tile_idx, N, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
+            energy_accumulator, beta, cutoff_squared, tiles_ptr, ixn_atom_ptr,
+            du_dx_ptr, du_dp_ptr);
       } else {
         v_nonbonded_unified<RealType, 1, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 1>(
-            tile_idx, N, *NR, output_permutation, coords, params, box,
-            energy_accumulator, beta, cutoff_squared, ixn_tiles, ixn_atoms,
-            du_dx, du_dp);
+            tile_idx, N, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
+            energy_accumulator, beta, cutoff_squared, tiles_ptr, ixn_atom_ptr,
+            du_dx_ptr, du_dp_ptr);
       };
     } else {
       if (tile_is_vanilla) {
         v_nonbonded_unified<RealType, 0, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 0>(
-            tile_idx, N, *NR, output_permutation, coords, params, box,
-            energy_accumulator, beta, cutoff_squared, ixn_tiles, ixn_atoms,
-            du_dx, du_dp);
+            tile_idx, N, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
+            energy_accumulator, beta, cutoff_squared, tiles_ptr, ixn_atom_ptr,
+            du_dx_ptr, du_dp_ptr);
       } else {
         v_nonbonded_unified<RealType, 1, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 0>(
-            tile_idx, N, *NR, output_permutation, coords, params, box,
-            energy_accumulator, beta, cutoff_squared, ixn_tiles, ixn_atoms,
-            du_dx, du_dp);
+            tile_idx, N, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
+            energy_accumulator, beta, cutoff_squared, tiles_ptr, ixn_atom_ptr,
+            du_dx_ptr, du_dp_ptr);
       };
     }
     tile_idx += stride;
@@ -464,7 +511,7 @@ void __global__ k_nonbonded_unified(
     __int128 aggregate = BlockReduce(temp_storage).Sum(energy_accumulator);
 
     if (threadIdx.x == 0) {
-      u_buffer[blockIdx.x] = aggregate;
+      u_buffer[system_idx * u_buffer_stride + blockIdx.x] = aggregate;
     }
   }
 }
