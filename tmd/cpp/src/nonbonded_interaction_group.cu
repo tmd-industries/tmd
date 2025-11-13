@@ -89,8 +89,8 @@ bool is_upper_triangular(NonbondedInteractionType ixn_type) {
 
 template <typename RealType>
 NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
-    const int num_systems, const int N, const std::vector<int> &row_atom_idxs,
-    const std::vector<int> &col_atom_idxs, const RealType beta,
+    const int num_systems, const int N, const std::vector<std::vector<int>> &row_atom_idxs,
+    const std::vector<std::vector<int>> &col_atom_idxs, const RealType beta,
     const RealType cutoff, const bool disable_hilbert_sort,
     const RealType nblist_padding)
     : num_systems_(num_systems), N_(N), NR_(row_atom_idxs.size()),
@@ -173,12 +173,11 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
       nblist_padding_(nblist_padding), hilbert_sort_(nullptr),
       disable_hilbert_(disable_hilbert_sort) {
 
-  // Populate the initial row/column indices
-  std::fill(column_idx_counts_.begin(), column_idx_counts_.end(),
-            col_atom_idxs.size());
-  std::fill(row_idx_counts_.begin(), row_idx_counts_.end(),
-            row_atom_idxs.size());
   this->validate_idxs(N_, row_atom_idxs, col_atom_idxs, false);
+  for (int in = 0; i <num_systems_; i++) {
+    column_idx_counts_[i] = col_atom_idxs[i].size();
+    row_idx_counts_[i] = row_atom_idxs[i].size();
+  }
 
   cudaSafeMalloc(&d_col_atom_idxs_,
                  num_systems_ * N_ * sizeof(*d_col_atom_idxs_));
@@ -654,7 +653,7 @@ void NonbondedInteractionGroup<RealType>::set_nblist_padding(
 }
 
 template <typename RealType>
-void NonbondedInteractionGroup<RealType>::set_compute_col_grads(bool value) {
+void NonbondedInteractionGroup<RealType>::set_compute_col_grads(const bool value) {
   // If compute_col_grads is true, we always compute gradients on the column
   // idxs. If we're in the disjoint case:
   //      compute_col_grads must always be true.
@@ -671,33 +670,41 @@ void NonbondedInteractionGroup<RealType>::set_compute_col_grads(bool value) {
 
 template <typename RealType>
 void NonbondedInteractionGroup<RealType>::validate_idxs(
-    const int N, const std::vector<int> &row_atom_idxs,
-    const std::vector<int> &col_atom_idxs, const bool allow_empty) {
+    const int N, const std::vector<std::vector<int>> &row_atom_idxs,
+    const std::vector<std::vector<int>> &col_atom_idxs, const bool allow_empty) {
 
-  if (!allow_empty) {
-    if (row_atom_idxs.size() == 0) {
-      throw std::runtime_error("row_atom_idxs must be nonempty");
-    }
-    if (col_atom_idxs.size() == 0) {
-      throw std::runtime_error("col_atom_idxs must be nonempty");
-    }
-    if (row_atom_idxs.size() > static_cast<long unsigned int>(N)) {
-      throw std::runtime_error("num row idxs must be <= N(" +
-                               std::to_string(N) + ")");
-    }
-    if (col_atom_idxs.size() > static_cast<long unsigned int>(N)) {
-      throw std::runtime_error("num col idxs must be <= N(" +
-                               std::to_string(N) + ")");
-    }
+  if (row_atom_idxs.size() != num_systems_) {
+    throw std::runtime_error("row atom batches doesn't match expected number of batches");
   }
-  verify_atom_idxs(N, row_atom_idxs, allow_empty);
-  verify_atom_idxs(N, col_atom_idxs, allow_empty);
+  if (row_atom_idxs.size() != col_atom_idxs.size()) {
+    throw std::runtime_error("row atom batches and column atom batches don't match");
+  }
+  for (int i = 0; i < row_atom_idxs.size(); i++) {
+    if (!allow_empty) {
+      if (row_atom_idxs[i].size() == 0) {
+        throw std::runtime_error("row_atom_idxs must be nonempty");
+      }
+      if (col_atom_idxs[i].size() == 0) {
+        throw std::runtime_error("col_atom_idxs must be nonempty");
+      }
+      if (row_atom_idxs[i].size() > static_cast<long unsigned int>(N)) {
+        throw std::runtime_error("num row idxs must be <= N(" +
+                                 std::to_string(N) + ")");
+      }
+      if (col_atom_idxs.size() > static_cast<long unsigned int>(N)) {
+        throw std::runtime_error("num col idxs must be <= N(" +
+                                 std::to_string(N) + ")");
+      }
+    }
+    verify_atom_idxs(N, row_atom_idxs[i], allow_empty);
+    verify_atom_idxs(N, col_atom_idxs[i], allow_empty);
 
-  NonbondedInteractionType new_ixn_type =
-      get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs);
+    NonbondedInteractionType new_ixn_type =
+        get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs);
 
-  if (new_ixn_type != this->interaction_type_) {
-    throw std::runtime_error("switching interaction types is not supported");
+    if (new_ixn_type != this->interaction_type_) {
+      throw std::runtime_error("switching interaction types is not supported");
+    }
   }
 
   return;

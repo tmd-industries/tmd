@@ -289,24 +289,16 @@ void declare_hilbert_sort(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("HilbertSort_") + typestr;
   py::class_<Class, std::shared_ptr<Class>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const int num_systems, const int N) { return new HilbertSort<RealType>(num_systems, N); }),
-           py::arg("num_systems"), py::arg("size"))
+      .def(py::init([](const int N) { return new HilbertSort<RealType>(N); }),
+           py::arg("size"))
       .def(
           "sort",
           [](HilbertSort<RealType> &sorter,
              const py::array_t<double, py::array::c_style> &coords,
              const py::array_t<double, py::array::c_style> &box)
               -> const py::array_t<uint32_t, py::array::c_style> {
-
-            int num_systems = 1;
-            int N;
-            if (coords.ndim() == 3) {
-              num_systems = coords.shape()[0];
-              N = coords.shape()[1];
-            } else {
-              verify_coords_and_box(coords, box);
-              N = coords.shape()[0];
-            }
+            verify_coords_and_box(coords, box);
+            const int N = coords.shape()[0];
 
             std::vector<RealType> real_coords =
                 py_array_to_vector_with_cast<double, RealType>(coords);
@@ -314,7 +306,7 @@ void declare_hilbert_sort(py::module &m, const char *typestr) {
                 py_array_to_vector_with_cast<double, RealType>(box);
 
             std::vector<unsigned int> sort_perm =
-                sorter.sort_host(num_systems, N, real_coords.data(), real_box.data());
+                sorter.sort_host(N, real_coords.data(), real_box.data());
             py::array_t<uint32_t, py::array::c_style> output_perm(
                 sort_perm.size(), sort_perm.data());
             return output_perm;
@@ -2799,6 +2791,79 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
 
                     col_atom_idxs: Optional[NDArray]
                         Second group of atoms in the interaction. If not specified,
+                        use all of the atoms not in the `row_atom_idxs`.
+
+                    disable_hilbert_sort: bool
+                        Set to True to disable the Hilbert sort.
+
+                    nblist_padding: float
+                        Margin for the neighborlist.
+
+            )pbdoc")
+      .def(py::init([](const int N,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &row_atom_idxs_i,
+                       const double beta, const double cutoff,
+                       std::optional<
+                           std::vector<py::array_t<int, py::array::c_style>>>
+                           &col_atom_idxs_i,
+                       const bool disable_hilbert_sort,
+                       const double nblist_padding) {
+             const int num_batches = row_atom_idxs_i.size();
+             if (num_batches == 0) {
+               throw std::runtime_error(
+                   "provide at least one batch of row atom indices");
+             }
+             if (col_atom_idxs_i) {
+               if (num_batches != col_atom_idxs_i->size()) {
+                 throw std::runtime_error("batches of column atom indices must "
+                                          "match row atom indices batches");
+               }
+             }
+             std::vector<std::vector<int>> combined_row_atoms;
+             std::vector<std::vector<int>> combined_col_atoms;
+             for (int i = 0; i < num_batches; i++) {
+               combined_row_atoms.push_back(
+                   py_array_to_vector<int>(row_atom_idxs_i[i]));
+
+               std::vector<int> col_atom_idxs;
+               if (col_atom_idxs_i) {
+                 col_atom_idxs = col_atom_idxs_i->at(i);
+               } else {
+                 std::set<int> unique_row_atom_idxs =
+                     unique_idxs(combined_row_atoms[i]);
+                 col_atom_idxs =
+                     get_indices_difference(N, unique_row_atom_idxs);
+               }
+               combined_col_atoms.push_back(col_atom_idxs);
+             }
+
+             return new NonbondedInteractionGroup<RealType>(
+                 num_batches, N, combined_row_atoms, combined_col_atoms, beta,
+                 cutoff, disable_hilbert_sort, nblist_padding);
+           }),
+           py::arg("num_atoms"), py::arg("row_atom_idxs_i"), py::arg("beta"),
+           py::arg("cutoff"), py::arg("col_atom_idxs_i") = py::none(),
+           py::arg("disable_hilbert_sort") = false,
+           py::arg("nblist_padding") = 0.1,
+           R"pbdoc(
+                    Set up the NonbondedInteractionGroup.
+
+                    Parameters
+                    ----------
+                    num_atoms: int
+                        Number of atoms.
+
+                    row_atom_idxs: NDArray
+                        Batches of group of atoms in the interaction.
+
+                    beta: float
+
+                    cutoff: float
+                        Ignore all interactions beyond this distance in nm.
+
+                    col_atom_idxs: Optional[NDArray]
+                        Batches of group of atoms in the interaction. If not specified,
                         use all of the atoms not in the `row_atom_idxs`.
 
                     disable_hilbert_sort: bool

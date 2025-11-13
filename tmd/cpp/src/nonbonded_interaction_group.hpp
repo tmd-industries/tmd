@@ -123,7 +123,7 @@ public:
   void set_nblist_padding(const RealType padding);
   RealType get_nblist_padding() const { return nblist_padding_; };
 
-  void set_compute_col_grads(bool value);
+  void set_compute_col_grads(const bool value);
   bool get_compute_col_grads() const { return compute_col_grads_; };
 
   RealType get_beta() const { return beta_; };
