@@ -68,7 +68,8 @@ private:
   unsigned int *d_row_atom_idxs_;
   int *d_row_atom_idxs_counts_;
 
-  unsigned int *d_arange_buffer_;
+  unsigned int *d_nblist_row_idxs_;
+  unsigned int *d_nblist_col_idxs_;
 
   int *p_ixn_count_; // pinned memory
 
@@ -107,8 +108,9 @@ private:
 
   void sort(const RealType *d_x, const RealType *d_box, cudaStream_t stream);
 
-  void validate_idxs(const int N, const std::vector<int> &row_atom_idxs,
-                     const std::vector<int> &col_atom_idxs,
+  void validate_idxs(const int N,
+                     const std::vector<std::vector<int>> &row_atom_idxs,
+                     const std::vector<std::vector<int>> &col_atom_idxs,
                      const bool allow_empty);
 
   int get_max_nonbonded_kernel_blocks() const;
@@ -134,17 +136,18 @@ public:
   std::vector<int> get_row_idxs() const;
   std::vector<int> get_col_idxs() const;
 
-  void set_atom_idxs_device(const int NR, const int NC,
+  void set_atom_idxs_device(const std::vector<int> &row_counts,
+                            const std::vector<int> &col_counts,
                             unsigned int *d_row_idxs,
                             unsigned int *d_column_idxs,
                             const cudaStream_t stream);
 
-  void set_atom_idxs(const std::vector<int> &row_atom_idxs,
-                     const std::vector<int> &col_atom_idxs);
+  void set_atom_idxs(const std::vector<std::vector<int>> &row_atom_idxs,
+                     const std::vector<std::vector<int>> &col_atom_idxs);
 
   NonbondedInteractionGroup(const int num_systems, const int N,
-                            const std::vector<int> &row_atom_idxs,
-                            const std::vector<int> &col_atom_idxs,
+                            const std::vector<std::vector<int>> &row_atom_idxs,
+                            const std::vector<std::vector<int>> &col_atom_idxs,
                             const RealType beta, const RealType cutoff,
                             const bool disable_hilbert_sort = false,
                             const RealType nblist_padding = 0.1);

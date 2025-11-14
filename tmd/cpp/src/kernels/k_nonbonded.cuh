@@ -23,6 +23,11 @@
 
 namespace tmd {
 
+void __global__ k_setup_nblist_row_and_column_indices(
+    const int num_systems, const int N, const int *__restrict__ row_idx_counts,
+    const int *__restrict__ col_idx_counts, const bool is_disjoint,
+    unsigned int *__restrict__ row_idxs, unsigned int *__restrict__ col_idxs);
+
 template <typename RealType>
 void __global__ k_check_rebuild_coords_and_box_gather(
     const int num_systems, const int N,

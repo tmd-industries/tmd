@@ -518,7 +518,7 @@ void Neighborlist<RealType>::set_idxs_device(const int NR, const int NC,
   gpuErrchk(cudaPeekAtLastError());
 
   // This assumes that all replicas will share the same idxs. Overloaded version
-  // will do things differently
+  // handles the case where idxs are distinct for each replica.
   for (int i = 0; i < num_systems_; i++) {
     // The indices must already be on the GPU and are copied into the
     // neighborlist buffers.

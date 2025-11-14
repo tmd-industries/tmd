@@ -36,44 +36,68 @@ static const int MAX_KERNEL_BLOCKS = 4096;
 
 namespace tmd {
 
-NonbondedInteractionType
-get_nonbonded_interaction_type(const std::vector<int> &row_atom_idxs,
-                               const std::vector<int> &col_atom_idxs) {
+NonbondedInteractionType get_nonbonded_interaction_type(
+    const std::vector<std::vector<int>> &row_atom_idxs,
+    const std::vector<std::vector<int>> &col_atom_idxs) {
 
   // row and col idxs must be either:
   // 1) disjoint: row_atom_idxs \intersection overlapping = empty set
   // 2) overlapping: row_atom_idxs == col_atom_idxs[:len(row_atom_idxs)]
-  bool is_disjoint = true;
-  std::set<int> unique_row_idxs(row_atom_idxs.begin(), row_atom_idxs.end());
-  for (int col_atom_idx : col_atom_idxs) {
-    if (unique_row_idxs.find(col_atom_idx) != unique_row_idxs.end()) {
-      is_disjoint = false;
-      break;
-    }
-  }
-  if (is_disjoint) {
-    return NonbondedInteractionType::DISJOINT;
-  }
-
-  if (row_atom_idxs.size() > col_atom_idxs.size()) {
+  std::optional<NonbondedInteractionType> last_ixn_type;
+  if (row_atom_idxs.size() != col_atom_idxs.size()) {
     throw std::runtime_error(
-        "num row atoms(" + std::to_string(row_atom_idxs.size()) +
-        ") must be <= num col atoms(" + std::to_string(col_atom_idxs.size()) +
-        ") if non-disjoint");
+        "row atom batches and column atom batches don't match");
   }
-  bool is_overlapping = true;
-  for (int i = 0; i < row_atom_idxs.size(); i++) {
-    if (row_atom_idxs[i] != col_atom_idxs[i]) {
-      is_overlapping = false;
-      break;
+  for (int batch_idx = 0; batch_idx < row_atom_idxs.size(); batch_idx++) {
+    bool is_disjoint = true;
+    auto row_atoms_batch = row_atom_idxs[batch_idx];
+    auto col_atoms_batch = col_atom_idxs[batch_idx];
+    std::set<int> unique_row_idxs(row_atoms_batch.begin(),
+                                  row_atoms_batch.end());
+    for (int col_atom_idx : col_atoms_batch) {
+      if (unique_row_idxs.find(col_atom_idx) != unique_row_idxs.end()) {
+        is_disjoint = false;
+        break;
+      }
+    }
+    if (is_disjoint) {
+      if (last_ixn_type &&
+          last_ixn_type.value() != NonbondedInteractionType::DISJOINT) {
+        throw std::runtime_error(
+            "batches of atom indices are not of the same type");
+      } else {
+        last_ixn_type = NonbondedInteractionType::DISJOINT;
+      }
+    }
+
+    if (row_atoms_batch.size() > col_atoms_batch.size()) {
+      throw std::runtime_error(
+          "num row atoms(" + std::to_string(row_atoms_batch.size()) +
+          ") must be <= num col atoms(" +
+          std::to_string(col_atoms_batch.size()) + ") if non-disjoint");
+    }
+    bool is_overlapping = true;
+    for (int i = 0; i < row_atoms_batch.size(); i++) {
+      if (row_atoms_batch[i] != col_atoms_batch[i]) {
+        is_overlapping = false;
+        break;
+      }
+    }
+    if (is_overlapping) {
+      if (last_ixn_type &&
+          last_ixn_type.value() != NonbondedInteractionType::OVERLAPPING) {
+        throw std::runtime_error(
+            "batches of atom indices are not of the same type");
+      } else {
+        last_ixn_type = NonbondedInteractionType::OVERLAPPING;
+      }
     }
   }
-  if (is_overlapping) {
-    return NonbondedInteractionType::OVERLAPPING;
+  if (!last_ixn_type) {
+    throw std::runtime_error(
+        "row and col indices are neither disjoint nor overlapping");
   }
-
-  throw std::runtime_error(
-      "row and col indices are neither disjoint nor overlapping");
+  return last_ixn_type.value();
 }
 
 bool is_upper_triangular(NonbondedInteractionType ixn_type) {
@@ -87,9 +111,27 @@ bool is_upper_triangular(NonbondedInteractionType ixn_type) {
   }
 }
 
+int max_atoms_from_row_and_columns(const std::vector<int> &row_idx_counts,
+                                   const std::vector<int> &col_idx_counts,
+                                   NonbondedInteractionType ixn_type) {
+  int K; // number of atoms involved in the interaction group
+  const int max_NC =
+      *std::max_element(col_idx_counts.begin(), col_idx_counts.end());
+  if (ixn_type == NonbondedInteractionType::DISJOINT) {
+    const int max_NR =
+        *std::max_element(row_idx_counts.begin(), row_idx_counts.end());
+    K = max_NR + max_NC;
+  } else {
+    // NC_ contains NR_ already, since they're overlapping
+    K = max_NC;
+  }
+  return K;
+}
+
 template <typename RealType>
 NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
-    const int num_systems, const int N, const std::vector<std::vector<int>> &row_atom_idxs,
+    const int num_systems, const int N,
+    const std::vector<std::vector<int>> &row_atom_idxs,
     const std::vector<std::vector<int>> &col_atom_idxs, const RealType beta,
     const RealType cutoff, const bool disable_hilbert_sort,
     const RealType nblist_padding)
@@ -174,7 +216,7 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
       disable_hilbert_(disable_hilbert_sort) {
 
   this->validate_idxs(N_, row_atom_idxs, col_atom_idxs, false);
-  for (int in = 0; i <num_systems_; i++) {
+  for (int i = 0; i < num_systems_; i++) {
     column_idx_counts_[i] = col_atom_idxs[i].size();
     row_idx_counts_[i] = row_atom_idxs[i].size();
   }
@@ -197,14 +239,10 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
                  row_idx_counts_.size() * sizeof(*d_row_atom_idxs_counts_),
                  cudaMemcpyHostToDevice));
 
-  cudaSafeMalloc(&d_arange_buffer_,
-                 num_systems_ * N_ * sizeof(*d_arange_buffer_));
-
-  k_segment_arange<<<dim3(ceil_divide(N_, DEFAULT_THREADS_PER_BLOCK),
-                          num_systems_, 1),
-                     DEFAULT_THREADS_PER_BLOCK, 0>>>(num_systems_, N_,
-                                                     d_arange_buffer_);
-  gpuErrchk(cudaPeekAtLastError());
+  cudaSafeMalloc(&d_nblist_row_idxs_,
+                 num_systems_ * N_ * sizeof(*d_nblist_row_idxs_));
+  cudaSafeMalloc(&d_nblist_col_idxs_,
+                 num_systems_ * N_ * sizeof(*d_nblist_col_idxs_));
 
   // this needs to be large enough to be safe when resized
   const int mnkb = this->get_max_nonbonded_kernel_blocks();
@@ -253,7 +291,8 @@ NonbondedInteractionGroup<RealType>::~NonbondedInteractionGroup() {
   gpuErrchk(cudaFree(d_col_atom_idxs_counts_));
   gpuErrchk(cudaFree(d_row_atom_idxs_));
   gpuErrchk(cudaFree(d_row_atom_idxs_counts_));
-  gpuErrchk(cudaFree(d_arange_buffer_));
+  gpuErrchk(cudaFree(d_nblist_row_idxs_));
+  gpuErrchk(cudaFree(d_nblist_col_idxs_));
 
   gpuErrchk(cudaFree(d_perm_));
 
@@ -501,37 +540,42 @@ void NonbondedInteractionGroup<RealType>::execute_device(
 // row/column atom indices
 template <typename RealType>
 int NonbondedInteractionGroup<RealType>::get_max_atoms() const {
-  int K; // number of atoms involved in the interaction group
-  const int max_NC =
-      *std::max_element(column_idx_counts_.begin(), column_idx_counts_.end());
-  if (interaction_type_ == NonbondedInteractionType::DISJOINT) {
-    const int max_NR =
-        *std::max_element(row_idx_counts_.begin(), row_idx_counts_.end());
-    K = max_NR + max_NC;
-  } else {
-    // NC_ contains NR_ already, since they're overlapping
-    K = max_NC;
-  }
-  return K;
+
+  return max_atoms_from_row_and_columns(row_idx_counts_, column_idx_counts_,
+                                        interaction_type_);
 }
 
 template <typename RealType>
 void NonbondedInteractionGroup<RealType>::set_atom_idxs(
-    const std::vector<int> &row_atom_idxs,
-    const std::vector<int> &col_atom_idxs) {
+    const std::vector<std::vector<int>> &row_atom_idxs,
+    const std::vector<std::vector<int>> &col_atom_idxs) {
 
   this->validate_idxs(N_, row_atom_idxs, col_atom_idxs, false);
 
-  std::vector<unsigned int> row_atom_idxs_v(row_atom_idxs.begin(),
-                                            row_atom_idxs.end());
-  std::vector<unsigned int> col_atom_idxs_v(col_atom_idxs.begin(),
-                                            col_atom_idxs.end());
+  std::vector<int> row_counts(num_systems_);
+  std::vector<int> col_counts(num_systems_);
+  std::vector<unsigned int> row_atom_idxs_v;
+  std::vector<unsigned int> col_atom_idxs_v;
+  for (int i = 0; i < num_systems_; i++) {
+    row_counts[i] = row_atom_idxs[i].size();
+    col_counts[i] = col_atom_idxs[i].size();
+
+    const size_t row_offset = row_atom_idxs_v.size();
+    row_atom_idxs_v.resize(row_offset + N_, N_);
+    std::memcpy(row_atom_idxs_v.data() + row_offset, row_atom_idxs[i].data(),
+                row_atom_idxs[i].size() * sizeof(unsigned int));
+
+    const size_t col_offset = col_atom_idxs_v.size();
+    col_atom_idxs_v.resize(col_offset + N_, N_);
+    std::memcpy(col_atom_idxs_v.data() + col_offset, col_atom_idxs[i].data(),
+                col_atom_idxs[i].size() * sizeof(unsigned int));
+  }
 
   cudaStream_t stream = static_cast<cudaStream_t>(0);
   DeviceBuffer<unsigned int> d_col(col_atom_idxs_v);
   DeviceBuffer<unsigned int> d_row(row_atom_idxs_v);
-  this->set_atom_idxs_device(row_atom_idxs_v.size(), col_atom_idxs_v.size(),
-                             d_row.data, d_col.data, stream);
+  this->set_atom_idxs_device(row_counts, col_counts, d_row.data, d_col.data,
+                             stream);
   gpuErrchk(cudaStreamSynchronize(stream));
 }
 
@@ -559,11 +603,16 @@ std::vector<int> NonbondedInteractionGroup<RealType>::get_col_idxs() const {
 // used as the new idxs to compute the neighborlist on.
 template <typename RealType>
 void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
-    const int NR, const int NC, unsigned int *d_in_row_idxs,
-    unsigned int *d_in_column_idxs, const cudaStream_t stream) {
+    const std::vector<int> &row_counts, const std::vector<int> &col_counts,
+    unsigned int *d_in_row_idxs, unsigned int *d_in_column_idxs,
+    const cudaStream_t stream) {
 
-  if (this->interaction_type_ == NonbondedInteractionType::DISJOINT &&
-      NC + NR > N_) {
+  if (row_counts.size() != num_systems_ || col_counts.size() != num_systems_) {
+    throw std::runtime_error("row and column counts must match num_systems_");
+  }
+  const int K = max_atoms_from_row_and_columns(row_counts, col_counts,
+                                               this->interaction_type_);
+  if (this->interaction_type_ == NonbondedInteractionType::DISJOINT && K > N_) {
     throw std::runtime_error("number of idxs must be less than or equal to N");
   }
   // Set the permutation to all N_
@@ -572,15 +621,23 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
                        DEFAULT_THREADS_PER_BLOCK, 0, stream>>>(
       num_systems_ * N_, d_perm_, static_cast<unsigned int>(N_));
   gpuErrchk(cudaPeekAtLastError());
-  if (NR > 0 && NC > 0) {
+  if (K > 0) {
     // The indices must already be on the GPU and are copied into the
     // potential's buffers.
     gpuErrchk(cudaMemcpyAsync(d_col_atom_idxs_, d_in_column_idxs,
-                              NC * sizeof(*d_col_atom_idxs_),
+                              num_systems_ * N_ * sizeof(*d_col_atom_idxs_),
                               cudaMemcpyDeviceToDevice, stream));
     gpuErrchk(cudaMemcpyAsync(d_row_atom_idxs_, d_in_row_idxs,
-                              NR * sizeof(*d_row_atom_idxs_),
+                              num_systems_ * N_ * sizeof(*d_row_atom_idxs_),
                               cudaMemcpyDeviceToDevice, stream));
+
+    // TBD: Figure out a way to resolve this
+    gpuErrchk(cudaMemcpyAsync(d_row_atom_idxs_counts_, &row_counts[0],
+                              num_systems_ * sizeof(int),
+                              cudaMemcpyHostToDevice, stream));
+    gpuErrchk(cudaMemcpyAsync(d_col_atom_idxs_counts_, &col_counts[0],
+                              num_systems_ * sizeof(int),
+                              cudaMemcpyHostToDevice, stream));
 
     // disjoint:
     // row_idxs = 012_____, col_idxs=34567___, n=8
@@ -594,25 +651,31 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
     // just do this once in constructor and be done with it.
 
     // Resize the nblist
-    if (interaction_type_ == NonbondedInteractionType::DISJOINT) {
-      nblist_.resize_device(NC + NR, stream);
-    } else if (interaction_type_ == NonbondedInteractionType::OVERLAPPING) {
-      nblist_.resize_device(NC, stream);
-    }
+    nblist_.resize_device(K, stream);
 
-    int col_offset =
-        (interaction_type_ == NonbondedInteractionType::DISJOINT) ? NR : 0;
-    // Offset into the ends of the arrays that now contain the row and column
-    // indices for the nblist
-    nblist_.set_idxs_device(NR, NC, d_arange_buffer_,
-                            d_arange_buffer_ + col_offset, stream);
+    // The neighborlist only sees the permuted coordinates, so the row and atom
+    // indices provided are sequential (e.g. [1, 2, 3, ...]) compared to the
+    // interaction group which may have non-sequential row/col indices (e.g. [5,
+    // 3, 10, ...])
+    k_setup_nblist_row_and_column_indices<<<
+        ceil_divide(K, DEFAULT_THREADS_PER_BLOCK), DEFAULT_THREADS_PER_BLOCK, 0,
+        stream>>>(num_systems_, N_, d_row_atom_idxs_counts_,
+                  d_col_atom_idxs_counts_,
+                  interaction_type_ == NonbondedInteractionType::DISJOINT,
+                  d_nblist_row_idxs_, d_nblist_col_idxs_);
+    gpuErrchk(cudaPeekAtLastError());
+
+    nblist_.set_idxs_device(d_row_atom_idxs_counts_, d_col_atom_idxs_counts_,
+                            d_nblist_row_idxs_, d_nblist_col_idxs_, stream);
   }
 
   // Update the row and column counts
-  this->NR_ = NR;
-  this->NC_ = NC;
-  std::fill(column_idx_counts_.begin(), column_idx_counts_.end(), NC);
-  std::fill(row_idx_counts_.begin(), row_idx_counts_.end(), NR);
+  // this->NR_ = NR;
+  // this->NC_ = NC;
+  std::memcpy(column_idx_counts_.data(), column_idx_counts_.data(),
+              num_systems_ * sizeof(int));
+  std::memcpy(row_idx_counts_.data(), row_idx_counts_.data(),
+              num_systems_ * sizeof(int));
   // Reset the steps so that we do a new sort, forcing a new nblist rebuild
   this->steps_since_last_sort_ = 0;
 }
@@ -653,7 +716,8 @@ void NonbondedInteractionGroup<RealType>::set_nblist_padding(
 }
 
 template <typename RealType>
-void NonbondedInteractionGroup<RealType>::set_compute_col_grads(const bool value) {
+void NonbondedInteractionGroup<RealType>::set_compute_col_grads(
+    const bool value) {
   // If compute_col_grads is true, we always compute gradients on the column
   // idxs. If we're in the disjoint case:
   //      compute_col_grads must always be true.
@@ -671,13 +735,21 @@ void NonbondedInteractionGroup<RealType>::set_compute_col_grads(const bool value
 template <typename RealType>
 void NonbondedInteractionGroup<RealType>::validate_idxs(
     const int N, const std::vector<std::vector<int>> &row_atom_idxs,
-    const std::vector<std::vector<int>> &col_atom_idxs, const bool allow_empty) {
+    const std::vector<std::vector<int>> &col_atom_idxs,
+    const bool allow_empty) {
 
   if (row_atom_idxs.size() != num_systems_) {
-    throw std::runtime_error("row atom batches doesn't match expected number of batches");
+    throw std::runtime_error(
+        "row atom batches doesn't match expected number of batches");
   }
   if (row_atom_idxs.size() != col_atom_idxs.size()) {
-    throw std::runtime_error("row atom batches and column atom batches don't match");
+    throw std::runtime_error(
+        "row atom batches and column atom batches don't match");
+  }
+  NonbondedInteractionType new_ixn_type =
+      get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs);
+  if (new_ixn_type != this->interaction_type_) {
+    throw std::runtime_error("switching interaction types is not supported");
   }
   for (int i = 0; i < row_atom_idxs.size(); i++) {
     if (!allow_empty) {
@@ -698,13 +770,6 @@ void NonbondedInteractionGroup<RealType>::validate_idxs(
     }
     verify_atom_idxs(N, row_atom_idxs[i], allow_empty);
     verify_atom_idxs(N, col_atom_idxs[i], allow_empty);
-
-    NonbondedInteractionType new_ixn_type =
-        get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs);
-
-    if (new_ixn_type != this->interaction_type_) {
-      throw std::runtime_error("switching interaction types is not supported");
-    }
   }
 
   return;
