@@ -2763,6 +2763,14 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                       unique_idxs(row_atom_idxs);
                   col_atom_idxs =
                       get_indices_difference(N, unique_row_atom_idxs);
+                  for (int i = 0; i < static_cast<int>(col_atom_idxs.size());
+                       i++) {
+                    printf("CI %d - %d\n", i, col_atom_idxs[i]);
+                  }
+                  for (int i = 0; i < static_cast<int>(row_atom_idxs.size());
+                       i++) {
+                    printf("RI %d - %d\n", i, row_atom_idxs[i]);
+                  }
                 }
 
                 return new NonbondedInteractionGroup<RealType>(
@@ -2850,7 +2858,7 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
           py::arg("disable_hilbert_sort") = false,
           py::arg("nblist_padding") = 0.1,
           R"pbdoc(
-                    Set up the NonbondedInteractionGroup.
+                    Set up batched NonbondedInteractionGroup.
 
                     Parameters
                     ----------
@@ -2876,6 +2884,16 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                         Margin for the neighborlist.
 
             )pbdoc")
+      .def(
+          "set_atom_idxs",
+          [](Class &pot, const py::array_t<int, py::array::c_style> &row_idxs_i,
+             const py::array_t<int, py::array::c_style> &col_idxs_i) {
+            pot.set_atom_idxs(std::vector<std::vector<int>>(
+                                  1, py_array_to_vector(row_idxs_i)),
+                              std::vector<std::vector<int>>(
+                                  1, py_array_to_vector(col_idxs_i)));
+          },
+          py::arg("row_atom_idxs"), py::arg("col_atom_idxs"))
       .def("set_atom_idxs", &Class::set_atom_idxs, py::arg("row_atom_idxs"),
            py::arg("col_atom_idxs"),
            R"pbdoc(

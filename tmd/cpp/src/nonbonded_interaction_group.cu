@@ -36,7 +36,7 @@ static const int MAX_KERNEL_BLOCKS = 4096;
 
 namespace tmd {
 
-NonbondedInteractionType get_nonbonded_interaction_type(
+static NonbondedInteractionType get_nonbonded_interaction_type(
     const std::vector<std::vector<int>> &row_atom_idxs,
     const std::vector<std::vector<int>> &col_atom_idxs) {
 
@@ -67,29 +67,31 @@ NonbondedInteractionType get_nonbonded_interaction_type(
             "batches of atom indices are not of the same type");
       } else {
         last_ixn_type = NonbondedInteractionType::DISJOINT;
+        printf("Here DISJOINT\n");
       }
-    }
-
-    if (row_atoms_batch.size() > col_atoms_batch.size()) {
-      throw std::runtime_error(
-          "num row atoms(" + std::to_string(row_atoms_batch.size()) +
-          ") must be <= num col atoms(" +
-          std::to_string(col_atoms_batch.size()) + ") if non-disjoint");
-    }
-    bool is_overlapping = true;
-    for (int i = 0; i < row_atoms_batch.size(); i++) {
-      if (row_atoms_batch[i] != col_atoms_batch[i]) {
-        is_overlapping = false;
-        break;
-      }
-    }
-    if (is_overlapping) {
-      if (last_ixn_type &&
-          last_ixn_type.value() != NonbondedInteractionType::OVERLAPPING) {
+    } else {
+      if (row_atoms_batch.size() > col_atoms_batch.size()) {
         throw std::runtime_error(
-            "batches of atom indices are not of the same type");
-      } else {
-        last_ixn_type = NonbondedInteractionType::OVERLAPPING;
+            "num row atoms(" + std::to_string(row_atoms_batch.size()) +
+            ") must be <= num col atoms(" +
+            std::to_string(col_atoms_batch.size()) + ") if non-disjoint");
+      }
+      bool is_overlapping = true;
+      for (int i = 0; i < row_atoms_batch.size(); i++) {
+        if (row_atoms_batch[i] != col_atoms_batch[i]) {
+          is_overlapping = false;
+          break;
+        }
+      }
+      if (is_overlapping) {
+        if (last_ixn_type &&
+            last_ixn_type.value() != NonbondedInteractionType::OVERLAPPING) {
+          throw std::runtime_error(
+              "batches of atom indices are not of the same type");
+        } else {
+          last_ixn_type = NonbondedInteractionType::OVERLAPPING;
+          printf("Here OVERLAP\n");
+        }
       }
     }
   }
@@ -111,9 +113,10 @@ bool is_upper_triangular(NonbondedInteractionType ixn_type) {
   }
 }
 
-int max_atoms_from_row_and_columns(const std::vector<int> &row_idx_counts,
-                                   const std::vector<int> &col_idx_counts,
-                                   NonbondedInteractionType ixn_type) {
+static int
+max_atoms_from_row_and_columns(const std::vector<int> &row_idx_counts,
+                               const std::vector<int> &col_idx_counts,
+                               NonbondedInteractionType ixn_type) {
   int K; // number of atoms involved in the interaction group
   const int max_NC =
       *std::max_element(col_idx_counts.begin(), col_idx_counts.end());
@@ -615,10 +618,10 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
   if (this->interaction_type_ == NonbondedInteractionType::DISJOINT && K > N_) {
     throw std::runtime_error("number of idxs must be less than or equal to N");
   }
+
+  constexpr int tpb = DEFAULT_THREADS_PER_BLOCK;
   // Set the permutation to all N_
-  k_initialize_array<<<ceil_divide(num_systems_ * N_,
-                                   DEFAULT_THREADS_PER_BLOCK),
-                       DEFAULT_THREADS_PER_BLOCK, 0, stream>>>(
+  k_initialize_array<<<ceil_divide(num_systems_ * N_, tpb), tpb, 0, stream>>>(
       num_systems_ * N_, d_perm_, static_cast<unsigned int>(N_));
   gpuErrchk(cudaPeekAtLastError());
   if (K > 0) {
@@ -631,7 +634,7 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
                               num_systems_ * N_ * sizeof(*d_row_atom_idxs_),
                               cudaMemcpyDeviceToDevice, stream));
 
-    // TBD: Figure out a way to resolve this
+    // TBD: Figure out a way to handle this more gracefully
     gpuErrchk(cudaMemcpyAsync(d_row_atom_idxs_counts_, &row_counts[0],
                               num_systems_ * sizeof(int),
                               cudaMemcpyHostToDevice, stream));
@@ -639,6 +642,15 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
                               num_systems_ * sizeof(int),
                               cudaMemcpyHostToDevice, stream));
 
+    // Resize the nblist
+    nblist_.resize_device(K, stream);
+
+    // The neighborlist only sees the permuted coordinates, so the row and atom
+    // indices provided are sequential (e.g. [1, 2, 3, ...]) compared to the
+    // interaction group which may have non-sequential row/col indices (e.g. [5,
+    // 3, 10, ...])
+
+    // -Example-
     // disjoint:
     // row_idxs = 012_____, col_idxs=34567___, n=8
     // nblist args:
@@ -648,21 +660,11 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
     // row_idxs = 012_____, col_idxs=01234567, n=8
     // nblist args:
     // row_idxs = 012, col_idxs=34567
-    // just do this once in constructor and be done with it.
-
-    // Resize the nblist
-    nblist_.resize_device(K, stream);
-
-    // The neighborlist only sees the permuted coordinates, so the row and atom
-    // indices provided are sequential (e.g. [1, 2, 3, ...]) compared to the
-    // interaction group which may have non-sequential row/col indices (e.g. [5,
-    // 3, 10, ...])
     k_setup_nblist_row_and_column_indices<<<
-        ceil_divide(K, DEFAULT_THREADS_PER_BLOCK), DEFAULT_THREADS_PER_BLOCK, 0,
-        stream>>>(num_systems_, N_, d_row_atom_idxs_counts_,
-                  d_col_atom_idxs_counts_,
-                  interaction_type_ == NonbondedInteractionType::DISJOINT,
-                  d_nblist_row_idxs_, d_nblist_col_idxs_);
+        dim3(ceil_divide(K, tpb), num_systems_, 1), tpb, 0, stream>>>(
+        num_systems_, N_, d_row_atom_idxs_counts_, d_col_atom_idxs_counts_,
+        interaction_type_ == NonbondedInteractionType::DISJOINT,
+        d_nblist_row_idxs_, d_nblist_col_idxs_);
     gpuErrchk(cudaPeekAtLastError());
 
     nblist_.set_idxs_device(d_row_atom_idxs_counts_, d_col_atom_idxs_counts_,

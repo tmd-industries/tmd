@@ -17,9 +17,13 @@
 namespace tmd {
 
 void __global__ k_setup_nblist_row_and_column_indices(
-    const int num_systems, const int N, const int *__restrict__ row_idx_counts,
-    const int *__restrict__ col_idx_counts, const bool is_disjoint,
-    unsigned int *__restrict__ row_idxs, unsigned int *__restrict__ col_idxs) {
+    const int num_systems, const int N,
+    const int *__restrict__ row_idx_counts, // [num_systems]
+    const int *__restrict__ col_idx_counts, // [num_systems]
+    const bool is_disjoint,
+    unsigned int *__restrict__ row_idxs, // [num_systems, N]
+    unsigned int *__restrict__ col_idxs  // [num_systems, N]
+) {
 
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
@@ -31,14 +35,13 @@ void __global__ k_setup_nblist_row_and_column_indices(
   while (idx < row_count || idx < col_count) {
 
     if (idx < row_count) {
+      printf("Row Out %d Idx %d\n", system_idx * N + idx, idx);
       row_idxs[system_idx * N + idx] = idx;
     }
     if (idx < col_count) {
-      if (is_disjoint) {
-        col_idxs[system_idx * N + idx] = idx + row_count;
-      } else {
-        col_idxs[system_idx * N + idx] = idx;
-      }
+      printf("Col Out %d Idx %d\n", system_idx * N + idx,
+             is_disjoint ? idx + row_count : idx);
+      col_idxs[system_idx * N + idx] = is_disjoint ? idx + row_count : idx;
     }
 
     idx += gridDim.x * blockDim.x;
