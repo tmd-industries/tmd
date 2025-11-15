@@ -543,9 +543,11 @@ class MultiTopology(BaseTopology):
         for i, mol_idxs in enumerate(components):
             for comp_mol_idxs in components[i + 1 :]:
                 # Generate all of the possible pairs
-                mutual_exclusions_.extend(np.array(np.meshgrid(mol_idxs, comp_mol_idxs)).T.reshape(-1, 2).tolist())
+                mutual_exclusions_.append(
+                    np.asarray(np.meshgrid(mol_idxs, comp_mol_idxs), dtype=np.int32).T.reshape(-1, 2)
+                )
 
-        mutual_exclusions = np.array(mutual_exclusions_).reshape(-1, 2)
+        mutual_exclusions = np.concatenate(mutual_exclusions_, dtype=np.int32).reshape(-1, 2)
         # All scales are set to 1.0
         mutual_scale_factors = np.ones_like(mutual_exclusions)
 
