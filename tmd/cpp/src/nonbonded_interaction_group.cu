@@ -67,7 +67,6 @@ static NonbondedInteractionType get_nonbonded_interaction_type(
             "batches of atom indices are not of the same type");
       } else {
         last_ixn_type = NonbondedInteractionType::DISJOINT;
-        printf("Here DISJOINT\n");
       }
     } else {
       if (row_atoms_batch.size() > col_atoms_batch.size()) {
@@ -90,7 +89,6 @@ static NonbondedInteractionType get_nonbonded_interaction_type(
               "batches of atom indices are not of the same type");
         } else {
           last_ixn_type = NonbondedInteractionType::OVERLAPPING;
-          printf("Here OVERLAP\n");
         }
       }
     }
@@ -113,19 +111,21 @@ bool is_upper_triangular(NonbondedInteractionType ixn_type) {
   }
 }
 
+static int max_vector_int(const std::vector<int> &vec) {
+  return *std::max_element(vec.begin(), vec.end());
+}
+
 static int
 max_atoms_from_row_and_columns(const std::vector<int> &row_idx_counts,
                                const std::vector<int> &col_idx_counts,
                                NonbondedInteractionType ixn_type) {
   int K; // number of atoms involved in the interaction group
-  const int max_NC =
-      *std::max_element(col_idx_counts.begin(), col_idx_counts.end());
+  const int max_NC = max_vector_int(col_idx_counts);
   if (ixn_type == NonbondedInteractionType::DISJOINT) {
-    const int max_NR =
-        *std::max_element(row_idx_counts.begin(), row_idx_counts.end());
+    const int max_NR = max_vector_int(row_idx_counts);
     K = max_NR + max_NC;
   } else {
-    // NC_ contains NR_ already, since they're overlapping
+    // NC contains NR already, since they're overlapping
     K = max_NC;
   }
   return K;
@@ -138,8 +138,7 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
     const std::vector<std::vector<int>> &col_atom_idxs, const RealType beta,
     const RealType cutoff, const bool disable_hilbert_sort,
     const RealType nblist_padding)
-    : num_systems_(num_systems), N_(N), NR_(row_atom_idxs.size()),
-      NC_(col_atom_idxs.size()),
+    : num_systems_(num_systems), N_(N),
       interaction_type_(
           get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs)),
       compute_col_grads_(true), nrg_accum_(num_systems_, MAX_KERNEL_BLOCKS),
@@ -328,8 +327,9 @@ int NonbondedInteractionGroup<RealType>::get_max_nonbonded_kernel_blocks()
 template <typename RealType>
 int NonbondedInteractionGroup<RealType>::get_cur_nonbonded_kernel_blocks()
     const {
+  const int NR = max_vector_int(this->row_idx_counts_);
   int cur_nonbonded_kernel_blocks =
-      static_cast<int>(ceil(NR_ * NONBONDED_BLOCKS_TO_ROW_ATOMS_RATIO));
+      static_cast<int>(ceil(NR * NONBONDED_BLOCKS_TO_ROW_ATOMS_RATIO));
   int max_nonbonded_kernel_blocks = this->get_max_nonbonded_kernel_blocks();
   return min(cur_nonbonded_kernel_blocks, max_nonbonded_kernel_blocks);
 }
@@ -448,7 +448,8 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   }
 
   // If the size of the row or cols is none, exit
-  if (NR_ == 0 || NC_ == 0) {
+  if (max_vector_int(row_idx_counts_) == 0 ||
+      max_vector_int(column_idx_counts_) == 0) {
     return;
   }
 
@@ -584,22 +585,34 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs(
 
 template <typename RealType>
 std::vector<int> NonbondedInteractionGroup<RealType>::get_row_idxs() const {
-  std::vector<int> h_row_idxs(this->NR_);
+  std::vector<int> h_row_idxs(num_systems_ * N_);
 
   gpuErrchk(cudaMemcpy(&h_row_idxs[0], d_row_atom_idxs_,
-                       this->NR_ * sizeof(*d_row_atom_idxs_),
+                       h_row_idxs.size() * sizeof(*d_row_atom_idxs_),
                        cudaMemcpyDeviceToHost));
-  return h_row_idxs;
+  std::vector<int> row_out;
+  for (size_t i = 0; i < h_row_idxs.size(); i++) {
+    if (h_row_idxs[i] < N_) {
+      row_out.push_back(h_row_idxs[i]);
+    }
+  }
+  return row_out;
 }
 
 template <typename RealType>
 std::vector<int> NonbondedInteractionGroup<RealType>::get_col_idxs() const {
-  std::vector<int> h_col_idxs(this->NC_);
+  std::vector<int> h_col_idxs(num_systems_ * N_);
 
   gpuErrchk(cudaMemcpy(&h_col_idxs[0], d_col_atom_idxs_,
-                       this->NC_ * sizeof(*d_col_atom_idxs_),
+                       h_col_idxs.size() * sizeof(*d_col_atom_idxs_),
                        cudaMemcpyDeviceToHost));
-  return h_col_idxs;
+  std::vector<int> col_out;
+  for (size_t i = 0; i < h_col_idxs.size(); i++) {
+    if (h_col_idxs[i] < N_) {
+      col_out.push_back(h_col_idxs[i]);
+    }
+  }
+  return col_out;
 }
 
 // set_atom_idxs_device is for use when idxs exist on the GPU already and are
@@ -672,11 +685,9 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
   }
 
   // Update the row and column counts
-  // this->NR_ = NR;
-  // this->NC_ = NC;
-  std::memcpy(column_idx_counts_.data(), column_idx_counts_.data(),
+  std::memcpy(column_idx_counts_.data(), col_counts.data(),
               num_systems_ * sizeof(int));
-  std::memcpy(row_idx_counts_.data(), row_idx_counts_.data(),
+  std::memcpy(row_idx_counts_.data(), row_counts.data(),
               num_systems_ * sizeof(int));
   // Reset the steps so that we do a new sort, forcing a new nblist rebuild
   this->steps_since_last_sort_ = 0;
@@ -776,6 +787,15 @@ void NonbondedInteractionGroup<RealType>::validate_idxs(
 
   return;
 }
+
+template <typename RealType>
+int NonbondedInteractionGroup<RealType>::get_num_col_idxs() const {
+  return max_vector_int(column_idx_counts_);
+};
+template <typename RealType>
+int NonbondedInteractionGroup<RealType>::get_num_row_idxs() const {
+  return max_vector_int(row_idx_counts_);
+};
 
 template class NonbondedInteractionGroup<double>;
 template class NonbondedInteractionGroup<float>;

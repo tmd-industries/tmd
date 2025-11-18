@@ -11,7 +11,7 @@ pytestmark = [pytest.mark.memcheck]
 
 
 def test_nonbonded_interaction_group_invalid_indices():
-    with pytest.raises(RuntimeError, match=re.escape("row_atom_idxs must be nonempty")):
+    with pytest.raises(RuntimeError, match=re.escape("provide at least one batch of row atom indices")):
         NonbondedInteractionGroup(1, [], 1.0, 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("atom indices must be unique")):
@@ -29,7 +29,7 @@ def test_nonbonded_interaction_group_invalid_indices():
     with pytest.raises(RuntimeError, match=re.escape("num row idxs must be <= N(3)")):
         NonbondedInteractionGroup(3, [0, 1, 2, 3], 1.0, 1.0, col_atom_idxs=[5]).to_gpu(np.float64).unbound_impl
 
-    with pytest.raises(RuntimeError, match=re.escape("num col idxs must be <= N(3)")):
+    with pytest.raises(RuntimeError, match=re.escape("index values must be less than N(3)")):
         NonbondedInteractionGroup(3, [0, 1], 1.0, 1.0, col_atom_idxs=[2, 3, 4, 5]).to_gpu(np.float64).unbound_impl
 
     # okay; overlapping
@@ -155,7 +155,6 @@ def test_nonbonded_interaction_group_correctness(
         host_idxs = np.setdiff1d(np.arange(num_atoms), ligand_idxs).astype(np.int32)
         col_atom_idxs = rng.choice(host_idxs, size=(num_col_atoms,), replace=False).astype(np.int32)
 
-    print("Row", len(ligand_idxs), "Col", len(col_atom_idxs) if col_atom_idxs is not None else 0)
     potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs=col_atom_idxs)
 
     test_impl = potential.to_gpu(precision)
@@ -372,7 +371,7 @@ def test_nonbonded_interaction_group_consistency_allpairs_constant_shift(
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 @pytest.mark.parametrize("num_atoms_ligand", [1, 15])
-@pytest.mark.parametrize("num_atoms", [16, 231])
+@pytest.mark.parametrize("num_atoms", [33, 231])
 def test_nonbonded_interaction_group_set_atom_idxs(
     num_atoms, num_atoms_ligand, precision, cutoff, beta, rng: np.random.Generator
 ):
@@ -395,13 +394,14 @@ def test_nonbonded_interaction_group_set_atom_idxs(
     # Set to first particle not in ligand_idxs, should produce different values
     col_atom_idxs = np.setdiff1d(np.arange(num_atoms, dtype=np.int32), secondary_ligand_set)
     unbound_pot.set_atom_idxs(secondary_ligand_set, col_atom_idxs)  # type: ignore
+    assert np.all(unbound_pot.get_row_idxs() == secondary_ligand_set)
+    assert np.all(unbound_pot.get_col_idxs() == col_atom_idxs)
 
     diff_du_dx, diff_du_dp, diff_u = unbound_pot.execute(conf, params, box)
     assert np.any(diff_du_dx != ref_du_dx)
     assert np.any(diff_du_dp != ref_du_dp)
     assert not np.allclose(ref_u, diff_u)
 
-    print(secondary_ligand_set, col_atom_idxs)
     # Reconstructing an Ixn group with the other set of atoms should be identical.
     potential2 = NonbondedInteractionGroup(num_atoms, secondary_ligand_set, beta, cutoff)
     unbound_pot2 = potential2.to_gpu(precision).unbound_impl

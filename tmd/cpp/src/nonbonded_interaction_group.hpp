@@ -48,8 +48,6 @@ private:
   const int num_systems_;
   const int
       N_; // total number of atoms, i.e. first dimension of input coords, params
-  int NR_; // number of row atoms
-  int NC_; // number of column atoms
 
   const NonbondedInteractionType interaction_type_;
   bool compute_col_grads_;
@@ -130,8 +128,8 @@ public:
 
   RealType get_beta() const { return beta_; };
 
-  int get_num_col_idxs() const { return NC_; };
-  int get_num_row_idxs() const { return NR_; };
+  int get_num_col_idxs() const;
+  int get_num_row_idxs() const;
 
   std::vector<int> get_row_idxs() const;
   std::vector<int> get_col_idxs() const;

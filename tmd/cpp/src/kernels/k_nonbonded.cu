@@ -35,12 +35,9 @@ void __global__ k_setup_nblist_row_and_column_indices(
   while (idx < row_count || idx < col_count) {
 
     if (idx < row_count) {
-      printf("Row Out %d Idx %d\n", system_idx * N + idx, idx);
       row_idxs[system_idx * N + idx] = idx;
     }
     if (idx < col_count) {
-      printf("Col Out %d Idx %d\n", system_idx * N + idx,
-             is_disjoint ? idx + row_count : idx);
       col_idxs[system_idx * N + idx] = is_disjoint ? idx + row_count : idx;
     }
 

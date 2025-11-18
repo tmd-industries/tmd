@@ -106,10 +106,6 @@ void __global__ k_find_block_bounds(
 
   if (row_idx < num_row_idxs) {
     int atom_idx = row_idxs[N * system_idx + row_idx];
-    // if (system_idx == 3) {
-    //   printf("Row Count %d Row %d Atom Idx %d\n", num_row_idxs, row_idx,
-    //          atom_idx);
-    // }
 
     pos_x = coords[system_idx * N * 3 + atom_idx * 3 + 0];
     pos_y = coords[system_idx * N * 3 + atom_idx * 3 + 1];

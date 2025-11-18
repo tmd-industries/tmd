@@ -2763,14 +2763,6 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                       unique_idxs(row_atom_idxs);
                   col_atom_idxs =
                       get_indices_difference(N, unique_row_atom_idxs);
-                  for (int i = 0; i < static_cast<int>(col_atom_idxs.size());
-                       i++) {
-                    printf("CI %d - %d\n", i, col_atom_idxs[i]);
-                  }
-                  for (int i = 0; i < static_cast<int>(row_atom_idxs.size());
-                       i++) {
-                    printf("RI %d - %d\n", i, row_atom_idxs[i]);
-                  }
                 }
 
                 return new NonbondedInteractionGroup<RealType>(

@@ -578,7 +578,8 @@ void Neighborlist<RealType>::set_idxs_device(
 
   for (auto row_size : h_row_counts) {
     if (row_size > N_) {
-      throw std::runtime_error("NR > N_");
+      throw std::runtime_error("NR > N_, got NR=" + std::to_string(row_size) +
+                               ", N_=" + std::to_string(N_));
     }
     if (row_size == 0) {
       throw std::runtime_error(
@@ -589,7 +590,9 @@ void Neighborlist<RealType>::set_idxs_device(
 
   for (auto column_size : h_col_counts) {
     if (column_size > N_) {
-      throw std::runtime_error("NC > N_");
+      throw std::runtime_error(
+          "NC > N_, got NC=" + std::to_string(column_size) +
+          ", N_=" + std::to_string(N_));
     }
     if (column_size == 0) {
       throw std::runtime_error(

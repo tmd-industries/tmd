@@ -442,7 +442,7 @@ void __global__ k_nonbonded_unified(
   // Offset pointers for each replica
   const RealType *coords_ptr = coords + system_idx * N * 3;
   const RealType *box_ptr = box + system_idx * 3 * 3;
-  const RealType *params_ptr = params + system_idx * PARAMS_PER_ATOM * 3;
+  const RealType *params_ptr = params + system_idx * N * PARAMS_PER_ATOM;
   const unsigned int *perm_ptr = output_permutation + system_idx * N;
   const unsigned int *ixn_atom_ptr = ixn_atoms + system_idx * N;
   const int *tiles_ptr = ixn_tiles + system_idx * tiles_per_system;
