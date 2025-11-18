@@ -393,7 +393,7 @@ def gen_nonbonded_params_with_4d_offsets(
     if w_min is None:
         w_min = -w_max
 
-    assert len(params.shape) in (2, 3) 
+    assert len(params.shape) in (2, 3)
     num_atoms = params.shape[0]
 
     def params_with_w_coords(w_coords):
