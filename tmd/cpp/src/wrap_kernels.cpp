@@ -2825,11 +2825,17 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
             std::vector<std::vector<int>> combined_row_atoms;
             std::vector<std::vector<int>> combined_col_atoms;
             for (int i = 0; i < num_batches; i++) {
+              if (row_atom_idxs_i[i].ndim() != 1) {
+                throw std::runtime_error("each batch of row indices must be one dimensional");
+              }
               combined_row_atoms.push_back(
                   py_array_to_vector<int>(row_atom_idxs_i[i]));
 
               std::vector<int> col_atom_idxs;
               if (col_atom_idxs_i) {
+                if (col_atom_idxs_i->at(i).ndim() != 1) {
+                  throw std::runtime_error("each batch of column indices must be one dimensional");
+                }
                 col_atom_idxs.resize(col_atom_idxs_i->size());
                 std::memcpy(col_atom_idxs.data(), col_atom_idxs_i->at(i).data(),
                             col_atom_idxs_i->size() * sizeof(int));

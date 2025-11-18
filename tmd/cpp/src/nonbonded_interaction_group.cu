@@ -439,11 +439,11 @@ void NonbondedInteractionGroup<RealType>::execute_device(
                              std::to_string(N) + ", N_=" + std::to_string(N_));
   }
 
-  if (P != N_ * PARAMS_PER_ATOM) {
+  if (P != num_systems_ * N_ * PARAMS_PER_ATOM) {
     throw std::runtime_error(
-        "NonbondedInteractionGroup::execute_device(): expected P == N_*" +
+        "NonbondedInteractionGroup::execute_device(): expected P == num_systems_ * N_*" +
         std::to_string(PARAMS_PER_ATOM) + ", got P=" + std::to_string(P) +
-        ", N_*" + std::to_string(PARAMS_PER_ATOM) + "=" +
+        ", num_systems_*" + std::to_string(num_systems_) + ", N_*" + std::to_string(PARAMS_PER_ATOM) + "=" +
         std::to_string(N_ * PARAMS_PER_ATOM));
   }
 
@@ -519,7 +519,7 @@ void NonbondedInteractionGroup<RealType>::execute_device(
 
   kernel_ptrs_[kernel_idx]<<<dim3(nkb, num_systems_, 1),
                              NONBONDED_KERNEL_THREADS_PER_BLOCK, 0, stream>>>(
-      num_systems_, N_, mnkb, nblist_.get_num_row_idxs(),
+      num_systems_, N_, K, mnkb, nblist_.get_num_row_idxs(),
       nblist_.get_ixn_count(), d_perm_, d_sorted_x_, d_sorted_p_, d_box, beta_,
       cutoff_, nblist_.get_ixn_tiles(), nblist_.get_ixn_atoms(), d_du_dx,
       d_du_dp,

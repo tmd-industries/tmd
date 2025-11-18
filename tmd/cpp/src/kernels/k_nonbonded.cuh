@@ -123,7 +123,9 @@ template <typename RealType, bool ALCHEMICAL, bool COMPUTE_U,
           bool COMPUTE_J_GRADS>
 // void __device__ __forceinline__ v_nonbonded_unified(
 void __device__ v_nonbonded_unified(
-    const int tile_idx, const int N, const int NR,
+    const int tile_idx,
+    const int max_idx, // maximum index in the row/col indices
+    const int NR, // number of row indices
     const unsigned int
         *__restrict__ output_permutation, // [N] Permutation from atom idx ->
                                           // output buffer idx idx
@@ -148,28 +150,28 @@ void __device__ v_nonbonded_unified(
   const int warp_idx = threadIdx.x % WARP_SIZE;
   const int index = row_block_idx * WARP_SIZE + warp_idx;
 
-  const unsigned int atom_i_idx = index < NR ? index : N;
+  const unsigned int atom_i_idx = index < NR ? index : max_idx;
   const unsigned int dest_i_idx =
-      atom_i_idx < N ? output_permutation[atom_i_idx] : N;
+      atom_i_idx < max_idx ? output_permutation[atom_i_idx] : max_idx;
 
-  RealType ci_x = atom_i_idx < N ? coords[atom_i_idx * 3 + 0] : 0;
-  RealType ci_y = atom_i_idx < N ? coords[atom_i_idx * 3 + 1] : 0;
-  RealType ci_z = atom_i_idx < N ? coords[atom_i_idx * 3 + 2] : 0;
+  RealType ci_x = atom_i_idx < max_idx ? coords[atom_i_idx * 3 + 0] : 0;
+  RealType ci_y = atom_i_idx < max_idx ? coords[atom_i_idx * 3 + 1] : 0;
+  RealType ci_z = atom_i_idx < max_idx ? coords[atom_i_idx * 3 + 2] : 0;
 
   unsigned long long gi_x = 0;
   unsigned long long gi_y = 0;
   unsigned long long gi_z = 0;
 
-  RealType qi = atom_i_idx < N
+  RealType qi = atom_i_idx < max_idx
                     ? params[atom_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_CHARGE]
                     : 0;
-  RealType sig_i = atom_i_idx < N
+  RealType sig_i = atom_i_idx < max_idx
                        ? params[atom_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_SIG]
                        : 0;
-  RealType eps_i = atom_i_idx < N
+  RealType eps_i = atom_i_idx < max_idx
                        ? params[atom_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_EPS]
                        : 0;
-  RealType w_i = atom_i_idx < N
+  RealType w_i = atom_i_idx < max_idx
                      ? params[atom_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_W]
                      : 0;
 
@@ -179,27 +181,30 @@ void __device__ v_nonbonded_unified(
   unsigned long long g_wi = 0;
 
   int atom_j_idx = ixn_atoms[tile_idx * WARP_SIZE + warp_idx];
-  int dest_j_idx = atom_j_idx < N ? output_permutation[atom_j_idx] : N;
+  int dest_j_idx = atom_j_idx < max_idx ? output_permutation[atom_j_idx] : max_idx;
+  if (dest_j_idx >= max_idx && atom_j_idx < max_idx) {
+    printf("Fek - N %d %d %d\n", max_idx, dest_j_idx, atom_j_idx);
+  }
 
-  RealType cj_x = atom_j_idx < N ? coords[atom_j_idx * 3 + 0] : 0;
-  RealType cj_y = atom_j_idx < N ? coords[atom_j_idx * 3 + 1] : 0;
-  RealType cj_z = atom_j_idx < N ? coords[atom_j_idx * 3 + 2] : 0;
+  RealType cj_x = atom_j_idx < max_idx ? coords[atom_j_idx * 3 + 0] : 0;
+  RealType cj_y = atom_j_idx < max_idx ? coords[atom_j_idx * 3 + 1] : 0;
+  RealType cj_z = atom_j_idx < max_idx ? coords[atom_j_idx * 3 + 2] : 0;
 
   // compiler should optimize these away if they're not used.
   unsigned long long gj_x = 0;
   unsigned long long gj_y = 0;
   unsigned long long gj_z = 0;
 
-  RealType qj = atom_j_idx < N
+  RealType qj = atom_j_idx < max_idx
                     ? params[atom_j_idx * PARAMS_PER_ATOM + PARAM_OFFSET_CHARGE]
                     : 0;
-  RealType sig_j = atom_j_idx < N
+  RealType sig_j = atom_j_idx < max_idx
                        ? params[atom_j_idx * PARAMS_PER_ATOM + PARAM_OFFSET_SIG]
                        : 0;
-  RealType eps_j = atom_j_idx < N
+  RealType eps_j = atom_j_idx < max_idx
                        ? params[atom_j_idx * PARAMS_PER_ATOM + PARAM_OFFSET_EPS]
                        : 0;
-  RealType w_j = atom_j_idx < N
+  RealType w_j = atom_j_idx < max_idx
                      ? params[atom_j_idx * PARAMS_PER_ATOM + PARAM_OFFSET_W]
                      : 0;
 
@@ -233,7 +238,7 @@ void __device__ v_nonbonded_unified(
 
     // All idxs must be smaller than N and if N == NR then we are doing upper
     // triangle and thus atom_i_idx must be less than atom_j_idx
-    bool valid_ij = (atom_i_idx < N) && (atom_j_idx < N);
+    bool valid_ij = (atom_i_idx < max_idx) && (atom_j_idx < max_idx);
     if (COMPUTE_UPPER_TRIANGLE && atom_i_idx >= atom_j_idx) {
       valid_ij = false;
     }
@@ -353,12 +358,12 @@ void __device__ v_nonbonded_unified(
   // Note as long as TILE_SIZE == WARP_SIZE, don't have to shuffle sync
   // dest_j_idx
   if (COMPUTE_DU_DX) {
-    if (atom_i_idx < N) {
+    if (atom_i_idx < max_idx) {
       atomicAdd(du_dx + dest_i_idx * 3 + 0, gi_x);
       atomicAdd(du_dx + dest_i_idx * 3 + 1, gi_y);
       atomicAdd(du_dx + dest_i_idx * 3 + 2, gi_z);
     }
-    if (COMPUTE_J_GRADS && atom_j_idx < N) {
+    if (COMPUTE_J_GRADS && atom_j_idx < max_idx) {
       atomicAdd(du_dx + dest_j_idx * 3 + 0, gj_x);
       atomicAdd(du_dx + dest_j_idx * 3 + 1, gj_y);
       atomicAdd(du_dx + dest_j_idx * 3 + 2, gj_z);
@@ -366,7 +371,7 @@ void __device__ v_nonbonded_unified(
   }
 
   if (COMPUTE_DU_DP) {
-    if (atom_i_idx < N) {
+    if (atom_i_idx < max_idx) {
       atomicAdd(du_dp + dest_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_CHARGE,
                 g_qi);
       atomicAdd(du_dp + dest_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_SIG,
@@ -376,7 +381,7 @@ void __device__ v_nonbonded_unified(
       atomicAdd(du_dp + dest_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_W, g_wi);
     }
 
-    if (COMPUTE_J_GRADS && atom_j_idx < N) {
+    if (COMPUTE_J_GRADS && atom_j_idx < max_idx) {
       atomicAdd(du_dp + dest_j_idx * PARAMS_PER_ATOM + PARAM_OFFSET_CHARGE,
                 g_qj);
       atomicAdd(du_dp + dest_j_idx * PARAMS_PER_ATOM + PARAM_OFFSET_SIG,
@@ -394,6 +399,7 @@ template <typename RealType, int THREADS_PER_BLOCK, bool COMPUTE_U,
 void __global__ k_nonbonded_unified(
     const int num_systems,
     const int N, // Number of atoms involved in the interaction group
+    const int max_idx, // Largest index that neighborlist will return
     const int u_buffer_stride,
     const unsigned int *__restrict__ row_indice_counts, // Number of row indices
     const unsigned int *__restrict__ ixn_count,         // [num_systems]
@@ -416,6 +422,9 @@ void __global__ k_nonbonded_unified(
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
     return;
+  }
+  if (threadIdx.x == 0) {
+    printf("System idx %d\n", system_idx);
   }
   // Tile size is the same as warp size but it doesn't have to be.
   // Can be used interchangeably at the moment, but in the future we may have
@@ -454,7 +463,7 @@ void __global__ k_nonbonded_unified(
 
     int row_block_idx = tiles_ptr[tile_idx];
     int index = row_block_idx * tile_size + tile_offset;
-    int atom_i_idx = index < NR ? index : N;
+    int atom_i_idx = index < NR ? index : max_idx;
     int atom_j_idx = ixn_atom_ptr[tile_idx * tile_size + tile_offset];
 
     // if any atom_j_idx is less than num_row_atoms, or if COMPUTE_COL_GRADS is
@@ -463,11 +472,11 @@ void __global__ k_nonbonded_unified(
         COMPUTE_COL_GRADS || __any_sync(0xffffffff, atom_j_idx < NR);
 
     RealType w_i =
-        atom_i_idx < N
+        atom_i_idx < max_idx
             ? params_ptr[atom_i_idx * PARAMS_PER_ATOM + PARAM_OFFSET_W]
             : 0;
     RealType w_j =
-        atom_j_idx < N
+        atom_j_idx < max_idx
             ? params_ptr[atom_j_idx * PARAMS_PER_ATOM + PARAM_OFFSET_W]
             : 0;
 
@@ -479,13 +488,13 @@ void __global__ k_nonbonded_unified(
       if (tile_is_vanilla) {
         v_nonbonded_unified<RealType, 0, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 1>(
-            tile_idx, N, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
+            tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
             energy_accumulator, beta, cutoff_squared, tiles_ptr, ixn_atom_ptr,
             du_dx_ptr, du_dp_ptr);
       } else {
         v_nonbonded_unified<RealType, 1, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 1>(
-            tile_idx, N, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
+            tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
             energy_accumulator, beta, cutoff_squared, tiles_ptr, ixn_atom_ptr,
             du_dx_ptr, du_dp_ptr);
       };
@@ -493,13 +502,13 @@ void __global__ k_nonbonded_unified(
       if (tile_is_vanilla) {
         v_nonbonded_unified<RealType, 0, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 0>(
-            tile_idx, N, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
+            tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
             energy_accumulator, beta, cutoff_squared, tiles_ptr, ixn_atom_ptr,
             du_dx_ptr, du_dp_ptr);
       } else {
         v_nonbonded_unified<RealType, 1, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 0>(
-            tile_idx, N, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
+            tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
             energy_accumulator, beta, cutoff_squared, tiles_ptr, ixn_atom_ptr,
             du_dx_ptr, du_dp_ptr);
       };

@@ -31,7 +31,7 @@ template <typename RealType>
 Neighborlist<RealType>::Neighborlist(const int num_systems, const int N,
                                      const bool compute_upper_triangular)
     : num_systems_(num_systems), max_system_size_(N), N_(N),
-      column_idx_counts_(num_systems_), row_idx_counts_(num_systems_),
+      column_idx_counts_(num_systems_, N_), row_idx_counts_(num_systems_, N_),
       compute_upper_triangular_(compute_upper_triangular) {
 
   if (num_systems == 0) {
@@ -40,9 +40,6 @@ Neighborlist<RealType>::Neighborlist(const int num_systems, const int N,
   if (N == 0) {
     throw std::runtime_error("Neighborlist N must be at least 1");
   }
-  // Populate the initial row/column indices
-  std::fill(column_idx_counts_.begin(), column_idx_counts_.end(), N_);
-  std::fill(row_idx_counts_.begin(), row_idx_counts_.end(), N_);
   const int column_blocks = this->num_column_blocks();
   const int row_blocks = this->num_row_blocks();
   const int Y = this->Y();

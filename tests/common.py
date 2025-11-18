@@ -393,11 +393,12 @@ def gen_nonbonded_params_with_4d_offsets(
     if w_min is None:
         w_min = -w_max
 
-    num_atoms, _ = params.shape
+    assert len(params.shape) in (2, 3) 
+    num_atoms = params.shape[0]
 
     def params_with_w_coords(w_coords):
         params_ = np.array(params)
-        params_[:, 3] = w_coords
+        params_[..., 3] = w_coords
         return params
 
     # all zero
