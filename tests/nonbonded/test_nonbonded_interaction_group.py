@@ -127,19 +127,17 @@ def test_nonbonded_interaction_group_all_pairs_correctness(
 
 @pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
-@pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
+@pytest.mark.parametrize("precision", [np.float64, np.float32])
 @pytest.mark.parametrize("num_atoms", [50, 231])
 @pytest.mark.parametrize("num_atoms_ligand", [1, 15])
 @pytest.mark.parametrize("num_col_atoms", [0, 1, 10, 33, None])
-@pytest.mark.parametrize("num_systems", [1, 2])
+@pytest.mark.parametrize("num_systems", [1, 2, 4, 8, 12])
 def test_nonbonded_interaction_group_batch_correctness(
     num_systems,
     num_col_atoms,
     num_atoms_ligand,
     num_atoms,
     precision,
-    rtol,
-    atol,
     cutoff,
     beta,
     example_nonbonded_potential,
@@ -172,16 +170,11 @@ def test_nonbonded_interaction_group_batch_correctness(
 
     potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs=col_atom_idxs)
 
-    print("N", num_atoms, "num_atom_liagnds", num_atoms_ligand, "col atoms", num_col_atoms, flush=True)
     for w_params in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):
-        print(coords.shape)
-        print(w_params.shape)
-        print(boxes.shape)
         batch_du_dx, batch_du_dp, batch_u = potential.to_gpu(precision).unbound_impl.execute_dim(
             coords, w_params, boxes, 1, 1, 1
         )
         for i in range(num_systems):
-            print(col_atom_idxs)
             ref_nb = NonbondedInteractionGroup(
                 num_atoms,
                 ligand_idxs[i],
@@ -192,12 +185,9 @@ def test_nonbonded_interaction_group_batch_correctness(
             ref_du_dx, ref_du_dp, ref_u = ref_nb.to_gpu(precision).unbound_impl.execute(
                 coords[i], w_params[i], boxes[i]
             )
-            print(batch_du_dx[i])
-            print(ref_du_dx)
-            np.testing.assert_array_equal(batch_u[i], ref_u)
-            np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
-            np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
-            np.testing.assert_array_equal(batch_u[i], ref_u)
+            np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx, err_msg=f"Batch {i}")
+            np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp, err_msg=f"Batch {i}")
+            np.testing.assert_array_equal(batch_u[i], ref_u, err_msg=f"Batch {i}")
 
 
 @pytest.mark.parametrize("beta", [2.0])

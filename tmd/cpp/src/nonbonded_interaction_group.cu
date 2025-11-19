@@ -523,10 +523,10 @@ void NonbondedInteractionGroup<RealType>::execute_device(
 
   kernel_ptrs_[kernel_idx]<<<dim3(nkb, num_systems_, 1),
                              NONBONDED_KERNEL_THREADS_PER_BLOCK, 0, stream>>>(
-      num_systems_, N_, K, mnkb, nblist_.get_num_row_idxs(),
-      nblist_.get_ixn_count(), d_perm_, d_sorted_x_, d_sorted_p_, d_box, beta_,
-      cutoff_, nblist_.get_ixn_tiles(), nblist_.get_ixn_atoms(), d_du_dx,
-      d_du_dp,
+      num_systems_, N_, K, mnkb, nblist_.max_ixn_count(),
+      nblist_.get_num_row_idxs(), nblist_.get_ixn_count(), d_perm_, d_sorted_x_,
+      d_sorted_p_, d_box, beta_, cutoff_, nblist_.get_ixn_tiles(),
+      nblist_.get_ixn_atoms(), d_du_dx, d_du_dp,
       d_u == nullptr
           ? nullptr
           : d_u_buffer_ // switch to nullptr if we don't request energies

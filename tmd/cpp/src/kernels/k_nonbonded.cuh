@@ -81,6 +81,11 @@ void __global__ k_check_rebuild_coords_and_box_gather(
   }
 }
 
+// k_gather_coords_and_params takes the coordinates and parameters involved in a
+// nonbonded potential (either all pairs or ixn group) and gathers them into the
+// hilbert curve order. The gathered coords are what is seen by the
+// neighborlist, which is why the coords/params are offset by the nblist size
+// rather than by N.
 template <typename RealType, int COORDS_DIM, int PARAMS_DIM>
 void __global__ k_gather_coords_and_params(
     const int num_systems, const int N, const int nblist_system_size,
@@ -402,7 +407,8 @@ void __global__ k_nonbonded_unified(
     const int N,       // Number of atoms involved in the interaction group
     const int max_idx, // Largest index that neighborlist will return, also
                        // implies the size of the neighborlist
-    const int u_buffer_stride,
+    const int u_buffer_stride, // Stride for the u buffer
+    const int ixn_atoms_stride,
     const unsigned int *__restrict__ row_indice_counts, // Number of row indices
     const unsigned int *__restrict__ ixn_count,         // [num_systems]
     const unsigned int
@@ -445,21 +451,22 @@ void __global__ k_nonbonded_unified(
   const RealType cutoff_squared = cutoff * cutoff;
 
   const unsigned int interactions = ixn_count[system_idx];
-  if (blockIdx.x * blockDim.x + threadIdx.x == 0) {
-    printf("System idx %d - %u | tiles %d Ixn offset %d\n", system_idx,
-           interactions, tiles_per_system, tiles_per_system * tile_size);
-  }
+  // if (blockIdx.x * blockDim.x + threadIdx.x == 0) {
+  //   printf("System idx %d - %u | tiles %d Ixn offset %d\n", system_idx,
+  //          interactions, tiles_per_system, tiles_per_system * tile_size);
+  // }
 
   const unsigned int NR = row_indice_counts[system_idx];
 
-  // Offset pointers for each replica
+  // Offset pointers for each replica. Note that the coords and params have been
+  // sorted and are offset based on the size of the Neighborlist, rather than
+  // the size of the system.
   const RealType *coords_ptr = coords + system_idx * max_idx * 3;
   const RealType *box_ptr = box + system_idx * 3 * 3;
   const RealType *params_ptr = params + system_idx * max_idx * PARAMS_PER_ATOM;
   const unsigned int *perm_ptr = output_permutation + system_idx * N;
-  // tile_size interactions per tile
-  const unsigned int *ixn_atom_ptr =
-      ixn_atoms + system_idx * tiles_per_system * tile_size;
+
+  const unsigned int *ixn_atom_ptr = ixn_atoms + system_idx * ixn_atoms_stride;
   const int *tiles_ptr = ixn_tiles + system_idx * tiles_per_system;
 
   unsigned long long *du_dx_ptr = du_dx + system_idx * N * 3;
