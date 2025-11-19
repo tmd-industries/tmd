@@ -26,6 +26,7 @@ from tmd.fe.utils import get_romol_conf
 from tmd.ff import Forcefield
 from tmd.ff.handlers import nonbonded
 from tmd.potentials import ChiralAtomRestraint, ChiralBondRestraint
+from tmd.potentials.jax_utils import get_all_pairs_indices
 from tmd.potentials.nonbonded import combining_rule_epsilon, combining_rule_sigma
 from tmd.potentials.types import Params
 
@@ -542,15 +543,19 @@ class MultiTopology(BaseTopology):
         q_params = jnp.concatenate(q_mol_parameters)
         lj_params = jnp.concatenate(lj_mol_parameters)
 
-        mutual_exclusions_ = []
-
         components = self.get_component_idxs()
-        for i, mol_idxs in enumerate(components):
-            for comp_mol_idxs in components[i + 1 :]:
-                # Generate all of the possible pairs
-                mutual_exclusions_.extend(np.array(np.meshgrid(mol_idxs, comp_mol_idxs)).T.reshape(-1, 2).tolist())
+        if len(components) > 1:
+            mutual_exclusions_ = []
+            for i, mol_idxs in enumerate(components):
+                for comp_mol_idxs in components[i + 1 :]:
+                    # Generate all of the possible pairs
+                    mutual_exclusions_.append(
+                        np.asarray(np.meshgrid(mol_idxs, comp_mol_idxs), dtype=np.int32).T.reshape(-1, 2)
+                    )
 
-        mutual_exclusions = np.array(mutual_exclusions_).reshape(-1, 2)
+            mutual_exclusions = np.concatenate(mutual_exclusions_, dtype=np.int32).reshape(-1, 2)
+        else:
+            mutual_exclusions = np.empty((0, 2), dtype=np.int32)
         # All scales are set to 1.0
         mutual_scale_factors = np.ones_like(mutual_exclusions)
 
@@ -691,16 +696,8 @@ def exclude_all_ligand_ligand_ixns(num_host_atoms: int, num_guest_atoms: int) ->
     all ligand-ligand interactions. This is done to mask out these interactions
     so they can be calculated using the pairlist.
     """
-    guest_exclusions_ = []
-    guest_scale_factors_ = []
-
-    for i in range(num_guest_atoms):
-        for j in range(i + 1, num_guest_atoms):
-            guest_exclusions_.append((i, j))
-            guest_scale_factors_.append((1.0, 1.0))
-
-    guest_exclusions = np.array(guest_exclusions_, dtype=np.int32) + num_host_atoms
-    guest_scale_factors = np.array(guest_scale_factors_, dtype=np.float64)
+    guest_exclusions = get_all_pairs_indices(num_guest_atoms) + num_host_atoms
+    guest_scale_factors = np.ones_like(guest_exclusions, dtype=np.float64)
     return guest_exclusions, guest_scale_factors
 
 
