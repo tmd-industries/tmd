@@ -457,6 +457,16 @@ void Neighborlist<RealType>::reset_row_idxs_device(const cudaStream_t stream) {
   // device counts
   std::fill(row_idx_counts_.begin(), row_idx_counts_.end(), N_);
   std::fill(column_idx_counts_.begin(), column_idx_counts_.end(), N_);
+
+  // TBD: Decide jank of where num_systems_ gets applied
+  const unsigned long long MAX_ATOM_BUFFER =
+      num_systems_ * this->max_ixn_count();
+
+  k_initialize_array<unsigned int>
+      <<<ceil_divide(MAX_ATOM_BUFFER, DEFAULT_THREADS_PER_BLOCK),
+         DEFAULT_THREADS_PER_BLOCK, 0, stream>>>(MAX_ATOM_BUFFER, d_ixn_atoms_,
+                                                 static_cast<int>(N_));
+  gpuErrchk(cudaPeekAtLastError());
 }
 
 template <typename RealType>
@@ -543,11 +553,12 @@ void Neighborlist<RealType>::set_idxs_device(const int NR, const int NC,
   // TBD: Decide jank of where num_systems_ gets applied
   const unsigned long long MAX_ATOM_BUFFER =
       num_systems_ * this->max_ixn_count();
-  // Clear the atom ixns, to avoid reuse
-  // Set to max value, ie greater than N. Note that Memset is on bytes, which is
-  // why it is UCHAR_MAX
-  gpuErrchk(cudaMemsetAsync(d_ixn_atoms_, UCHAR_MAX,
-                            MAX_ATOM_BUFFER * sizeof(*d_ixn_atoms_), stream));
+
+  k_initialize_array<unsigned int>
+      <<<ceil_divide(MAX_ATOM_BUFFER, DEFAULT_THREADS_PER_BLOCK),
+         DEFAULT_THREADS_PER_BLOCK, 0, stream>>>(MAX_ATOM_BUFFER, d_ixn_atoms_,
+                                                 static_cast<int>(N_));
+  gpuErrchk(cudaPeekAtLastError());
 }
 
 // Overloaded version of set_idxs_device to use when batching
@@ -617,11 +628,12 @@ void Neighborlist<RealType>::set_idxs_device(
   // TBD: Decide jank of where num_systems_ gets applied
   const unsigned long long MAX_ATOM_BUFFER =
       num_systems_ * this->max_ixn_count();
-  // Clear the atom ixns, to avoid reuse
-  // Set to max value, ie greater than N. Note that Memset is on bytes, which is
-  // why it is UCHAR_MAX
-  gpuErrchk(cudaMemsetAsync(d_ixn_atoms_, UCHAR_MAX,
-                            MAX_ATOM_BUFFER * sizeof(*d_ixn_atoms_), stream));
+
+  k_initialize_array<unsigned int>
+      <<<ceil_divide(MAX_ATOM_BUFFER, DEFAULT_THREADS_PER_BLOCK),
+         DEFAULT_THREADS_PER_BLOCK, 0, stream>>>(MAX_ATOM_BUFFER, d_ixn_atoms_,
+                                                 static_cast<int>(N_));
+  gpuErrchk(cudaPeekAtLastError());
 }
 
 template <typename RealType>

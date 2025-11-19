@@ -83,12 +83,13 @@ void __global__ k_check_rebuild_coords_and_box_gather(
 
 template <typename RealType, int COORDS_DIM, int PARAMS_DIM>
 void __global__ k_gather_coords_and_params(
-    const int num_systems, const int N, const unsigned int *__restrict__ idxs,
-    const RealType *__restrict__ coords, const RealType *__restrict__ params,
-    RealType *__restrict__ gathered_coords,
+    const int num_systems, const int N, const int nblist_system_size,
+    const unsigned int *__restrict__ idxs, const RealType *__restrict__ coords,
+    const RealType *__restrict__ params, RealType *__restrict__ gathered_coords,
     RealType *__restrict__ gathered_params) {
   static_assert(COORDS_DIM == 3);
   static_assert(PARAMS_DIM == PARAMS_PER_ATOM);
+  assert(N >= nblist_system_size);
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
     return;
@@ -105,12 +106,14 @@ void __global__ k_gather_coords_and_params(
   // Coords have 3 dimensions, params have 4
 #pragma unroll COORDS_DIM
   for (int i = 0; i < COORDS_DIM; i++) {
-    gathered_coords[system_idx * N * COORDS_DIM + idx * COORDS_DIM + i] =
+    gathered_coords[system_idx * nblist_system_size * COORDS_DIM +
+                    idx * COORDS_DIM + i] =
         coords[system_idx * N * COORDS_DIM + atom_idx * COORDS_DIM + i];
   }
 #pragma unroll PARAMS_DIM
   for (int i = 0; i < PARAMS_DIM; i++) {
-    gathered_params[system_idx * N * PARAMS_DIM + idx * PARAMS_DIM + i] =
+    gathered_params[system_idx * nblist_system_size * PARAMS_DIM +
+                    idx * PARAMS_DIM + i] =
         params[system_idx * N * PARAMS_DIM + atom_idx * PARAMS_DIM + i];
   }
 }
@@ -397,16 +400,18 @@ template <typename RealType, int THREADS_PER_BLOCK, bool COMPUTE_U,
 void __global__ k_nonbonded_unified(
     const int num_systems,
     const int N,       // Number of atoms involved in the interaction group
-    const int max_idx, // Largest index that neighborlist will return
+    const int max_idx, // Largest index that neighborlist will return, also
+                       // implies the size of the neighborlist
     const int u_buffer_stride,
     const unsigned int *__restrict__ row_indice_counts, // Number of row indices
     const unsigned int *__restrict__ ixn_count,         // [num_systems]
     const unsigned int
-        *__restrict__ output_permutation, // [N] Permutation from atom idx ->
-                                          // output buffer idx
-    const RealType *__restrict__ coords,  // [N, 3]
-    const RealType *__restrict__ params,  // [N, PARAMS_PER_ATOM]
-    const RealType *__restrict__ box,     // [3, 3]
+        *__restrict__ output_permutation, // [num_systems, N] Permutation from
+                                          // atom idx -> output buffer idx
+    const RealType *__restrict__ coords,  // [num_systems, max_idx, 3]
+    const RealType
+        *__restrict__ params,         // [num_systems, max_idx, PARAMS_PER_ATOM]
+    const RealType *__restrict__ box, // [num_systems, 3, 3]
     const RealType beta, const RealType cutoff,
     const int *__restrict__ ixn_tiles, //[num_systems, tiles_per_system]
     const unsigned int *__restrict__ ixn_atoms,
@@ -427,7 +432,7 @@ void __global__ k_nonbonded_unified(
   constexpr int tile_size = WARP_SIZE;
 
   const int tiles_per_system =
-      ceil_divide(N, tile_size) * ceil_divide(N, tile_size);
+      ceil_divide(max_idx, tile_size) * ceil_divide(max_idx, tile_size);
 
   __int128 energy_accumulator = 0;
 
@@ -440,15 +445,19 @@ void __global__ k_nonbonded_unified(
   const RealType cutoff_squared = cutoff * cutoff;
 
   const unsigned int interactions = ixn_count[system_idx];
+  if (blockIdx.x * blockDim.x + threadIdx.x == 0) {
+    printf("System idx %d - %u | tiles %d Ixn offset %d\n", system_idx,
+           interactions, tiles_per_system, tiles_per_system * tile_size);
+  }
 
   const unsigned int NR = row_indice_counts[system_idx];
 
   // Offset pointers for each replica
-  const RealType *coords_ptr = coords + system_idx * N * 3;
+  const RealType *coords_ptr = coords + system_idx * max_idx * 3;
   const RealType *box_ptr = box + system_idx * 3 * 3;
-  const RealType *params_ptr = params + system_idx * N * PARAMS_PER_ATOM;
+  const RealType *params_ptr = params + system_idx * max_idx * PARAMS_PER_ATOM;
   const unsigned int *perm_ptr = output_permutation + system_idx * N;
-  // tile size interactions per tile
+  // tile_size interactions per tile
   const unsigned int *ixn_atom_ptr =
       ixn_atoms + system_idx * tiles_per_system * tile_size;
   const int *tiles_ptr = ixn_tiles + system_idx * tiles_per_system;

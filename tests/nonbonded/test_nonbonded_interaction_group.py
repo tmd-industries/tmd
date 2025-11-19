@@ -130,7 +130,7 @@ def test_nonbonded_interaction_group_all_pairs_correctness(
 @pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
 @pytest.mark.parametrize("num_atoms", [50, 231])
 @pytest.mark.parametrize("num_atoms_ligand", [1, 15])
-@pytest.mark.parametrize("num_col_atoms", [0, 1, 10, 33])
+@pytest.mark.parametrize("num_col_atoms", [0, 1, 10, 33, None])
 @pytest.mark.parametrize("num_systems", [1, 2])
 def test_nonbonded_interaction_group_batch_correctness(
     num_systems,
@@ -173,7 +173,6 @@ def test_nonbonded_interaction_group_batch_correctness(
     potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs=col_atom_idxs)
 
     print("N", num_atoms, "num_atom_liagnds", num_atoms_ligand, "col atoms", num_col_atoms, flush=True)
-    print(params.shape)
     for w_params in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):
         print(coords.shape)
         print(w_params.shape)

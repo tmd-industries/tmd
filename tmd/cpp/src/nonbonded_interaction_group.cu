@@ -253,7 +253,7 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
                  num_systems_ * mnkb * sizeof(*d_system_idxs_));
   // Initialize all of the system_idxs
   for (int i = 0; i < num_systems_; i++) {
-    k_initialize_array<<<ceil_divide(N_, DEFAULT_THREADS_PER_BLOCK),
+    k_initialize_array<<<ceil_divide(mnkb, DEFAULT_THREADS_PER_BLOCK),
                          DEFAULT_THREADS_PER_BLOCK>>>(
         mnkb, d_system_idxs_ + i * mnkb, i);
     gpuErrchk(cudaPeekAtLastError());
@@ -478,7 +478,7 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   }
 
   k_gather_coords_and_params<RealType, 3, PARAMS_PER_ATOM>
-      <<<dimGrid, tpb, 0, stream>>>(num_systems_, N_, d_perm_, d_x, d_p,
+      <<<dimGrid, tpb, 0, stream>>>(num_systems_, N, K, d_perm_, d_x, d_p,
                                     d_sorted_x_, d_sorted_p_);
   gpuErrchk(cudaPeekAtLastError());
 
@@ -507,9 +507,11 @@ void NonbondedInteractionGroup<RealType>::execute_device(
     nblist_.build_nblist_device(K, d_sorted_x_, d_box, cutoff_, nblist_padding_,
                                 stream);
     m_rebuild_nblist_[0] = 0;
-    gpuErrchk(cudaMemcpyAsync(d_nblist_x_, d_x, N * 3 * sizeof(*d_x),
+    gpuErrchk(cudaMemcpyAsync(d_nblist_x_, d_x,
+                              num_systems_ * N * 3 * sizeof(*d_x),
                               cudaMemcpyDeviceToDevice, stream));
-    gpuErrchk(cudaMemcpyAsync(d_nblist_box_, d_box, 3 * 3 * sizeof(*d_box),
+    gpuErrchk(cudaMemcpyAsync(d_nblist_box_, d_box,
+                              num_systems_ * 3 * 3 * sizeof(*d_box),
                               cudaMemcpyDeviceToDevice, stream));
 
     // Useful diagnostic code (and doesn't seem to affect wall-clock time very
@@ -533,7 +535,7 @@ void NonbondedInteractionGroup<RealType>::execute_device(
 
   if (d_u) {
     // nullptr for the d_system_idxs if only simulating a single system
-    nrg_accum_.sum_device(mnkb, d_u_buffer_,
+    nrg_accum_.sum_device(num_systems_ * mnkb, d_u_buffer_,
                           num_systems_ > 1 ? d_system_idxs_ : nullptr, d_u,
                           stream);
   }
