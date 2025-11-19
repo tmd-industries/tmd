@@ -102,13 +102,23 @@ def replace_clashy_waters(
     if len(mols) == 0:
         return
 
-    def get_clashy_idxs():
+    def get_clashy_idxs() -> NDArray[np.int32]:
+        # Hard coded value for the maximum number of ligand atoms to consider when evaluating water idxs
+        # Without this setting up a system with thousands of molecules can lead to JAX failures
+        batch_size = 100
+
         water_idxs = np.concatenate(
             [[a.index for a in res.atoms()] for res in modeller.topology.residues() if res.name == WATER_RESIDUE_NAME]
         )
         water_coords = strip_units(modeller.positions)[water_idxs]
         ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
-        idxs = idxs_within_cutoff(water_coords, ligand_coords, box, cutoff=clash_distance)
+        idxs_set = set()
+        for batch_offset in range(0, len(ligand_coords), batch_size):
+            idxs_batch = idxs_within_cutoff(
+                water_coords, ligand_coords[batch_offset : batch_offset + batch_size], box, cutoff=clash_distance
+            )
+            idxs_set = idxs_set.union(set(idxs_batch.tolist()))
+        idxs = np.array(list(idxs_set), dtype=np.int32)
         if len(idxs) > 0:
             # Offset the clashy idxs with the first atom idx, else could be pointing at non-water atoms
             idxs += np.min(water_idxs)
