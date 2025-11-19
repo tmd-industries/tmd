@@ -677,7 +677,7 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
     // row_idxs = 012, col_idxs=34567
     k_setup_nblist_row_and_column_indices<<<
         dim3(ceil_divide(K, tpb), num_systems_, 1), tpb, 0, stream>>>(
-        num_systems_, N_, d_row_atom_idxs_counts_, d_col_atom_idxs_counts_,
+        num_systems_, K, d_row_atom_idxs_counts_, d_col_atom_idxs_counts_,
         interaction_type_ == NonbondedInteractionType::DISJOINT,
         d_nblist_row_idxs_, d_nblist_col_idxs_);
     gpuErrchk(cudaPeekAtLastError());

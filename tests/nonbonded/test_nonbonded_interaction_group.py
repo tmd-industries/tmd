@@ -167,7 +167,7 @@ def test_nonbonded_interaction_group_batch_correctness(
 
     col_atom_idxs = None
     if num_col_atoms:
-        host_idxs = [np.setdiff1d(np.arange(num_atoms), ligand_idxs).astype(np.int32) for lig_idxs in ligand_idxs]
+        host_idxs = [np.setdiff1d(np.arange(num_atoms), lig_idxs).astype(np.int32) for lig_idxs in ligand_idxs]
         col_atom_idxs = [rng.choice(idxs, size=(num_col_atoms,), replace=False).astype(np.int32) for idxs in host_idxs]
 
     potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs=col_atom_idxs)
@@ -198,8 +198,7 @@ def test_nonbonded_interaction_group_batch_correctness(
             np.testing.assert_array_equal(batch_u[i], ref_u)
             np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
             np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
-        # GradientTest().compare_forces(coords.squeeze(), w_params.squeeze(), boxes.squeeze(), potential, test_impl, rtol=rtol, atol=atol)
-        # GradientTest().assert_differentiable_interface_consistency(coords.squeeze(), w_params.squeeze(), boxes.squeeze(), test_impl)
+            np.testing.assert_array_equal(batch_u[i], ref_u)
 
 
 @pytest.mark.parametrize("beta", [2.0])

@@ -448,7 +448,9 @@ void __global__ k_nonbonded_unified(
   const RealType *box_ptr = box + system_idx * 3 * 3;
   const RealType *params_ptr = params + system_idx * N * PARAMS_PER_ATOM;
   const unsigned int *perm_ptr = output_permutation + system_idx * N;
-  const unsigned int *ixn_atom_ptr = ixn_atoms + system_idx * N;
+  // tile size interactions per tile
+  const unsigned int *ixn_atom_ptr =
+      ixn_atoms + system_idx * tiles_per_system * tile_size;
   const int *tiles_ptr = ixn_tiles + system_idx * tiles_per_system;
 
   unsigned long long *du_dx_ptr = du_dx + system_idx * N * 3;

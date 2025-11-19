@@ -394,7 +394,10 @@ def gen_nonbonded_params_with_4d_offsets(
         w_min = -w_max
 
     assert len(params.shape) in (2, 3)
-    num_atoms = params.shape[0]
+    if len(params.shape) == 2:
+        num_atoms = params.shape[0]
+    else:
+        num_atoms = params.shape[1]
 
     def params_with_w_coords(w_coords):
         params_ = np.array(params)
@@ -413,7 +416,7 @@ def gen_nonbonded_params_with_4d_offsets(
     yield params_with_w_coords(w_coords)
 
     # random uniform in [w_min, w_max]
-    w_coords = rng.uniform(w_min, w_max, (num_atoms,))
+    w_coords = rng.uniform(w_min, w_max, size=num_atoms)
     yield params_with_w_coords(w_coords)
 
     # sparse with half zero
