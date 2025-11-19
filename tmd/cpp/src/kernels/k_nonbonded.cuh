@@ -125,7 +125,7 @@ template <typename RealType, bool ALCHEMICAL, bool COMPUTE_U,
 void __device__ v_nonbonded_unified(
     const int tile_idx,
     const int max_idx, // maximum index in the row/col indices
-    const int NR, // number of row indices
+    const int NR,      // number of row indices
     const unsigned int
         *__restrict__ output_permutation, // [N] Permutation from atom idx ->
                                           // output buffer idx idx
@@ -181,10 +181,8 @@ void __device__ v_nonbonded_unified(
   unsigned long long g_wi = 0;
 
   int atom_j_idx = ixn_atoms[tile_idx * WARP_SIZE + warp_idx];
-  int dest_j_idx = atom_j_idx < max_idx ? output_permutation[atom_j_idx] : max_idx;
-  if (dest_j_idx >= max_idx && atom_j_idx < max_idx) {
-    printf("Fek - N %d %d %d\n", max_idx, dest_j_idx, atom_j_idx);
-  }
+  int dest_j_idx =
+      atom_j_idx < max_idx ? output_permutation[atom_j_idx] : max_idx;
 
   RealType cj_x = atom_j_idx < max_idx ? coords[atom_j_idx * 3 + 0] : 0;
   RealType cj_y = atom_j_idx < max_idx ? coords[atom_j_idx * 3 + 1] : 0;
@@ -398,7 +396,7 @@ template <typename RealType, int THREADS_PER_BLOCK, bool COMPUTE_U,
           bool COMPUTE_COL_GRADS>
 void __global__ k_nonbonded_unified(
     const int num_systems,
-    const int N, // Number of atoms involved in the interaction group
+    const int N,       // Number of atoms involved in the interaction group
     const int max_idx, // Largest index that neighborlist will return
     const int u_buffer_stride,
     const unsigned int *__restrict__ row_indice_counts, // Number of row indices
@@ -422,9 +420,6 @@ void __global__ k_nonbonded_unified(
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
     return;
-  }
-  if (threadIdx.x == 0) {
-    printf("System idx %d\n", system_idx);
   }
   // Tile size is the same as warp size but it doesn't have to be.
   // Can be used interchangeably at the moment, but in the future we may have

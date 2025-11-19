@@ -2801,61 +2801,65 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                         Margin for the neighborlist.
 
             )pbdoc")
-      .def(
-          py::init([](const int N,
-                      const std::vector<py::array_t<int, py::array::c_style>>
-                          &row_atom_idxs_i,
-                      const double beta, const double cutoff,
-                      std::optional<
-                          std::vector<py::array_t<int, py::array::c_style>>>
-                          &col_atom_idxs_i,
-                      const bool disable_hilbert_sort,
-                      const double nblist_padding) {
-            const int num_batches = row_atom_idxs_i.size();
-            if (num_batches == 0) {
-              throw std::runtime_error(
-                  "provide at least one batch of row atom indices");
-            }
-            if (col_atom_idxs_i) {
-              if (num_batches != static_cast<int>(col_atom_idxs_i->size())) {
-                throw std::runtime_error("batches of column atom indices must "
-                                         "match row atom indices batches");
-              }
-            }
-            std::vector<std::vector<int>> combined_row_atoms;
-            std::vector<std::vector<int>> combined_col_atoms;
-            for (int i = 0; i < num_batches; i++) {
-              if (row_atom_idxs_i[i].ndim() != 1) {
-                throw std::runtime_error("each batch of row indices must be one dimensional");
-              }
-              combined_row_atoms.push_back(
-                  py_array_to_vector<int>(row_atom_idxs_i[i]));
+      .def(py::init([](const int N,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &row_atom_idxs_i,
+                       const double beta, const double cutoff,
+                       std::optional<
+                           std::vector<py::array_t<int, py::array::c_style>>>
+                           &col_atom_idxs_i,
+                       const bool disable_hilbert_sort,
+                       const double nblist_padding) {
+             const int num_batches = row_atom_idxs_i.size();
+             if (num_batches == 0) {
+               throw std::runtime_error(
+                   "provide at least one batch of row atom indices");
+             }
+             if (col_atom_idxs_i) {
+               if (num_batches != static_cast<int>(col_atom_idxs_i->size())) {
+                 throw std::runtime_error("batches of column atom indices must "
+                                          "match row atom indices batches");
+               }
+             }
+             std::vector<std::vector<int>> combined_row_atoms;
+             std::vector<std::vector<int>> combined_col_atoms;
+             for (int i = 0; i < num_batches; i++) {
+               if (row_atom_idxs_i[i].ndim() != 1) {
+                 throw std::runtime_error(
+                     "each batch of row indices must be one dimensional");
+               }
+               combined_row_atoms.push_back(
+                   py_array_to_vector<int>(row_atom_idxs_i[i]));
 
-              std::vector<int> col_atom_idxs;
-              if (col_atom_idxs_i) {
-                if (col_atom_idxs_i->at(i).ndim() != 1) {
-                  throw std::runtime_error("each batch of column indices must be one dimensional");
-                }
-                col_atom_idxs.resize(col_atom_idxs_i->size());
-                std::memcpy(col_atom_idxs.data(), col_atom_idxs_i->at(i).data(),
-                            col_atom_idxs_i->size() * sizeof(int));
-              } else {
-                std::set<int> unique_row_atom_idxs =
-                    unique_idxs(combined_row_atoms[i]);
-                col_atom_idxs = get_indices_difference(N, unique_row_atom_idxs);
-              }
-              combined_col_atoms.push_back(col_atom_idxs);
-            }
+               std::vector<int> col_atom_idxs;
+               if (col_atom_idxs_i) {
+                 if (col_atom_idxs_i->at(i).ndim() != 1) {
+                   throw std::runtime_error(
+                       "each batch of column indices must be one dimensional");
+                 }
+                 size_t offset = col_atom_idxs.size();
+                 col_atom_idxs.resize(offset + col_atom_idxs_i->at(i).size());
+                 std::memcpy(col_atom_idxs.data() + offset,
+                             col_atom_idxs_i->at(i).data(),
+                             col_atom_idxs_i->at(i).size() * sizeof(int));
+               } else {
+                 std::set<int> unique_row_atom_idxs =
+                     unique_idxs(combined_row_atoms[i]);
+                 col_atom_idxs =
+                     get_indices_difference(N, unique_row_atom_idxs);
+               }
+               combined_col_atoms.push_back(col_atom_idxs);
+             }
 
-            return new NonbondedInteractionGroup<RealType>(
-                num_batches, N, combined_row_atoms, combined_col_atoms, beta,
-                cutoff, disable_hilbert_sort, nblist_padding);
-          }),
-          py::arg("num_atoms"), py::arg("row_atom_idxs_i"), py::arg("beta"),
-          py::arg("cutoff"), py::arg("col_atom_idxs_i") = py::none(),
-          py::arg("disable_hilbert_sort") = false,
-          py::arg("nblist_padding") = 0.1,
-          R"pbdoc(
+             return new NonbondedInteractionGroup<RealType>(
+                 num_batches, N, combined_row_atoms, combined_col_atoms, beta,
+                 cutoff, disable_hilbert_sort, nblist_padding);
+           }),
+           py::arg("num_atoms"), py::arg("row_atom_idxs_i"), py::arg("beta"),
+           py::arg("cutoff"), py::arg("col_atom_idxs_i") = py::none(),
+           py::arg("disable_hilbert_sort") = false,
+           py::arg("nblist_padding") = 0.1,
+           R"pbdoc(
                     Set up batched NonbondedInteractionGroup.
 
                     Parameters

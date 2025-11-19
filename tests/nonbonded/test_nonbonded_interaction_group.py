@@ -50,9 +50,9 @@ def test_nonbonded_interaction_group_invalid_indices():
     NonbondedInteractionGroup(3, [0, 1], 1.0, 1.0, col_atom_idxs=[2]).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match="each batch of column indices must be one dimensional"):
-        NonbondedInteractionGroup(3, [0, 1], 1.0, 1.0, col_atom_idxs=[np.array([2]).reshape(1, 2)]).to_gpu(
-            np.float64
-        ).unbound_impl
+        NonbondedInteractionGroup(
+            3, [np.array([0], dtype=np.int32)], 1.0, 1.0, col_atom_idxs=[np.array([1, 2], dtype=np.int32).reshape(1, 2)]
+        ).to_gpu(np.float64).unbound_impl
 
     # Test that if we have disjoint row_atom/atom_idxs we're not allowed to set compute_col_grads=False
     impl = NonbondedInteractionGroup(6, [0, 1, 2], 1.0, 1.0, col_atom_idxs=[3, 4, 5]).to_gpu(np.float64).unbound_impl
@@ -172,7 +172,6 @@ def test_nonbonded_interaction_group_batch_correctness(
 
     potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs=col_atom_idxs)
 
-    test_impl = potential.to_gpu(precision)
     print("N", num_atoms, "num_atom_liagnds", num_atoms_ligand, "col atoms", num_col_atoms, flush=True)
     print(params.shape)
     for w_params in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):
@@ -208,10 +207,8 @@ def test_nonbonded_interaction_group_batch_correctness(
 @pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
 @pytest.mark.parametrize("num_atoms", [50, 231])
 @pytest.mark.parametrize("num_atoms_ligand", [1, 15])
-@pytest.mark.parametrize("num_col_atoms", [0, 1, 10, 33])
-@pytest.mark.parametrize("num_systems", [1, 2])
+@pytest.mark.parametrize("num_col_atoms", [0, 1, 10, 33, None])
 def test_nonbonded_interaction_group_correctness(
-    num_systems,
     num_col_atoms,
     num_atoms_ligand,
     num_atoms,
@@ -227,26 +224,19 @@ def test_nonbonded_interaction_group_correctness(
 ):
     "Compares with jax reference implementation."
 
-    box_padding = 0.1
-    coord_idxs = [rng.choice(example_conf.shape[0], num_atoms, replace=False) for _ in range(num_systems)]
+    conf = example_conf[:num_atoms].astype(precision).astype(precision)
+    params = example_nonbonded_potential.params[:num_atoms, :].astype(precision)
+    box = example_box.astype(precision)
 
-    coords = np.stack([example_conf[idxs] for idx in coord_idxs])
-    boxes = np.stack([get_box_from_coords(replica) + np.eye(3) * box_padding for replica in coords])
-    params = np.stack([example_nonbonded_potential.params[idxs].astype(precision) for idxs in coord_idxs])
-
-    ligand_idxs = [
-        rng.choice(num_atoms, size=(num_atoms_ligand,), replace=False).astype(np.int32) for _ in range(num_systems)
-    ]
+    ligand_idxs = rng.choice(num_atoms, size=(num_atoms_ligand,), replace=False).astype(np.int32)
 
     if num_col_atoms is None:  # means all the rest
         num_col_atoms = num_atoms - num_atoms_ligand
 
     col_atom_idxs = None
     if num_col_atoms:
-        host_idxs = [np.setdiff1d(np.arange(num_atoms), ligand_idxs).astype(np.int32) for lig_idxs in ligand_idxs]
-        col_atom_idxs = [
-            rng.choice(host_idxs, size=(num_col_atoms,), replace=False).astype(np.int32) for _ in range(num_systems)
-        ]
+        host_idxs = np.setdiff1d(np.arange(num_atoms), ligand_idxs).astype(np.int32)
+        col_atom_idxs = rng.choice(host_idxs, size=(num_col_atoms,), replace=False).astype(np.int32)
 
     potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs=col_atom_idxs)
 

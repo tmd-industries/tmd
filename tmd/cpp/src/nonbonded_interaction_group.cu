@@ -440,11 +440,13 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   }
 
   if (P != num_systems_ * N_ * PARAMS_PER_ATOM) {
-    throw std::runtime_error(
-        "NonbondedInteractionGroup::execute_device(): expected P == num_systems_ * N_*" +
-        std::to_string(PARAMS_PER_ATOM) + ", got P=" + std::to_string(P) +
-        ", num_systems_*" + std::to_string(num_systems_) + ", N_*" + std::to_string(PARAMS_PER_ATOM) + "=" +
-        std::to_string(N_ * PARAMS_PER_ATOM));
+    throw std::runtime_error("NonbondedInteractionGroup::execute_device(): "
+                             "expected P == num_systems_ * N_*" +
+                             std::to_string(PARAMS_PER_ATOM) +
+                             ", got P=" + std::to_string(P) +
+                             ", num_systems_*" + std::to_string(num_systems_) +
+                             ", N_*" + std::to_string(PARAMS_PER_ATOM) + "=" +
+                             std::to_string(N_ * PARAMS_PER_ATOM));
   }
 
   // If the size of the row or cols is none, exit
@@ -640,11 +642,11 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
   if (K > 0) {
     // The indices must already be on the GPU and are copied into the
     // potential's buffers.
-    gpuErrchk(cudaMemcpyAsync(d_col_atom_idxs_, d_in_column_idxs,
-                              num_systems_ * N_ * sizeof(*d_col_atom_idxs_),
-                              cudaMemcpyDeviceToDevice, stream));
     gpuErrchk(cudaMemcpyAsync(d_row_atom_idxs_, d_in_row_idxs,
                               num_systems_ * N_ * sizeof(*d_row_atom_idxs_),
+                              cudaMemcpyDeviceToDevice, stream));
+    gpuErrchk(cudaMemcpyAsync(d_col_atom_idxs_, d_in_column_idxs,
+                              num_systems_ * N_ * sizeof(*d_col_atom_idxs_),
                               cudaMemcpyDeviceToDevice, stream));
 
     // TBD: Figure out a way to handle this more gracefully
