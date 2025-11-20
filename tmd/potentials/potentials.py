@@ -169,7 +169,6 @@ class Nonbonded(Potential):
         if isinstance(self.exclusion_idxs, list):
             exclusion_idxs = []
             scale_factors = []
-            print(atom_idxs)
             for idxs, exc, fac in zip(atom_idxs, self.exclusion_idxs, self.scale_factors):
                 ex, factor = nonbonded.filter_exclusions(idxs, exc, fac)
                 exclusion_idxs.append(ex)

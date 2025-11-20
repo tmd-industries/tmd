@@ -2852,7 +2852,6 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                }
                combined_col_atoms.push_back(col_atom_idxs);
              }
-             printf("Num batches here %d\n", num_batches);
              return new NonbondedInteractionGroup<RealType>(
                  num_batches, N, combined_row_atoms, combined_col_atoms, beta,
                  cutoff, disable_hilbert_sort, nblist_padding);

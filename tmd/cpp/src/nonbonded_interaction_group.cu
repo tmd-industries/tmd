@@ -796,7 +796,6 @@ void NonbondedInteractionGroup<RealType>::validate_idxs(
 
 template <typename RealType>
 int NonbondedInteractionGroup<RealType>::batch_size() const {
-  printf("Num syste %d\n", num_systems_);
   return num_systems_;
 }
 

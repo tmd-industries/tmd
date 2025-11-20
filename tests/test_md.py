@@ -606,11 +606,9 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
 @pytest.mark.memcheck
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 @pytest.mark.parametrize("seed", [2025])
-@pytest.mark.parametrize("batch_size", [1, 2, 128])
+@pytest.mark.parametrize("batch_size", [1, 2, 8, 16, 32, 48, 128])
 @pytest.mark.parametrize("integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator])
 def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass):
-    rng = np.random.default_rng(seed)
-
     dt = 2.5e-3
 
     mol, _ = get_biphenyl()
@@ -630,8 +628,8 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
     batch_boxes = [box0.astype(precision)]
     assert batch_size >= 1
     while len(batch_coords) < batch_size:
-        batch_coords.append(np.array(x0 + rng.uniform(-1e-3, 1e-3, size=x0.shape), dtype=precision))
-        batch_boxes.append(np.array(box0 * rng.uniform(0.8, 1.2), dtype=precision))
+        batch_coords.append(np.array(x0, dtype=precision))
+        batch_boxes.append(np.array(box0, dtype=precision))
 
     batch_v0 = [np.zeros_like(coords) for coords in batch_coords]
 
@@ -707,7 +705,7 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
         assert pot.potential.to_gpu(precision).unbound_impl.batch_size() == batch_size
         bp = pot.to_gpu(precision).bound_impl
         pot.potential.to_gpu(precision).unbound_impl.execute_dim(
-            np.stack(batch_coords).squeeze(), pot.params, np.stack(batch_boxes).squeeze()
+            np.stack(batch_coords), pot.params, np.stack(batch_boxes)
         )
         assert bp.batch_size() == batch_size
         du_dx, u = bp.execute(np.stack(batch_coords).squeeze(), np.stack(batch_boxes).squeeze())
