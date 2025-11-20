@@ -250,7 +250,7 @@ def test_local_md_particle_density(freeze_reference, k):
 
     local_idxs = np.arange(len(coords) - mol.GetNumAtoms(), len(coords), dtype=np.int32)
 
-    nblist = custom_ops.Neighborlist_f32(coords.shape[0], False)
+    nblist = custom_ops.Neighborlist_f32(1, coords.shape[0], False)
 
     # Construct list of atoms in the inner shell
     nblist.set_row_idxs(local_idxs.astype(np.uint32))

@@ -81,7 +81,7 @@ TIBDExchangeMove<RealType>::TIBDExchangeMove(
 
   k_arange<<<ceil_divide(this->num_target_mols_, DEFAULT_THREADS_PER_BLOCK),
              DEFAULT_THREADS_PER_BLOCK, 0>>>(this->num_target_mols_,
-                                             d_identify_indices_.data, 0);
+                                             d_identify_indices_.data);
   gpuErrchk(cudaPeekAtLastError());
 
   size_t flagged_bytes = 0;

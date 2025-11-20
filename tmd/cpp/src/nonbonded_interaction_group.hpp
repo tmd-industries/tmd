@@ -32,7 +32,7 @@ enum class NonbondedInteractionType { DISJOINT, OVERLAPPING };
 template <typename RealType>
 class NonbondedInteractionGroup : public Potential<RealType> {
 
-  typedef void (*k_nonbonded_fn)(const int N, const int NR,
+  typedef void (*k_nonbonded_fn)(const int N, const unsigned int *NR,
                                  const unsigned int *__restrict__ ixn_count,
                                  const unsigned int *__restrict__ d_atom_idxs,
                                  const RealType *__restrict__ coords,
