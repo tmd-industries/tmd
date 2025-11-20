@@ -75,7 +75,7 @@ void LangevinIntegrator<RealType>::step_fwd(
     cudaStream_t stream) {
   const int D = 3;
 
-  runner_.execute_potentials(bps, N_, d_x_t, d_box_t,
+  runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
                              nullptr, nullptr, stream);
 

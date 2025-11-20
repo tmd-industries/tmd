@@ -179,15 +179,15 @@ void MonteCarloBarostat<RealType>::move(const int N,
   gpuErrchk(cudaMemsetAsync(d_centroids_, 0,
                             num_mols_ * 3 * sizeof(*d_centroids_), stream));
 
-  runner_.execute_potentials(bps_, N_, d_x, d_box, nullptr, nullptr,
+  runner_.execute_potentials(1, bps_, N_, d_x, d_box, nullptr, nullptr,
                              d_u_buffer_, stream);
   // nullptr for the d_system_idxs as batch size is fixed to 1
   nrg_accum_.sum_device(bps_.size(), d_u_buffer_, nullptr, d_init_u_, stream);
 
   this->propose_move(N, d_x, d_box, stream);
 
-  runner_.execute_potentials(bps_, N_, d_x_proposed_, d_box_proposed_, nullptr,
-                             nullptr, d_u_proposed_buffer_, stream);
+  runner_.execute_potentials(1, bps_, N_, d_x_proposed_, d_box_proposed_,
+                             nullptr, nullptr, d_u_proposed_buffer_, stream);
   // nullptr for the d_system_idxs as batch size is fixed to 1
   nrg_accum_.sum_device(bps_.size(), d_u_proposed_buffer_, nullptr, d_final_u_,
                         stream);

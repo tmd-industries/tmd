@@ -55,7 +55,7 @@ void VelocityVerletIntegrator<RealType>::step_fwd(
   const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
   const size_t n_blocks = ceil_divide(batch_size_ * N_, tpb);
   dim3 dimGrid_dx(n_blocks, D);
-  runner_.execute_potentials(bps, N_, d_x_t, d_box_t,
+  runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
                              nullptr, nullptr, stream);
   update_forward_velocity_verlet<RealType><<<dimGrid_dx, tpb, 0, stream>>>(
@@ -80,7 +80,7 @@ void VelocityVerletIntegrator<RealType>::initialize(
   const size_t n_blocks = ceil_divide(batch_size_ * N_, tpb);
   dim3 dimGrid_dx(n_blocks, D);
 
-  runner_.execute_potentials(bps, N_, d_x_t, d_box_t,
+  runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
                              nullptr, nullptr, stream);
 
@@ -111,7 +111,7 @@ void VelocityVerletIntegrator<RealType>::finalize(
   const size_t n_blocks = ceil_divide(batch_size_ * N_, tpb);
   dim3 dimGrid_dx(n_blocks, D);
 
-  runner_.execute_potentials(bps, N_, d_x_t, d_box_t,
+  runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
                              nullptr, nullptr, stream);
   half_step_velocity_verlet<RealType, false><<<dimGrid_dx, tpb, 0, stream>>>(

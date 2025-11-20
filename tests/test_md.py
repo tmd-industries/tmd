@@ -604,6 +604,153 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
 
 
 @pytest.mark.memcheck
+@pytest.mark.parametrize("precision", [np.float32, np.float64])
+@pytest.mark.parametrize("seed", [2025])
+@pytest.mark.parametrize("batch_size", [1, 2, 128])
+@pytest.mark.parametrize("integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator])
+def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass):
+    rng = np.random.default_rng(seed)
+
+    dt = 2.5e-3
+
+    mol, _ = get_biphenyl()
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    # Minimize the starting pose
+    replace_conformer_with_minimized(mol, ff)
+
+    unbound_potentials, sys_params, masses, x0, box0 = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=True)
+    bps = []
+    for p, pot in zip(sys_params, unbound_potentials):
+        bps.append(pot.bind(p))
+
+    bonded_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
+    masses = apply_hmr(masses, get_bond_list(bonded_pot)).astype(precision)
+
+    batch_coords = [x0.astype(precision)]
+    batch_boxes = [box0.astype(precision)]
+    assert batch_size >= 1
+    while len(batch_coords) < batch_size:
+        batch_coords.append(np.array(x0 + rng.uniform(-1e-3, 1e-3, size=x0.shape), dtype=precision))
+        batch_boxes.append(np.array(box0 * rng.uniform(0.8, 1.2), dtype=precision))
+
+    batch_v0 = [np.zeros_like(coords) for coords in batch_coords]
+
+    intg_impl = None
+    if integrator_klass is VelocityVerletIntegrator:
+        intg = VelocityVerletIntegrator(dt, [masses for _ in range(batch_size)])
+        intg_impl = intg.impl(precision)
+    elif integrator_klass is LangevinIntegrator:
+        friction = 1.0
+        intg = LangevinIntegrator(constants.DEFAULT_TEMP, dt, friction, [masses for _ in range(batch_size)], seed)
+        intg_impl = intg.impl(precision)
+    else:
+        assert False, f"Unknown integrator type {integrator_klass}"
+    assert intg_impl is not None
+
+    batch_pots = []
+    for pot in bps:
+        unbound_pot = pot.potential
+        # TBD: Implement a `pot.combine(other_pot) method
+        if isinstance(unbound_pot, (HarmonicBond, HarmonicAngle, PeriodicTorsion, ChiralAtomRestraint)):
+            klass = type(unbound_pot)
+            unbound_batch = klass(unbound_pot.num_atoms, [unbound_pot.idxs for _ in range(batch_size)])
+            params = [pot.params.astype(precision) for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        elif isinstance(unbound_pot, NonbondedPairList):
+            klass = type(unbound_pot)
+            unbound_batch = klass(
+                unbound_pot.num_atoms,
+                [unbound_pot.idxs for _ in range(batch_size)],
+                [unbound_pot.rescale_mask for _ in range(batch_size)],
+                unbound_pot.beta,
+                unbound_pot.cutoff,
+            )
+            params = [pot.params.astype(precision) for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        elif isinstance(unbound_pot, NonbondedPairListPrecomputed):
+            klass = type(unbound_pot)
+            unbound_batch = klass(
+                unbound_pot.num_atoms,
+                [unbound_pot.idxs for _ in range(batch_size)],
+                unbound_pot.beta,
+                unbound_pot.cutoff,
+            )
+            params = [pot.params.astype(precision) for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        elif isinstance(unbound_pot, NonbondedInteractionGroup):
+            klass = type(unbound_pot)
+            unbound_batch = klass(
+                unbound_pot.num_atoms,
+                [unbound_pot.row_atom_idxs for _ in range(batch_size)],
+                unbound_pot.beta,
+                unbound_pot.cutoff,
+                col_atom_idxs=[unbound_pot.col_atom_idxs for _ in range(batch_size)],
+            )
+            params = [pot.params.astype(precision) for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        elif isinstance(unbound_pot, Nonbonded):
+            klass = type(unbound_pot)
+            unbound_batch = klass(
+                unbound_pot.num_atoms,
+                [unbound_pot.exclusion_idxs for _ in range(batch_size)],
+                [unbound_pot.scale_factors for _ in range(batch_size)],
+                unbound_pot.beta,
+                unbound_pot.cutoff,
+                atom_idxs=[unbound_pot.atom_idxs for _ in range(batch_size)] if unbound_pot.atom_idxs else None,
+            )
+            params = [pot.params.astype(precision) for _ in range(batch_size)]
+            batch_pots.append(BoundPotential(unbound_batch, params))
+        else:
+            assert False, str(type(unbound_pot))
+
+    for pot in batch_pots:
+        assert pot.potential.to_gpu(precision).unbound_impl.batch_size() == batch_size
+        bp = pot.to_gpu(precision).bound_impl
+        pot.potential.to_gpu(precision).unbound_impl.execute_dim(
+            np.stack(batch_coords).squeeze(), pot.params, np.stack(batch_boxes).squeeze()
+        )
+        assert bp.batch_size() == batch_size
+        du_dx, u = bp.execute(np.stack(batch_coords).squeeze(), np.stack(batch_boxes).squeeze())
+
+        # Sanity check
+        assert np.all(np.isfinite(du_dx))
+        assert np.all(np.isfinite(u))
+        if batch_size > 1:
+            assert du_dx.shape == (batch_size, len(x0), 3)
+            assert u.shape == (batch_size,)
+            assert all([np.all(du_dx[0] == du_dx_batch for du_dx_batch in du_dx)])
+            assert all([np.all(u[0] == u_batch for u_batch in u)])
+        else:
+            assert du_dx.shape == (len(x0), 3)
+            assert u.shape == (batch_size,)
+
+    ctxt = Context(
+        np.stack(batch_coords).squeeze(),
+        np.stack(batch_v0).squeeze(),
+        np.stack(batch_boxes).squeeze(),
+        intg_impl,
+        [bp.to_gpu(precision).bound_impl for bp in batch_pots],
+        precision=precision,
+    )
+    xs, boxes = ctxt.multiple_steps(400)
+    assert np.all(np.isfinite(xs))
+    assert np.all(np.isfinite(boxes))
+    if batch_size > 1:
+        assert xs.shape == (1, batch_size, len(x0), 3)
+        assert boxes.shape == (1, batch_size, 3, 3)
+        # Each batch should be slightly different
+        for x_batch in xs.reshape(batch_size, len(x0), 3)[1:]:
+            assert np.all(xs[0, 0] != x_batch)
+        # If we are using verlet, everything should be identical.
+        if integrator_klass == VelocityVerletIntegrator:
+            for frame in xs.squeeze(axis=0):
+                print(frame.shape)
+    else:
+        assert xs.shape == (1, len(x0), 3)
+        assert boxes.shape == (1, 3, 3)
+
+
+@pytest.mark.memcheck
 @pytest.mark.parametrize("freeze_reference", [True, False])
 def test_multiple_steps_local_consistency(freeze_reference):
     """Verify that running multiple_steps_local is consistent.
