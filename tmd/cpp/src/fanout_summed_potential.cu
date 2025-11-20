@@ -16,6 +16,7 @@
 #include "assert.h"
 #include "fanout_summed_potential.hpp"
 #include "gpu_utils.cuh"
+#include "kernels/k_indices.cuh"
 #include "nonbonded_common.hpp"
 #include <memory>
 
@@ -26,7 +27,23 @@ FanoutSummedPotential<RealType>::FanoutSummedPotential(
     const std::vector<std::shared_ptr<Potential<RealType>>> potentials,
     const bool parallel)
     : potentials_(potentials), parallel_(parallel),
-      d_u_buffer_(potentials_.size()), nrg_accum_(1, potentials_.size()){};
+      num_systems_(potentials.size() > 0 ? potentials[0]->batch_size() : 1),
+      d_u_buffer_(num_systems_ * potentials_.size()),
+      d_system_idxs_(num_systems_ * potentials_.size()),
+      nrg_accum_(num_systems_, potentials_.size()) {
+  for (auto pot : potentials_) {
+    if (pot->batch_size() != num_systems_) {
+      throw std::runtime_error("Potentials must all have the same system size" +
+                               std::to_string(pot->batch_size()) + ", " +
+                               std::to_string(num_systems_));
+    }
+  }
+  k_segment_arange<<<ceil_divide(num_systems_ * potentials_.size(),
+                                 DEFAULT_THREADS_PER_BLOCK),
+                     DEFAULT_THREADS_PER_BLOCK>>>(
+      num_systems_, potentials_.size(), d_system_idxs_.data);
+  gpuErrchk(cudaPeekAtLastError());
+};
 
 template <typename RealType>
 FanoutSummedPotential<RealType>::~FanoutSummedPotential(){};
@@ -43,7 +60,6 @@ void FanoutSummedPotential<RealType>::execute_device(
     const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
-  assert(batches == 1);
   if (d_u) {
     gpuErrchk(cudaMemsetAsync(d_u_buffer_.data, 0, d_u_buffer_.size(), stream));
   }
@@ -63,7 +79,8 @@ void FanoutSummedPotential<RealType>::execute_device(
     }
     potentials_[i]->execute_device(
         batches, N, P, d_x, d_p, d_box, d_du_dx, d_du_dp,
-        d_u == nullptr ? nullptr : d_u_buffer_.data + i, pot_stream);
+        d_u == nullptr ? nullptr : d_u_buffer_.data + num_systems_ * i,
+        pot_stream);
   }
 
   if (parallel_) {
@@ -72,8 +89,9 @@ void FanoutSummedPotential<RealType>::execute_device(
     }
   }
   if (d_u) {
-    // nullptr for the d_system_idxs as batch size is fixed to 1
-    nrg_accum_.sum_device(potentials_.size(), d_u_buffer_.data, nullptr, d_u,
+    // nullptr for the d_system_idxs if num_systems_ == 1
+    nrg_accum_.sum_device(num_systems_ * potentials_.size(), d_u_buffer_.data,
+                          num_systems_ > 1 ? d_system_idxs_.data : nullptr, d_u,
                           stream);
   }
 };
@@ -86,6 +104,11 @@ void FanoutSummedPotential<RealType>::du_dp_fixed_to_float(
   if (!potentials_.empty()) {
     potentials_[0]->du_dp_fixed_to_float(N, P, du_dp, du_dp_float);
   }
+}
+
+template <typename RealType>
+int FanoutSummedPotential<RealType>::batch_size() const {
+  return num_systems_;
 }
 
 template class FanoutSummedPotential<double>;

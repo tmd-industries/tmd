@@ -1536,6 +1536,7 @@ void declare_bound_potential(py::module &m, const char *typestr) {
       .def("get_potential",
            [](const BoundPotential<RealType> &bp) { return bp.potential; })
       .def("get_flat_params", &BoundPotential<RealType>::get_params)
+      .def("batch_size", &BoundPotential<RealType>::batch_size)
       .def(
           "set_params",
           [](BoundPotential<RealType> &bp,
@@ -2770,8 +2771,9 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                     std::vector<std::vector<int>>(1, col_atom_idxs), beta,
                     cutoff, disable_hilbert_sort, nblist_padding);
               }),
-          py::arg("num_atoms"), py::arg("row_atom_idxs_i"), py::arg("beta"),
-          py::arg("cutoff"), py::arg("col_atom_idxs_i") = py::none(),
+          py::arg("num_atoms"), py::arg("row_atom_idxs_i").noconvert(),
+          py::arg("beta"), py::arg("cutoff"),
+          py::arg("col_atom_idxs_i").noconvert() = py::none(),
           py::arg("disable_hilbert_sort") = false,
           py::arg("nblist_padding") = 0.1,
           R"pbdoc(
@@ -2850,13 +2852,14 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                }
                combined_col_atoms.push_back(col_atom_idxs);
              }
-
+             printf("Num batches here %d\n", num_batches);
              return new NonbondedInteractionGroup<RealType>(
                  num_batches, N, combined_row_atoms, combined_col_atoms, beta,
                  cutoff, disable_hilbert_sort, nblist_padding);
            }),
-           py::arg("num_atoms"), py::arg("row_atom_idxs_i"), py::arg("beta"),
-           py::arg("cutoff"), py::arg("col_atom_idxs_i") = py::none(),
+           py::arg("num_atoms"), py::arg("row_atom_idxs_i").noconvert(),
+           py::arg("beta"), py::arg("cutoff"),
+           py::arg("col_atom_idxs_i").noconvert() = py::none(),
            py::arg("disable_hilbert_sort") = false,
            py::arg("nblist_padding") = 0.1,
            R"pbdoc(
@@ -2948,8 +2951,8 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
                 num_batches, num_atoms, pair_idxs, scales, system_idxs, beta,
                 cutoff);
           }),
-          py::arg("num_atoms"), py::arg("pair_idxs_i"), py::arg("scales_i"),
-          py::arg("beta"), py::arg("cutoff"))
+          py::arg("num_atoms"), py::arg("pair_idxs_i").noconvert(),
+          py::arg("scales_i").noconvert(), py::arg("beta"), py::arg("cutoff"))
       .def(py::init([](const int num_atoms,
                        const std::vector<py::array_t<int, py::array::c_style>>
                            &pair_idxs,
@@ -2986,8 +2989,8 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
                  num_batches, num_atoms, combined_pair_idxs, combined_scales,
                  system_idxs, beta, cutoff);
            }),
-           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("scales"),
-           py::arg("beta"), py::arg("cutoff"))
+           py::arg("num_atoms"), py::arg("pair_idxs").noconvert(),
+           py::arg("scales").noconvert(), py::arg("beta"), py::arg("cutoff"))
       .def("get_idxs",
            [](Class &pot) -> py::array_t<int, py::array::c_style> {
              std::vector<int> output_idxs = pot.get_idxs_host();

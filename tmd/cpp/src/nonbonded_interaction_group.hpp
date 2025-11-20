@@ -135,6 +135,8 @@ public:
   std::vector<int> get_row_idxs() const;
   std::vector<int> get_col_idxs() const;
 
+  virtual int batch_size() const override;
+
   void set_atom_idxs_device(const std::vector<int> &row_counts,
                             const std::vector<int> &col_counts,
                             unsigned int *d_row_idxs,

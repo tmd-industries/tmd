@@ -141,7 +141,8 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
     : num_systems_(num_systems), N_(N),
       interaction_type_(
           get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs)),
-      compute_col_grads_(true), nrg_accum_(num_systems_, MAX_KERNEL_BLOCKS),
+      compute_col_grads_(true),
+      nrg_accum_(num_systems_, this->get_max_nonbonded_kernel_blocks()),
       kernel_ptrs_(
           {// enumerate over every possible kernel combination
            // Set threads to 1 if not computing energy to reduced unused shared
@@ -495,6 +496,7 @@ void NonbondedInteractionGroup<RealType>::execute_device(
 
   // Zero out the energy buffer
   if (d_u) {
+    // TBD: Test nkb instead of mnkb
     cudaMemsetAsync(d_u_buffer_, 0, num_systems_ * mnkb * sizeof(*d_u_buffer_),
                     stream);
   }
@@ -790,6 +792,12 @@ void NonbondedInteractionGroup<RealType>::validate_idxs(
   }
 
   return;
+}
+
+template <typename RealType>
+int NonbondedInteractionGroup<RealType>::batch_size() const {
+  printf("Num syste %d\n", num_systems_);
+  return num_systems_;
 }
 
 template <typename RealType>
