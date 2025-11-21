@@ -527,6 +527,7 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
     batch_pots = []
     for pot in guest_system.get_U_fns():
         unbound_pot = pot.potential
+        assert unbound_pot.num_atoms == len(x0)
         # TBD: Implement a `pot.combine(other_pot) method
         if isinstance(unbound_pot, (HarmonicBond, HarmonicAngle, PeriodicTorsion, ChiralAtomRestraint)):
             klass = type(unbound_pot)
@@ -644,6 +645,7 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
     batch_pots = []
     for pot in bps:
         unbound_pot = pot.potential
+        assert unbound_pot.num_atoms == len(x0)
         # TBD: Implement a `pot.combine(other_pot) method
         if isinstance(unbound_pot, (HarmonicBond, HarmonicAngle, PeriodicTorsion, ChiralAtomRestraint)):
             klass = type(unbound_pot)
@@ -700,11 +702,13 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
     for pot in batch_pots:
         assert pot.potential.to_gpu(precision).unbound_impl.batch_size() == batch_size
         bp = pot.to_gpu(precision).bound_impl
-        pot.potential.to_gpu(precision).unbound_impl.execute_dim(
-            np.stack(batch_coords), pot.params, np.stack(batch_boxes)
+        ref_du_dx, _, ref_u = pot.potential.to_gpu(precision).unbound_impl.execute_dim(
+            np.stack(batch_coords), pot.params, np.stack(batch_boxes), 1, 0, 1
         )
         assert bp.batch_size() == batch_size
         du_dx, u = bp.execute(np.stack(batch_coords).squeeze(), np.stack(batch_boxes).squeeze())
+        np.testing.assert_array_equal(du_dx, ref_du_dx)
+        np.testing.assert_array_equal(u, ref_u)
 
         # Sanity check
         assert np.all(np.isfinite(du_dx))
