@@ -30,6 +30,8 @@ VelocityVerletIntegrator<RealType>::VelocityVerletIntegrator(
 
   d_cbs_ = gpuErrchkCudaMallocAndCopy(h_cbs, batch_size * N);
   cudaSafeMalloc(&d_du_dx_, batch_size_ * N * 3 * sizeof(*d_du_dx_));
+
+  gpuErrchk(cudaMemset(d_du_dx_, 0, batch_size_ * N_ * 3 * sizeof(*d_du_dx_)));
 }
 
 template <typename RealType>
@@ -48,8 +50,6 @@ void VelocityVerletIntegrator<RealType>::step_fwd(
   if (batch_size_ == 1) {
     assert(d_idxs == nullptr);
   }
-  gpuErrchk(cudaMemsetAsync(d_du_dx_, 0,
-                            batch_size_ * N_ * 3 * sizeof(*d_du_dx_), stream));
 
   const int D = 3;
   const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
@@ -72,13 +72,10 @@ void VelocityVerletIntegrator<RealType>::initialize(
   if (initialized_) {
     throw std::runtime_error("initialized twice");
   }
-  gpuErrchk(cudaMemsetAsync(d_du_dx_, 0,
-                            batch_size_ * N_ * 3 * sizeof(*d_du_dx_), stream));
 
   const int D = 3;
   const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
-  const size_t n_blocks = ceil_divide(batch_size_ * N_, tpb);
-  dim3 dimGrid_dx(n_blocks, D);
+  dim3 dimGrid_dx(batch_size_, N_);
 
   runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
@@ -103,13 +100,10 @@ void VelocityVerletIntegrator<RealType>::finalize(
   if (!initialized_) {
     throw std::runtime_error("not initialized");
   }
-  gpuErrchk(cudaMemsetAsync(d_du_dx_, 0,
-                            batch_size_ * N_ * 3 * sizeof(*d_du_dx_), stream));
 
   const int D = 3;
   const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
-  const size_t n_blocks = ceil_divide(batch_size_ * N_, tpb);
-  dim3 dimGrid_dx(n_blocks, D);
+  dim3 dimGrid_dx(batch_size_, N_);
 
   runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
