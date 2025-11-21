@@ -1170,7 +1170,9 @@ def test_local_md_potentials_setup(N, freeze_reference):
         free_particles = np.append(free_particles, reference_idx)
         frozen_particles = np.delete(frozen_particles, frozen_particles == reference_idx)
 
-    ixn_group.set_atom_idxs(free_particles, np.concatenate([free_particles, frozen_particles]))
+    ixn_group.set_atom_idxs(
+        free_particles.astype(np.int32), np.concatenate([free_particles, frozen_particles], dtype=np.int32)
+    )
 
     frozen_frozen = NonbondedInteractionGroup(
         N,
