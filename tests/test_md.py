@@ -490,8 +490,6 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
 @pytest.mark.parametrize("batch_size", [1, 2, 128])
 @pytest.mark.parametrize("integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator])
 def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
-    rng = np.random.default_rng(seed)
-
     dt = 2.5e-3
 
     mol, _ = get_biphenyl()
@@ -509,12 +507,8 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
     box0 = np.eye(3) * 10.0
 
     x0 = get_romol_conf(mol)
-    batch_coords = [x0.astype(precision)]
-    batch_boxes = [box0.astype(precision)]
-    assert batch_size >= 1
-    while len(batch_coords) < batch_size:
-        batch_coords.append(np.array(x0 + rng.uniform(-1e-3, 1e-3, size=x0.shape), dtype=precision))
-        batch_boxes.append(np.array(box0 * rng.uniform(0.8, 1.2), dtype=precision))
+    batch_coords = [x0.astype(precision)] * batch_size
+    batch_boxes = [box0.astype(precision)] * batch_size
 
     batch_v0 = [np.zeros_like(coords) for coords in batch_coords]
 
@@ -574,8 +568,10 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
         if batch_size > 1:
             assert du_dx.shape == (batch_size, len(x0), 3)
             assert u.shape == (batch_size,)
-            assert all([np.all(du_dx[0] == du_dx_batch for du_dx_batch in du_dx)])
-            assert all([np.all(u[0] == u_batch for u_batch in u)])
+            assert all([np.all(du_dx[0] == du_dx_batch) for du_dx_batch in du_dx]), (
+                f"Pot {type(pot.potential)} has force mismatch"
+            )
+            assert all([np.all(u[0] == u_batch) for u_batch in u])
         else:
             assert du_dx.shape == (len(x0), 3)
             assert u.shape == (batch_size,)
@@ -596,7 +592,11 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
         assert boxes.shape == (1, batch_size, 3, 3)
         # Each batch should be slightly different
         for x_batch in xs.reshape(batch_size, len(x0), 3)[1:]:
-            assert np.all(xs[0, 0] != x_batch)
+            if integrator_klass == VelocityVerletIntegrator:
+                assert np.all(xs[0, 0] == x_batch)
+            else:
+                assert intg.friction > 0
+                assert np.all(xs[0, 0] != x_batch)
 
     else:
         assert xs.shape == (1, len(x0), 3)
@@ -624,12 +624,8 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
     bonded_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
     masses = apply_hmr(masses, get_bond_list(bonded_pot)).astype(precision)
 
-    batch_coords = [x0.astype(precision)]
-    batch_boxes = [box0.astype(precision)]
-    assert batch_size >= 1
-    while len(batch_coords) < batch_size:
-        batch_coords.append(np.array(x0, dtype=precision))
-        batch_boxes.append(np.array(box0, dtype=precision))
+    batch_coords = [x0.astype(precision)] * batch_size
+    batch_boxes = [box0.astype(precision)] * batch_size
 
     batch_v0 = [np.zeros_like(coords) for coords in batch_coords]
 
@@ -716,8 +712,10 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
         if batch_size > 1:
             assert du_dx.shape == (batch_size, len(x0), 3)
             assert u.shape == (batch_size,)
-            assert all([np.all(du_dx[0] == du_dx_batch for du_dx_batch in du_dx)])
-            assert all([np.all(u[0] == u_batch for u_batch in u)])
+            assert all([np.all(du_dx[0] == du_dx_batch) for du_dx_batch in du_dx]), (
+                f"Pot {type(pot.potential)} has force mismatch"
+            )
+            assert all([np.all(u[0] == u_batch) for u_batch in u]), f"Pot {type(pot.potential)} has energy mismatch"
         else:
             assert du_dx.shape == (len(x0), 3)
             assert u.shape == (batch_size,)
@@ -738,11 +736,11 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
         assert boxes.shape == (1, batch_size, 3, 3)
         # Each batch should be slightly different
         for x_batch in xs.reshape(batch_size, len(x0), 3)[1:]:
-            assert np.all(xs[0, 0] != x_batch)
-        # If we are using verlet, everything should be identical.
-        if integrator_klass == VelocityVerletIntegrator:
-            for frame in xs.squeeze(axis=0):
-                print(frame.shape)
+            if integrator_klass == VelocityVerletIntegrator:
+                assert np.all(xs[0, 0] == x_batch)
+            else:
+                assert intg.friction > 0
+                assert np.all(xs[0, 0] != x_batch)
     else:
         assert xs.shape == (1, len(x0), 3)
         assert boxes.shape == (1, 3, 3)
