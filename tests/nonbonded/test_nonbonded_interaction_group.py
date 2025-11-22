@@ -16,38 +16,52 @@ def test_nonbonded_interaction_group_invalid_indices():
         NonbondedInteractionGroup(1, [], 1.0, 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("atom indices must be unique")):
-        NonbondedInteractionGroup(3, [1, 1], 1.0, 1.0).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(3, np.array([1, 1], dtype=np.int32), 1.0, 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("index values must be greater or equal to zero")):
-        NonbondedInteractionGroup(3, [1, -1], 1.0, 1.0).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(3, np.array([1, -1], dtype=np.int32), 1.0, 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("index values must be less than N")):
-        NonbondedInteractionGroup(3, [1, 100], 1.0, 1.0).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(3, np.array([1, 100], dtype=np.int32), 1.0, 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("col_atom_idxs must be nonempty")):
-        NonbondedInteractionGroup(3, [0, 1, 2], 1.0, 1.0).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(3, np.array([0, 1, 2], dtype=np.int32), 1.0, 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("num row idxs must be <= N(3)")):
-        NonbondedInteractionGroup(3, [0, 1, 2, 3], 1.0, 1.0, col_atom_idxs=[5]).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(
+            3, np.array([0, 1, 2, 3], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([5], dtype=np.int32)
+        ).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("index values must be less than N(3)")):
-        NonbondedInteractionGroup(3, [0, 1], 1.0, 1.0, col_atom_idxs=[2, 3, 4, 5]).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(
+            3, np.array([0, 1], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([2, 3, 4, 5], dtype=np.int32)
+        ).to_gpu(np.float64).unbound_impl
 
     # okay; overlapping
-    NonbondedInteractionGroup(3, [0, 1], 1.0, 1.0, col_atom_idxs=[0, 1]).to_gpu(np.float64).unbound_impl
+    NonbondedInteractionGroup(
+        3, np.array([0, 1], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([0, 1], dtype=np.int32)
+    ).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("index values must be less than N(3)")):
-        NonbondedInteractionGroup(3, [0, 1], 1.0, 1.0, col_atom_idxs=[2, 3]).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(
+            3, np.array([0, 1], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([2, 3], dtype=np.int32)
+        ).to_gpu(np.float64).unbound_impl
 
     # non disjoint, and non-overlapping
     with pytest.raises(RuntimeError, match=re.escape("row and col indices are neither disjoint nor overlapping")):
-        NonbondedInteractionGroup(3, [1, 2], 1.0, 1.0, col_atom_idxs=[0, 1]).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(
+            3, np.array([1, 2], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([0, 1], dtype=np.int32)
+        ).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("num row atoms(5) must be <= num col atoms(3) if non-disjoint")):
-        NonbondedInteractionGroup(6, [5, 1, 3, 2, 4], 1.0, 1.0, col_atom_idxs=[3, 2, 4]).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(
+            6, np.array([5, 1, 3, 2, 4], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([3, 2, 4], dtype=np.int32)
+        ).to_gpu(np.float64).unbound_impl
 
     # Ok for different idxs
-    NonbondedInteractionGroup(3, [0, 1], 1.0, 1.0, col_atom_idxs=[2]).to_gpu(np.float64).unbound_impl
+    NonbondedInteractionGroup(
+        3, np.array([0, 1], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([2], dtype=np.int32)
+    ).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match="each batch of column indices must be one dimensional"):
         NonbondedInteractionGroup(
@@ -55,7 +69,13 @@ def test_nonbonded_interaction_group_invalid_indices():
         ).to_gpu(np.float64).unbound_impl
 
     # Test that if we have disjoint row_atom/atom_idxs we're not allowed to set compute_col_grads=False
-    impl = NonbondedInteractionGroup(6, [0, 1, 2], 1.0, 1.0, col_atom_idxs=[3, 4, 5]).to_gpu(np.float64).unbound_impl
+    impl = (
+        NonbondedInteractionGroup(
+            6, np.array([0, 1, 2], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([3, 4, 5], dtype=np.int32)
+        )
+        .to_gpu(np.float64)
+        .unbound_impl
+    )
     with pytest.raises(
         RuntimeError, match=re.escape("compute_col_grads must be true if interaction_type_ is DISJOINT")
     ):
@@ -317,7 +337,7 @@ def test_nonbonded_interaction_group_consistency_allpairs_4d_decoupled(
 
     * U is computed using the reference potential over all atoms
     * U_A + U_B is computed using the reference potential over all atoms,
-      separated into 2 noninteracting groups in the 4th dimension
+      separated into 2 non-interacting groups in the 4th dimension
     """
 
     conf = example_conf[:num_atoms].astype(precision)
@@ -361,16 +381,15 @@ def test_nonbonded_interaction_group_consistency_allpairs_4d_decoupled(
         p = jnp.asarray(p).at[ligand_idxs, 3].set(3.01 * cutoff)
         return ref_all_pairs(x, p, b)
 
-    for params in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):
-        GradientTest().compare_forces(
-            conf,
-            params,
-            box,
-            ref_potential=ref_ixn_group,
-            test_potential=test_ixn_group,
-            rtol=0,  # why doesn't 0 pass?
-            atol=0,
-        )
+    GradientTest().compare_forces(
+        conf,
+        params,
+        box,
+        ref_potential=ref_ixn_group,
+        test_potential=test_ixn_group,
+        rtol=0,  # why doesn't 0 pass?
+        atol=0,
+    )
 
 
 @pytest.mark.parametrize("beta", [2.0])

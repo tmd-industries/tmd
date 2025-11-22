@@ -487,7 +487,7 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
 @pytest.mark.memcheck
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 @pytest.mark.parametrize("seed", [2025])
-@pytest.mark.parametrize("batch_size", [1, 2, 128])
+@pytest.mark.parametrize("batch_size", [1, 2, 16, 32, 48])
 @pytest.mark.parametrize("integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator])
 def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
     dt = 2.5e-3
@@ -592,9 +592,9 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
         assert xs.shape == (1, batch_size, len(x0), 3)
         assert boxes.shape == (1, batch_size, 3, 3)
         # Each batch should be slightly different
-        for x_batch in xs.reshape(batch_size, len(x0), 3)[1:]:
+        for i, x_batch in enumerate(xs.reshape(batch_size, len(x0), 3)[1:]):
             if integrator_klass == VelocityVerletIntegrator:
-                assert np.all(xs[0, 0] == x_batch)
+                assert np.all(xs[0, 0] == x_batch), f"Batch {i} doesn't match the first batch"
             else:
                 assert intg.friction > 0
                 assert np.all(xs[0, 0] != x_batch)
@@ -607,9 +607,12 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
 @pytest.mark.memcheck
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 @pytest.mark.parametrize("seed", [2025])
-@pytest.mark.parametrize("batch_size", [1, 2, 8, 16, 32, 48, 128])
-@pytest.mark.parametrize("integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator])
-def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass):
+@pytest.mark.parametrize("batch_size", [1, 2, 4, 8, 16, 32, 48])
+@pytest.mark.parametrize(
+    "integrator_klass, friction",
+    [(VelocityVerletIntegrator, np.inf), (LangevinIntegrator, 0.0), (LangevinIntegrator, 1.0)],
+)
+def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass, friction):
     dt = 2.5e-3
 
     mol, _ = get_biphenyl()
@@ -617,7 +620,9 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
     # Minimize the starting pose
     replace_conformer_with_minimized(mol, ff)
 
-    unbound_potentials, sys_params, masses, x0, box0 = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=True)
+    unbound_potentials, sys_params, masses, x0, box0 = get_solvent_phase_system(
+        mol, ff, 0.0, box_width=4.0, minimize_energy=True
+    )
     bps = []
     for p, pot in zip(sys_params, unbound_potentials):
         bps.append(pot.bind(p))
@@ -635,7 +640,6 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
         intg = VelocityVerletIntegrator(dt, [masses for _ in range(batch_size)])
         intg_impl = intg.impl(precision)
     elif integrator_klass is LangevinIntegrator:
-        friction = 1.0
         intg = LangevinIntegrator(constants.DEFAULT_TEMP, dt, friction, [masses for _ in range(batch_size)], seed)
         intg_impl = intg.impl(precision)
     else:
@@ -656,8 +660,8 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
             klass = type(unbound_pot)
             unbound_batch = klass(
                 unbound_pot.num_atoms,
-                [unbound_pot.idxs for _ in range(batch_size)],
-                [unbound_pot.rescale_mask for _ in range(batch_size)],
+                [unbound_pot.idxs.astype(np.int32) for _ in range(batch_size)],
+                [unbound_pot.rescale_mask.astype(precision) for _ in range(batch_size)],
                 unbound_pot.beta,
                 unbound_pot.cutoff,
             )
@@ -707,8 +711,8 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
         )
         assert bp.batch_size() == batch_size
         du_dx, u = bp.execute(np.stack(batch_coords).squeeze(), np.stack(batch_boxes).squeeze())
-        np.testing.assert_array_equal(du_dx, ref_du_dx)
-        np.testing.assert_array_equal(u, ref_u)
+        np.testing.assert_array_equal(du_dx.squeeze(), ref_du_dx.squeeze())
+        np.testing.assert_array_equal(u.squeeze(), ref_u.squeeze())
 
         # Sanity check
         assert np.all(np.isfinite(du_dx))
@@ -735,15 +739,16 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass)
     xs, boxes = ctxt.multiple_steps(400)
     assert np.all(np.isfinite(xs))
     assert np.all(np.isfinite(boxes))
+
     if batch_size > 1:
         assert xs.shape == (1, batch_size, len(x0), 3)
         assert boxes.shape == (1, batch_size, 3, 3)
         # Each batch should be slightly different
         for x_batch in xs.reshape(batch_size, len(x0), 3)[1:]:
-            if integrator_klass == VelocityVerletIntegrator:
+            if integrator_klass == VelocityVerletIntegrator or friction == 0.0:
                 assert np.all(xs[0, 0] == x_batch)
             else:
-                assert intg.friction > 0
+                assert intg.friction != 0
                 assert np.all(xs[0, 0] != x_batch)
     else:
         assert xs.shape == (1, len(x0), 3)

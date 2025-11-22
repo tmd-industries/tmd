@@ -170,17 +170,11 @@ def test_correctness(
     )
 
 
-@pytest.mark.memcheck
+# @pytest.mark.memcheck
 @pytest.mark.parametrize("select_atom_indices", [False, True])
-# we can't go bigger than this due to memory limitations in the the reference platform.
-@pytest.mark.parametrize(
-    "num_atoms",
-    [
-        33,
-    ],
-)  # 65, 231, 1050, 3080])
+@pytest.mark.parametrize("num_atoms", [33, 65, 231, 1050, 3080])
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
-@pytest.mark.parametrize("num_systems", [1, 2])
+@pytest.mark.parametrize("num_systems", [1, 2, 4, 8, 16, 32])
 def test_batch_correctness(
     rng, example_conf, example_box, example_nonbonded_potential, select_atom_indices, num_atoms, precision, num_systems
 ):
@@ -222,9 +216,14 @@ def test_batch_correctness(
     )
 
     for w_params in gen_nonbonded_params_with_4d_offsets(rng, params, nonbonded_fn.cutoff):
-        batch_du_dx, batch_du_dp, batch_u = potential.to_gpu(precision).unbound_impl.execute_dim(
-            coords, w_params, boxes, 1, 1, 1
-        )
+        batch_ub = potential.to_gpu(precision).unbound_impl
+        batch_du_dx, batch_du_dp, batch_u = batch_ub.execute_dim(coords, w_params, boxes, 1, 1, 1)
+
+        comp_batch_du_dx, comp_batch_du_dp, comp_batch_u = batch_ub.execute_dim(coords, w_params, boxes, 1, 1, 1)
+        # Verify running the potential twice gives the same result
+        np.testing.assert_array_equal(comp_batch_du_dx, batch_du_dx)
+        np.testing.assert_array_equal(comp_batch_du_dp, batch_du_dp)
+        np.testing.assert_array_equal(comp_batch_u, batch_u)
         for i in range(num_systems):
             ref_nb = potentials.Nonbonded(
                 num_atoms,

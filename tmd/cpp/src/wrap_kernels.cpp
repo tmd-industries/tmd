@@ -2950,7 +2950,7 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
                 num_batches, num_atoms, pair_idxs, scales, system_idxs, beta,
                 cutoff);
           }),
-          py::arg("num_atoms"), py::arg("pair_idxs_i").noconvert(),
+          py::arg("num_atoms"), py::arg("pair_idxs_i"),
           py::arg("scales_i").noconvert(), py::arg("beta"), py::arg("cutoff"))
       .def(py::init([](const int num_atoms,
                        const std::vector<py::array_t<int, py::array::c_style>>
