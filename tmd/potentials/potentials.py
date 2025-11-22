@@ -217,7 +217,7 @@ class NonbondedInteractionGroup(Potential):
 class NonbondedPairList(Potential):
     num_atoms: int
     idxs: NDArray[np.int32] | list[NDArray[np.int32]]
-    rescale_mask: NDArray[np.float64] | list[NDArray[np.float64]]
+    rescale_mask: NDArray | list[NDArray]
     beta: float
     cutoff: float
 

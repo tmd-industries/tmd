@@ -402,7 +402,7 @@ def gen_nonbonded_params_with_4d_offsets(
     def params_with_w_coords(w_coords):
         params_ = np.array(params)
         params_[..., 3] = w_coords
-        return params
+        return params_
 
     # all zero
     yield params_with_w_coords(0.0)
