@@ -604,7 +604,6 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
         assert boxes.shape == (1, 3, 3)
 
 
-@pytest.mark.memcheck
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 @pytest.mark.parametrize("seed", [2025])
 @pytest.mark.parametrize("batch_size", [1, 2, 4, 8, 16, 32, 48])

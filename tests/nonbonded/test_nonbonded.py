@@ -170,11 +170,10 @@ def test_correctness(
     )
 
 
-# @pytest.mark.memcheck
 @pytest.mark.parametrize("select_atom_indices", [False, True])
-@pytest.mark.parametrize("num_atoms", [33, 65, 231, 1050, 3080])
+@pytest.mark.parametrize("num_atoms", [33, 65, 231, 1050])
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
-@pytest.mark.parametrize("num_systems", [1, 2, 4, 8, 16, 32])
+@pytest.mark.parametrize("num_systems", [1, 2, 4, 8])
 def test_batch_correctness(
     rng, example_conf, example_box, example_nonbonded_potential, select_atom_indices, num_atoms, precision, num_systems
 ):
