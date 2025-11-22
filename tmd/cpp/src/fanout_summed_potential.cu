@@ -38,10 +38,10 @@ FanoutSummedPotential<RealType>::FanoutSummedPotential(
                                std::to_string(num_systems_));
     }
   }
-  k_segment_arange<<<ceil_divide(num_systems_ * potentials_.size(),
-                                 DEFAULT_THREADS_PER_BLOCK),
+  k_segment_arange<<<dim3(ceil_divide(num_systems_, DEFAULT_THREADS_PER_BLOCK),
+                          potentials_.size()),
                      DEFAULT_THREADS_PER_BLOCK>>>(
-      num_systems_, potentials_.size(), d_system_idxs_.data);
+      potentials_.size(), num_systems_, d_system_idxs_.data);
   gpuErrchk(cudaPeekAtLastError());
 };
 
