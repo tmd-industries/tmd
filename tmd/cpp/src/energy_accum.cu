@@ -98,13 +98,9 @@ void EnergyAccumulator::sum_device(const int num_vals, const __int128 *d_nrg_in,
                                      d_nrg_in, d_nrg_out, num_vals, stream));
   } else {
     // JANK
-
-    gpuErrchk(cudaDeviceSynchronize());
-    printf("Here\n");
     k_reduce_energies_by_system<<<dim3(1, batches_, 1), 1, 0, stream>>>(
         batches_, num_vals, d_nrg_in, d_system_idxs, d_nrg_out);
     gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
 
     // gpuErrchk(cub::DeviceRadixSort::SortPairs(
     //     d_sum_temp_storage_, temp_storage_bytes_, d_system_idxs,
