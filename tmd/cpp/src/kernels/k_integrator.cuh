@@ -95,7 +95,7 @@ k_update_forward_baoab(const int num_systems, const int N, const RealType ca,
       du_dx[system_idx * N * D + atom_idx * D + 2] = 0;
 
       // Write the random state back into memory
-      rand_states[atom_idx] = local_state;
+      rand_states[system_idx * N + atom_idx] = local_state;
     } else if (idxs != nullptr && kernel_idx < N) {
       // Zero out the forces after using them to avoid having to memset the
       // forces later Needed to handle local MD where the next round kernel_idx
