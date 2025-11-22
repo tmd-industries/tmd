@@ -227,9 +227,14 @@ class HostGuestTopology:
         guest_intra_params, guest_intra_pot = self.guest_topology.parameterize_nonbonded_pairlist(
             ff_q_params, ff_q_params_intra, ff_lj_params, ff_lj_params_intra, intramol_params=intramol_params
         )
-        # shift idxs because of the host
-        guest_intra_pot.idxs = guest_intra_pot.idxs + self.num_host_atoms
-        return guest_intra_params, guest_intra_pot
+        combined_intra_pot = potentials.NonbondedPairListPrecomputed(
+            self.get_num_atoms(),
+            # shift idxs to account for the host
+            guest_intra_pot.idxs + self.num_host_atoms,
+            guest_intra_pot.beta,
+            guest_intra_pot.cutoff,
+        )
+        return guest_intra_params, combined_intra_pot
 
 
 class BaseTopology:

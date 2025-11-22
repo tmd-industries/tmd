@@ -9,13 +9,19 @@ pytestmark = [pytest.mark.memcheck]
 
 def test_nonbonded_pair_list_invalid_pair_idxs():
     with pytest.raises(RuntimeError, match=r"idxs dimensions must be 2"):
-        NonbondedPairList(4, [0], [0], 2.0, 1.1).to_gpu(np.float32).unbound_impl
+        NonbondedPairList(4, np.array([0], dtype=np.int32), np.array([0], dtype=np.float32), 2.0, 1.1).to_gpu(
+            np.float32
+        ).unbound_impl
 
     with pytest.raises(RuntimeError, match=r"illegal pair with src == dst: 0, 0"):
-        NonbondedPairList(4, [(0, 0)], [(1, 1)], 2.0, 1.1).to_gpu(np.float32).unbound_impl
+        NonbondedPairList(4, np.array([(0, 0)], dtype=np.int32), np.array([(1, 1)], dtype=np.float32), 2.0, 1.1).to_gpu(
+            np.float32
+        ).unbound_impl
 
     with pytest.raises(RuntimeError, match=r"expected same number of pairs and scale tuples, but got 1 != 2"):
-        NonbondedPairList(4, [(0, 1)], [(1, 1), (2, 2)], 2.0, 1.1).to_gpu(np.float32).unbound_impl
+        NonbondedPairList(
+            4, np.array([(0, 1)], dtype=np.int32), np.array([(1, 1), (2, 2)], dtype=np.float32), 2.0, 1.1
+        ).to_gpu(np.float32).unbound_impl
 
 
 @pytest.mark.parametrize("beta", [2.0])
@@ -47,17 +53,18 @@ def test_nonbonded_pair_list_correctness(
 
     rescale_mask = rng.uniform(0, 1, size=(num_pairs, 2)).astype(precision)
 
-    potential = NonbondedPairList(num_atoms, pair_idxs, rescale_mask, beta, cutoff)
+    ref_potential = NonbondedPairList(num_atoms, pair_idxs.astype(np.int32), rescale_mask, beta, cutoff)
     params = example_nonbonded_potential.params
 
     for params_ in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):
-        test_impl = potential.to_gpu(precision)
+        test_impl = ref_potential.to_gpu(precision)
+
         conf = example_conf.astype(precision)
         box = example_box.astype(precision)
         params_ = params.astype(precision)
 
-        np.testing.assert_array_equal(potential.idxs, test_impl.unbound_impl.get_idxs())
-        GradientTest().compare_forces(conf, params_, box, potential, test_impl, rtol=rtol, atol=atol)
+        np.testing.assert_array_equal(ref_potential.idxs, test_impl.unbound_impl.get_idxs())
+        GradientTest().compare_forces(conf, params_, box, ref_potential, test_impl, rtol=rtol, atol=atol)
         GradientTest().assert_differentiable_interface_consistency(conf, params_, box, test_impl)
 
         # Testing batching across multiple coords/params
@@ -85,11 +92,13 @@ def test_nonbonded_pair_list_correctness(
 
         assert batch_du_dx.shape[0] == num_batches
         assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
-        for i, (idxs, rescale_mask, x, box, params) in enumerate(
+        for i, (idxs, rescale_mask, batch_x, batch_box, params_batch) in enumerate(
             zip(batch_pair_idxs, batch_rescale_mask, coords, batch_boxes, batch_params)
         ):
             potential = NonbondedPairList(num_atoms, idxs, rescale_mask, beta, cutoff)
-            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(
+                batch_x, params_batch, batch_box, 1, 1, 1
+            )
             np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
             np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
             np.testing.assert_array_equal(batch_u[i], ref_u)

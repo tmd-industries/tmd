@@ -19,7 +19,7 @@ def test_nonbonded_precomputed_pair_list_invalid_pair_idxs():
 @pytest.mark.parametrize("cutoff", [1.1, 10000.0])
 @pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
 @pytest.mark.parametrize("ixn_group_size", [4, 33, 231])
-@pytest.mark.parametrize("num_atoms", [25358])
+@pytest.mark.parametrize("num_atoms", [10, 33, 25358])
 def test_nonbonded_pair_list_precomputed_correctness(
     ixn_group_size,
     precision,

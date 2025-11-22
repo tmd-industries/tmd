@@ -143,6 +143,7 @@ pybind11_add_module(${LIBRARY_NAME} SHARED NO_EXTRAS
   src/kernels/k_rotations.cu
   src/kernels/k_exchange.cu
   src/kernels/k_sampling.cu
+  src/kernels/k_nonbonded.cu
   src/all_atom_energies.cu
   src/exchange.cu
   src/translations.cu

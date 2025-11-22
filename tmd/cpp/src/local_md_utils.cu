@@ -73,7 +73,8 @@ void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,
   if (std::shared_ptr<NonbondedInteractionGroup<RealType>> nb_pot =
           std::dynamic_pointer_cast<NonbondedInteractionGroup<RealType>>(pot);
       nb_pot) {
-    nb_pot->set_atom_idxs_device(num_row_idxs, num_col_idxs, d_row_idxs,
+    nb_pot->set_atom_idxs_device(std::vector<int>(1, num_row_idxs),
+                                 std::vector<int>(1, num_col_idxs), d_row_idxs,
                                  d_col_idxs, stream);
     nb_pot->set_compute_col_grads(set_compute_col_grads);
   } else {

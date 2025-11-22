@@ -114,7 +114,9 @@ void NonbondedPairListPrecomputed<RealType>::execute_device(
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      nrg_accum_.sum_device(B_, d_u_buffer_, d_system_idxs_, d_u, stream);
+      nrg_accum_.sum_device(B_, d_u_buffer_,
+                            num_batches_ > 1 ? d_system_idxs_ : nullptr, d_u,
+                            stream);
     }
   }
 };

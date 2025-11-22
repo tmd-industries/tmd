@@ -23,16 +23,37 @@ namespace tmd {
 
 static const int TILE_SIZE = WARP_SIZE;
 
-template <typename RealType>
+template <typename T>
 void __global__
-k_find_block_bounds(const int num_tiles,   // Number of tiles
-                    const int num_indices, // Number of indices
-                    const unsigned int *__restrict__ row_idxs, // [num_indices]
-                    const RealType *__restrict__ coords,       // [N*3]
-                    const RealType *__restrict__ box,          // [3*3]
-                    RealType *__restrict__ block_bounds_ctr,   // [num_tiles*3]
-                    RealType *__restrict__ block_bounds_ext,   // [num_tiles*3]
-                    unsigned int *__restrict__ ixn_count       // [1]
+k_reset_system_idxs(const size_t num_systems, const size_t N,
+                    T *__restrict__ col_system_idxs, // [num_systems, N]
+                    T *__restrict__ row_system_idxs  // [num_systems, N]
+) {
+  auto system_idx = blockIdx.y;
+  while (system_idx < num_systems) {
+    auto idx = blockIdx.x * blockDim.x + threadIdx.x;
+    while (idx < N) {
+      col_system_idxs[N * system_idx + idx] = system_idx;
+      row_system_idxs[N * system_idx + idx] = system_idx;
+      idx += gridDim.x * blockDim.x;
+    }
+    system_idx += gridDim.y * blockDim.y;
+  }
+}
+
+template <typename RealType>
+void __global__ k_find_block_bounds(
+    const int num_systems, // Number of systems
+    const int N,           // Number of atoms/rows per system
+    const unsigned int
+        *__restrict__ system_row_indice_counts, // [num_systems] Number of
+                                                // indices per system
+    const unsigned int *__restrict__ row_idxs,  // [num_systems * N]
+    const RealType *__restrict__ coords,        // [num_systems * N * 3]
+    const RealType *__restrict__ box,           // [num_systems * 3 * 3]
+    RealType *__restrict__ block_bounds_ctr,    // [num_systems * max_tiles * 3]
+    RealType *__restrict__ block_bounds_ext,    // [num_systems * max_tiles * 3]
+    unsigned int *__restrict__ ixn_counts       // [num_systems]
 ) {
 
   // Algorithm taken from
@@ -40,11 +61,22 @@ k_find_block_bounds(const int num_tiles,   // Number of tiles
   // Computes smaller bounding boxes than simpler form by accounting for
   // periodic box conditions
 
-  // each warp processes one tile
-  int tile_idx = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE;
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+  const int tile_offset = system_idx * 3 * ceil_divide(N, WARP_SIZE);
 
+  const int num_row_idxs = system_row_indice_counts[system_idx];
+  const int num_tiles = ceil_divide(num_row_idxs, WARP_SIZE);
+
+  // each warp processes one tile
+  const int tile_idx = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE;
   if (tile_idx >= num_tiles) {
     return;
+  }
+  if (blockIdx.x * blockDim.x + threadIdx.x == 0) {
+    ixn_counts[system_idx] = 0;
   }
 
   RealType pos_x;
@@ -61,26 +93,23 @@ k_find_block_bounds(const int num_tiles,   // Number of tiles
 
   RealType imaged_pos;
 
-  const RealType box_x = box[0 * 3 + 0];
-  const RealType box_y = box[1 * 3 + 1];
-  const RealType box_z = box[2 * 3 + 2];
+  const RealType box_x = box[system_idx * 9 + 0 * 3 + 0];
+  const RealType box_y = box[system_idx * 9 + 1 * 3 + 1];
+  const RealType box_z = box[system_idx * 9 + 2 * 3 + 2];
 
   const RealType inv_bx = rcp_rn(box_x);
   const RealType inv_by = rcp_rn(box_y);
   const RealType inv_bz = rcp_rn(box_z);
 
   int row_idx = tile_idx * TILE_SIZE + (threadIdx.x % WARP_SIZE);
-  // Reset the ixn count
-  if (row_idx == 0) {
-    ixn_count[0] = 0;
-  }
+  // Reset the ixn counts
 
-  if (row_idx < num_indices) {
-    int atom_idx = row_idxs[row_idx];
+  if (row_idx < num_row_idxs) {
+    int atom_idx = row_idxs[N * system_idx + row_idx];
 
-    pos_x = coords[atom_idx * 3 + 0];
-    pos_y = coords[atom_idx * 3 + 1];
-    pos_z = coords[atom_idx * 3 + 2];
+    pos_x = coords[system_idx * N * 3 + atom_idx * 3 + 0];
+    pos_y = coords[system_idx * N * 3 + atom_idx * 3 + 1];
+    pos_z = coords[system_idx * N * 3 + atom_idx * 3 + 2];
 
     min_pos_x = pos_x;
     min_pos_y = pos_y;
@@ -92,7 +121,7 @@ k_find_block_bounds(const int num_tiles,   // Number of tiles
   }
 
   // Only the first thread in each warp computes the min/max of the bounding box
-  bool compute_bounds = threadIdx.x % WARP_SIZE == 0;
+  const bool compute_bounds = threadIdx.x % WARP_SIZE == 0;
 
   // Build up center over time, and recenter before computing
   // min and max, to reduce overall size of box thanks to accounting
@@ -104,7 +133,7 @@ k_find_block_bounds(const int num_tiles,   // Number of tiles
     pos_y = __shfl_sync(0xffffffff, pos_y, src_lane);
     pos_z = __shfl_sync(0xffffffff, pos_z, src_lane);
     // Only evaluate for the first thread and when the row idx is valid
-    if (compute_bounds && row_idx < num_indices) {
+    if (compute_bounds && row_idx < num_row_idxs) {
       imaged_pos =
           pos_x - box_x * nearbyint((pos_x - static_cast<RealType>(0.5) *
                                                  (max_pos_x + min_pos_x)) *
@@ -127,25 +156,29 @@ k_find_block_bounds(const int num_tiles,   // Number of tiles
       max_pos_z = max(max_pos_z, imaged_pos);
     }
   }
-  if (threadIdx.x % WARP_SIZE == 0) {
-    block_bounds_ctr[tile_idx * 3 + 0] =
+  if (compute_bounds) {
+    block_bounds_ctr[tile_offset + tile_idx * 3 + 0] =
         static_cast<RealType>(0.5) * (max_pos_x + min_pos_x);
-    block_bounds_ctr[tile_idx * 3 + 1] =
+    block_bounds_ctr[tile_offset + tile_idx * 3 + 1] =
         static_cast<RealType>(0.5) * (max_pos_y + min_pos_y);
-    block_bounds_ctr[tile_idx * 3 + 2] =
+    block_bounds_ctr[tile_offset + tile_idx * 3 + 2] =
         static_cast<RealType>(0.5) * (max_pos_z + min_pos_z);
 
-    block_bounds_ext[tile_idx * 3 + 0] =
+    block_bounds_ext[tile_offset + tile_idx * 3 + 0] =
         static_cast<RealType>(0.5) * (max_pos_x - min_pos_x);
-    block_bounds_ext[tile_idx * 3 + 1] =
+    block_bounds_ext[tile_offset + tile_idx * 3 + 1] =
         static_cast<RealType>(0.5) * (max_pos_y - min_pos_y);
-    block_bounds_ext[tile_idx * 3 + 2] =
+    block_bounds_ext[tile_offset + tile_idx * 3 + 2] =
         static_cast<RealType>(0.5) * (max_pos_z - min_pos_z);
   }
 }
 
 void __global__ k_compact_trim_atoms(
-    const int N, const int Y, unsigned int *__restrict__ trim_atoms,
+    const int num_systems, const int N, const int atom_buffer_size_per_system,
+    const int Y,
+    const unsigned int
+        *system_row_counts, // [num_systems] Number of rows idxs for each system
+    const unsigned int *__restrict__ trim_atoms,
     unsigned int *__restrict__ interactionCount,
     int *__restrict__ interactingTiles,
     unsigned int *__restrict__ interactingAtoms) {
@@ -154,20 +187,38 @@ void __global__ k_compact_trim_atoms(
   // tricks, but this isn't a huge save
   __shared__ int ixn_j_buffer[2 * WARP_SIZE];
 
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+
+  const int max_tiles = ceil_divide(N, WARP_SIZE);
+  const int tile_offset = system_idx * max_tiles;
+  const int output_tile_offset = tile_offset * max_tiles;
+  // Offset into the interacting atoms
+  const int interacting_atom_offset = system_idx * atom_buffer_size_per_system;
+  const int max_row_block =
+      ceil_divide(system_row_counts[system_idx], WARP_SIZE);
+
   ixn_j_buffer[threadIdx.x] = N;
   ixn_j_buffer[WARP_SIZE + threadIdx.x] = N;
 
   const int indexInWarp = threadIdx.x % WARP_SIZE;
   const int warpMask = (1 << indexInWarp) - 1;
   const int row_block_idx = blockIdx.x;
+  if (row_block_idx >= max_row_block) {
+    return;
+  }
 
   __shared__ volatile int sync_start[1];
   int neighborsInBuffer = 0;
 
   for (int trim_block_idx = 0; trim_block_idx < Y; trim_block_idx++) {
 
-    int atom_j_idx = trim_atoms[row_block_idx * Y * WARP_SIZE +
-                                trim_block_idx * WARP_SIZE + threadIdx.x];
+    int atom_j_idx =
+        trim_atoms[tile_offset * Y * WARP_SIZE + row_block_idx * Y * WARP_SIZE +
+                   trim_block_idx * WARP_SIZE + threadIdx.x];
+
     bool interacts = atom_j_idx < N;
 
     int includeAtomFlags = __ballot_sync(FULL_MASK, interacts);
@@ -184,13 +235,13 @@ void __global__ k_compact_trim_atoms(
     if (neighborsInBuffer > WARP_SIZE) {
       int tilesToStore = 1;
       if (indexInWarp == 0) {
-        sync_start[0] = atomicAdd(interactionCount, tilesToStore);
+        *sync_start = atomicAdd(interactionCount + system_idx, tilesToStore);
       }
       __syncwarp();
-      interactingTiles[sync_start[0]] =
+      interactingTiles[output_tile_offset + *sync_start] =
           row_block_idx; // IS THIS CORRECT? CONTESTED
-      interactingAtoms[sync_start[0] * WARP_SIZE + threadIdx.x] =
-          ixn_j_buffer[threadIdx.x];
+      interactingAtoms[interacting_atom_offset + *sync_start * WARP_SIZE +
+                       threadIdx.x] = ixn_j_buffer[threadIdx.x];
 
       ixn_j_buffer[threadIdx.x] = ixn_j_buffer[WARP_SIZE + threadIdx.x];
       ixn_j_buffer[WARP_SIZE + threadIdx.x] = N; // reset old values
@@ -201,12 +252,12 @@ void __global__ k_compact_trim_atoms(
   if (neighborsInBuffer > 0) {
     int tilesToStore = 1;
     if (indexInWarp == 0) {
-      sync_start[0] = atomicAdd(interactionCount, tilesToStore);
+      *sync_start = atomicAdd(interactionCount + system_idx, tilesToStore);
     }
     __syncwarp();
-    interactingTiles[sync_start[0]] = row_block_idx;
-    interactingAtoms[sync_start[0] * WARP_SIZE + threadIdx.x] =
-        ixn_j_buffer[threadIdx.x];
+    interactingTiles[output_tile_offset + *sync_start] = row_block_idx;
+    interactingAtoms[interacting_atom_offset + *sync_start * WARP_SIZE +
+                     threadIdx.x] = ixn_j_buffer[threadIdx.x];
   }
 }
 
@@ -235,30 +286,45 @@ against each col block atom.
 // and column_idxs to be identical and be the values of np.arange(0, N).
 template <typename RealType, bool UPPER_TRIAG>
 void __global__ k_find_blocks_with_ixns(
-    const int N,                                  // Total number of atoms
-    const int NC,                                 // Number of columns idxs
-    const int NR,                                 // Number of rows idxs
-    const unsigned int *__restrict__ column_idxs, // [NC]
-    const unsigned int *__restrict__ row_idxs,    // [NR]
-    const RealType *__restrict__ column_bb_ctr,   // [N * 3] block centers
-    const RealType *__restrict__ column_bb_ext,   // [N * 3] block extents
-    const RealType *__restrict__ row_bb_ctr,      // [N * 3] block centers
-    const RealType *__restrict__ row_bb_ext,      // [N * 3] block extents
-    const RealType *__restrict__ coords,          // [N * 3]
-    const RealType *__restrict__ box,
+    const int num_systems,                    // Number of systems
+    const int N,                              // Total number of atoms
+    const int atom_buffer_size_per_system,    // Number of interactions in each
+                                              // atom buffer for each system
+    const unsigned int *system_column_counts, // [num_systems] Number of columns
+                                              // idxs for each system
+    const unsigned int
+        *system_row_counts, // [num_systems] Number of rows idxs for each system
+    const unsigned int *__restrict__ column_idxs, // [num_systems, NC]
+    const unsigned int *__restrict__ row_idxs,    // [num_systems, NR]
+    const RealType
+        *__restrict__ column_bb_ctr, // [num_systems * N * 3] block centers
+    const RealType
+        *__restrict__ column_bb_ext, // [num_systems * N * 3] block extents
+    const RealType
+        *__restrict__ row_bb_ctr, // [num_systems * N * 3] block centers
+    const RealType
+        *__restrict__ row_bb_ext,        // [num_systems * N * 3] block extents
+    const RealType *__restrict__ coords, // [num_systems * N * 3]
+    const RealType *__restrict__ box,    // [num_systems * 3 * 3]
     unsigned int *__restrict__ interactionCount, // number of tiles that have
                                                  // interactions
     int *__restrict__ interactingTiles, // the row block idx of the tile that is
                                         // interacting
     unsigned int
-        *__restrict__ interactingAtoms,    // [NR * WARP_SIZE] atom indices
-                                           // interacting with each row block
+        *__restrict__ interactingAtoms, // [num_systems * NR * WARP_SIZE] atom
+                                        // indices interacting with each row
+                                        // block
     unsigned int *__restrict__ trim_atoms, // the left-over trims that will
                                            // later be compacted
     const RealType base_cutoff, const RealType padding) {
 
   static_assert(TILE_SIZE == WARP_SIZE,
                 "TILE_SIZE != WARP_SIZE is not currently supported");
+
+  const int system_idx = blockIdx.z; // Z dimension is the systems
+  if (system_idx >= num_systems) {
+    return;
+  }
 
   const int indexInWarp = threadIdx.x % WARP_SIZE;
   const int warpMask = (1 << indexInWarp) - 1;
@@ -273,31 +339,43 @@ void __global__ k_find_blocks_with_ixns(
 
   __shared__ volatile int sync_start[1];
 
+  const int NC = system_column_counts[system_idx];
+  const int NR = system_row_counts[system_idx];
+  const int max_tiles = ceil_divide(N, WARP_SIZE);
+  const int tile_offset = system_idx * max_tiles;
+  const int output_tile_offset = tile_offset * max_tiles;
+  // Offset into the interacting atoms
+  const int interacting_atom_offset = system_idx * atom_buffer_size_per_system;
+
   unsigned int row_i_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  unsigned int atom_i_idx = row_i_idx < NR ? row_idxs[row_i_idx] : N;
+  unsigned int atom_i_idx =
+      row_i_idx < NR ? row_idxs[system_idx * N + row_i_idx] : N;
 
   const int row_block_idx = blockIdx.x;
 
   // Retrieve the center coords of row's box and outer limits of row box.
-  RealType row_bb_ctr_x = row_bb_ctr[row_block_idx * 3 + 0];
-  RealType row_bb_ctr_y = row_bb_ctr[row_block_idx * 3 + 1];
-  RealType row_bb_ctr_z = row_bb_ctr[row_block_idx * 3 + 2];
+  RealType row_bb_ctr_x = row_bb_ctr[tile_offset * 3 + row_block_idx * 3 + 0];
+  RealType row_bb_ctr_y = row_bb_ctr[tile_offset * 3 + row_block_idx * 3 + 1];
+  RealType row_bb_ctr_z = row_bb_ctr[tile_offset * 3 + row_block_idx * 3 + 2];
 
-  RealType row_bb_ext_x = row_bb_ext[row_block_idx * 3 + 0];
-  RealType row_bb_ext_y = row_bb_ext[row_block_idx * 3 + 1];
-  RealType row_bb_ext_z = row_bb_ext[row_block_idx * 3 + 2];
+  RealType row_bb_ext_x = row_bb_ext[tile_offset * 3 + row_block_idx * 3 + 0];
+  RealType row_bb_ext_y = row_bb_ext[tile_offset * 3 + row_block_idx * 3 + 1];
+  RealType row_bb_ext_z = row_bb_ext[tile_offset * 3 + row_block_idx * 3 + 2];
 
   int neighborsInBuffer = 0;
 
-  RealType pos_i_x = atom_i_idx < N ? coords[atom_i_idx * 3 + 0] : 0;
-  RealType pos_i_y = atom_i_idx < N ? coords[atom_i_idx * 3 + 1] : 0;
-  RealType pos_i_z = atom_i_idx < N ? coords[atom_i_idx * 3 + 2] : 0;
+  RealType pos_i_x =
+      atom_i_idx < N ? coords[system_idx * N * 3 + atom_i_idx * 3 + 0] : 0;
+  RealType pos_i_y =
+      atom_i_idx < N ? coords[system_idx * N * 3 + atom_i_idx * 3 + 1] : 0;
+  RealType pos_i_z =
+      atom_i_idx < N ? coords[system_idx * N * 3 + atom_i_idx * 3 + 2] : 0;
 
-  const int NUM_COL_BLOCKS = (NC + TILE_SIZE - 1) / TILE_SIZE;
+  const int NUM_COL_BLOCKS = ceil_divide(NC, TILE_SIZE);
 
-  RealType bx = box[0 * 3 + 0];
-  RealType by = box[1 * 3 + 1];
-  RealType bz = box[2 * 3 + 2];
+  RealType bx = box[system_idx * 9 + 0 * 3 + 0];
+  RealType by = box[system_idx * 9 + 1 * 3 + 1];
+  RealType bz = box[system_idx * 9 + 2 * 3 + 2];
 
   RealType inv_bx = rcp_rn(bx);
   RealType inv_by = rcp_rn(by);
@@ -340,13 +418,19 @@ void __global__ k_find_blocks_with_ixns(
   if (include_col_block) {
 
     // Compute center of column box and extent coords.
-    RealType col_bb_ctr_x = column_bb_ctr[col_block_idx * 3 + 0];
-    RealType col_bb_ctr_y = column_bb_ctr[col_block_idx * 3 + 1];
-    RealType col_bb_ctr_z = column_bb_ctr[col_block_idx * 3 + 2];
+    RealType col_bb_ctr_x =
+        column_bb_ctr[tile_offset * 3 + col_block_idx * 3 + 0];
+    RealType col_bb_ctr_y =
+        column_bb_ctr[tile_offset * 3 + col_block_idx * 3 + 1];
+    RealType col_bb_ctr_z =
+        column_bb_ctr[tile_offset * 3 + col_block_idx * 3 + 2];
 
-    RealType col_bb_ext_x = column_bb_ext[col_block_idx * 3 + 0];
-    RealType col_bb_ext_y = column_bb_ext[col_block_idx * 3 + 1];
-    RealType col_bb_ext_z = column_bb_ext[col_block_idx * 3 + 2];
+    RealType col_bb_ext_x =
+        column_bb_ext[tile_offset * 3 + col_block_idx * 3 + 0];
+    RealType col_bb_ext_y =
+        column_bb_ext[tile_offset * 3 + col_block_idx * 3 + 1];
+    RealType col_bb_ext_z =
+        column_bb_ext[tile_offset * 3 + col_block_idx * 3 + 2];
 
     // Find delta between boxes
     RealType box_box_dx = row_bb_ctr_x - col_bb_ctr_x;
@@ -392,24 +476,28 @@ void __global__ k_find_blocks_with_ixns(
     int col_block = col_block_base + offset;
     int col_j_idx = col_block * WARP_SIZE +
                     threadIdx.x; // each thread loads a different atom
-    int atom_j_idx = col_j_idx < NC ? column_idxs[col_j_idx] : N;
+    int atom_j_idx =
+        col_j_idx < NC ? column_idxs[system_idx * N + col_j_idx] : N;
 
     // Compute overlap between column bounding box and row atom
-    RealType col_bb_ctr_x = column_bb_ctr[col_block * 3 + 0];
-    RealType col_bb_ctr_y = column_bb_ctr[col_block * 3 + 1];
-    RealType col_bb_ctr_z = column_bb_ctr[col_block * 3 + 2];
+    RealType col_bb_ctr_x = column_bb_ctr[tile_offset * 3 + col_block * 3 + 0];
+    RealType col_bb_ctr_y = column_bb_ctr[tile_offset * 3 + col_block * 3 + 1];
+    RealType col_bb_ctr_z = column_bb_ctr[tile_offset * 3 + col_block * 3 + 2];
 
-    RealType col_bb_ext_x = column_bb_ext[col_block * 3 + 0];
-    RealType col_bb_ext_y = column_bb_ext[col_block * 3 + 1];
-    RealType col_bb_ext_z = column_bb_ext[col_block * 3 + 2];
+    RealType col_bb_ext_x = column_bb_ext[tile_offset * 3 + col_block * 3 + 0];
+    RealType col_bb_ext_y = column_bb_ext[tile_offset * 3 + col_block * 3 + 1];
+    RealType col_bb_ext_z = column_bb_ext[tile_offset * 3 + col_block * 3 + 2];
 
     // Don't use pos_i_* here, as might have been shifted to center of row box
     RealType atom_box_dx =
-        (atom_i_idx < N ? coords[atom_i_idx * 3 + 0] : 0) - col_bb_ctr_x;
+        (atom_i_idx < N ? coords[system_idx * N * 3 + atom_i_idx * 3 + 0] : 0) -
+        col_bb_ctr_x;
     RealType atom_box_dy =
-        (atom_i_idx < N ? coords[atom_i_idx * 3 + 1] : 0) - col_bb_ctr_y;
+        (atom_i_idx < N ? coords[system_idx * N * 3 + atom_i_idx * 3 + 1] : 0) -
+        col_bb_ctr_y;
     RealType atom_box_dz =
-        (atom_i_idx < N ? coords[atom_i_idx * 3 + 2] : 0) - col_bb_ctr_z;
+        (atom_i_idx < N ? coords[system_idx * N * 3 + atom_i_idx * 3 + 2] : 0) -
+        col_bb_ctr_z;
 
     atom_box_dx -= bx * nearbyint(atom_box_dx * inv_bx);
     atom_box_dy -= by * nearbyint(atom_box_dy * inv_by);
@@ -445,9 +533,12 @@ void __global__ k_find_blocks_with_ixns(
     // s 0  0 0 0 0 0 0
     //   0  0 0 0 0 0 0
 
-    RealType pos_j_x = atom_j_idx < N ? coords[atom_j_idx * 3 + 0] : 0;
-    RealType pos_j_y = atom_j_idx < N ? coords[atom_j_idx * 3 + 1] : 0;
-    RealType pos_j_z = atom_j_idx < N ? coords[atom_j_idx * 3 + 2] : 0;
+    RealType pos_j_x =
+        atom_j_idx < N ? coords[system_idx * N * 3 + atom_j_idx * 3 + 0] : 0;
+    RealType pos_j_y =
+        atom_j_idx < N ? coords[system_idx * N * 3 + atom_j_idx * 3 + 1] : 0;
+    RealType pos_j_z =
+        atom_j_idx < N ? coords[system_idx * N * 3 + atom_j_idx * 3 + 2] : 0;
 
     // Note: this optimization makes certain assumptions specific to local MD
     // when certain particles are frozen and likely does not do what we want in
@@ -552,12 +643,13 @@ void __global__ k_find_blocks_with_ixns(
     if (neighborsInBuffer > WARP_SIZE) {
       int tilesToStore = 1;
       if (indexInWarp == 0) {
-        sync_start[0] = atomicAdd(interactionCount, tilesToStore);
+        *sync_start = atomicAdd(interactionCount + system_idx, tilesToStore);
       }
       __syncwarp();
-      interactingTiles[sync_start[0]] = row_block_idx;
-      interactingAtoms[sync_start[0] * WARP_SIZE + threadIdx.x] =
-          ixn_j_buffer[threadIdx.x];
+      interactingTiles[output_tile_offset + *sync_start] = row_block_idx;
+
+      interactingAtoms[interacting_atom_offset + *sync_start * WARP_SIZE +
+                       threadIdx.x] = ixn_j_buffer[threadIdx.x];
 
       ixn_j_buffer[threadIdx.x] = ixn_j_buffer[WARP_SIZE + threadIdx.x];
       ixn_j_buffer[WARP_SIZE + threadIdx.x] = N; // reset old values
@@ -567,8 +659,8 @@ void __global__ k_find_blocks_with_ixns(
 
   // store trim
   const int Y = gridDim.y;
-  trim_atoms[blockIdx.x * Y * WARP_SIZE + blockIdx.y * WARP_SIZE +
-             threadIdx.x] = ixn_j_buffer[threadIdx.x];
+  trim_atoms[tile_offset * Y * WARP_SIZE + blockIdx.x * Y * WARP_SIZE +
+             blockIdx.y * WARP_SIZE + threadIdx.x] = ixn_j_buffer[threadIdx.x];
 }
 
 } // namespace tmd

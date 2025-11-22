@@ -30,9 +30,11 @@ class FanoutSummedPotential : public Potential<RealType> {
 private:
   const std::vector<std::shared_ptr<Potential<RealType>>> potentials_;
   const bool parallel_;
+  const int num_systems_;
   DeviceBuffer<__int128> d_u_buffer_;
   StreamManager manager_;
 
+  DeviceBuffer<int> d_system_idxs_;
   EnergyAccumulator nrg_accum_;
 
 public:
@@ -43,6 +45,8 @@ public:
   ~FanoutSummedPotential();
 
   const std::vector<std::shared_ptr<Potential<RealType>>> &get_potentials();
+
+  virtual int batch_size() const override;
 
   virtual void execute_device(const int batches, const int N, const int P,
                               const RealType *d_x, const RealType *d_p,

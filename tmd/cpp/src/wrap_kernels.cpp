@@ -153,10 +153,13 @@ void declare_neighborlist(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("Neighborlist_") + typestr;
   py::class_<Class>(m, pyclass_name.c_str(), py::buffer_protocol(),
                     py::dynamic_attr())
-      .def(py::init([](int N, bool compute_upper_triangular) {
-             return new Neighborlist<RealType>(N, compute_upper_triangular);
+      .def(py::init([](const int num_systems, const int N,
+                       const bool compute_upper_triangular) {
+             return new Neighborlist<RealType>(num_systems, N,
+                                               compute_upper_triangular);
            }),
-           py::arg("N"), py::arg("compute_upper_triangular"))
+           py::arg("num_systems"), py::arg("N"),
+           py::arg("compute_upper_triangular"))
       .def(
           "compute_block_bounds",
           [](Neighborlist<RealType> &nblist,
@@ -168,21 +171,32 @@ void declare_neighborlist(py::module &m, const char *typestr) {
               // is fixed to the CUDA warpSize
               throw std::runtime_error("Block size must be 32.");
             }
-            verify_coords_and_box(coords, box);
-            int N = coords.shape()[0];
-            int D = coords.shape()[1];
-            int B = (N + block_size - 1) / block_size;
-
-            py::array_t<RealType, py::array::c_style> py_bb_ctrs({B, D});
-            py::array_t<RealType, py::array::c_style> py_bb_exts({B, D});
+            int num_systems = 1;
+            int N;
+            int D;
+            if (coords.ndim() == 3) {
+              num_systems = coords.shape()[0];
+              N = coords.shape()[1];
+              D = coords.shape()[2];
+            } else {
+              verify_coords_and_box(coords, box);
+              N = coords.shape()[0];
+              D = coords.shape()[1];
+            }
+            const int B = ceil_divide(N, block_size);
 
             std::vector<RealType> real_coords =
                 py_array_to_vector_with_cast<double, RealType>(coords);
             std::vector<RealType> real_box =
                 py_array_to_vector_with_cast<double, RealType>(box);
 
+            py::array_t<RealType, py::array::c_style> py_bb_ctrs(
+                {num_systems, B, D});
+            py::array_t<RealType, py::array::c_style> py_bb_exts(
+                {num_systems, B, D});
+
             nblist.compute_block_bounds_host(
-                N, real_coords.data(), real_box.data(),
+                num_systems, N, real_coords.data(), real_box.data(),
                 py_bb_ctrs.mutable_data(), py_bb_exts.mutable_data());
 
             // returns real type
@@ -194,18 +208,26 @@ void declare_neighborlist(py::module &m, const char *typestr) {
           [](Neighborlist<RealType> &nblist,
              const py::array_t<double, py::array::c_style> &coords,
              const py::array_t<double, py::array::c_style> &box,
-             const double cutoff,
-             const double padding) -> std::vector<std::vector<int>> {
-            int N = coords.shape()[0];
-            verify_coords_and_box(coords, box);
+             const double cutoff, const double padding)
+              -> std::vector<std::vector<std::vector<int>>> {
+            int num_systems = 1;
+            int N;
+            if (coords.ndim() == 3) {
+              num_systems = coords.shape()[0];
+              N = coords.shape()[1];
+            } else {
+              verify_coords_and_box(coords, box);
+              N = coords.shape()[0];
+            }
 
             std::vector<RealType> real_coords =
                 py_array_to_vector_with_cast<double, RealType>(coords);
             std::vector<RealType> real_box =
                 py_array_to_vector_with_cast<double, RealType>(box);
 
-            std::vector<std::vector<int>> ixn_list = nblist.get_nblist_host(
-                N, real_coords.data(), real_box.data(), cutoff, padding);
+            auto ixn_list =
+                nblist.get_nblist_host(num_systems, N, real_coords.data(),
+                                       real_box.data(), cutoff, padding);
 
             return ixn_list;
           },
@@ -229,7 +251,31 @@ void declare_neighborlist(py::module &m, const char *typestr) {
             nblist.set_row_idxs_and_col_idxs(row_idxs, col_idxs);
           },
           py::arg("row_idxs"), py::arg("col_idxs"))
+      .def(
+          "set_row_idxs_and_col_idxs",
+          [](Neighborlist<RealType> &nblist,
+             const std::vector<py::array_t<unsigned int, py::array::c_style>>
+                 &row_idxs_i,
+             const std::vector<py::array_t<unsigned int, py::array::c_style>>
+                 &col_idxs_i) {
+            const auto num_sets = row_idxs_i.size();
+            if (num_sets != col_idxs_i.size()) {
+              throw std::runtime_error(
+                  "Number of sets of row and column indices must match");
+            }
+            std::vector<std::vector<unsigned int>> row_idxs;
+            for (auto row_idx_subset : row_idxs_i) {
+              row_idxs.push_back(py_array_to_vector(row_idx_subset));
+            }
+            std::vector<std::vector<unsigned int>> col_idxs;
+            for (auto col_idx_subset : col_idxs_i) {
+              col_idxs.push_back(py_array_to_vector(col_idx_subset));
+            }
+            nblist.set_row_idxs_and_col_idxs(row_idxs, col_idxs);
+          },
+          py::arg("row_idxs"), py::arg("col_idxs"))
       .def("reset_row_idxs", &Neighborlist<RealType>::reset_row_idxs)
+      .def("get_num_systems", &Neighborlist<RealType>::get_num_systems)
       .def("get_tile_ixn_count", &Neighborlist<RealType>::num_tile_ixns)
       .def("get_max_ixn_count", &Neighborlist<RealType>::max_ixn_count)
       .def("resize", &Neighborlist<RealType>::resize, py::arg("size"))
@@ -251,8 +297,8 @@ void declare_hilbert_sort(py::module &m, const char *typestr) {
              const py::array_t<double, py::array::c_style> &coords,
              const py::array_t<double, py::array::c_style> &box)
               -> const py::array_t<uint32_t, py::array::c_style> {
-            const int N = coords.shape()[0];
             verify_coords_and_box(coords, box);
+            const int N = coords.shape()[0];
 
             std::vector<RealType> real_coords =
                 py_array_to_vector_with_cast<double, RealType>(coords);
@@ -1490,6 +1536,7 @@ void declare_bound_potential(py::module &m, const char *typestr) {
       .def("get_potential",
            [](const BoundPotential<RealType> &bp) { return bp.potential; })
       .def("get_flat_params", &BoundPotential<RealType>::get_params)
+      .def("batch_size", &BoundPotential<RealType>::batch_size)
       .def(
           "set_params",
           [](BoundPotential<RealType> &bp,
@@ -2720,11 +2767,13 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                 }
 
                 return new NonbondedInteractionGroup<RealType>(
-                    N, row_atom_idxs, col_atom_idxs, beta, cutoff,
-                    disable_hilbert_sort, nblist_padding);
+                    1, N, std::vector<std::vector<int>>(1, row_atom_idxs),
+                    std::vector<std::vector<int>>(1, col_atom_idxs), beta,
+                    cutoff, disable_hilbert_sort, nblist_padding);
               }),
-          py::arg("num_atoms"), py::arg("row_atom_idxs_i"), py::arg("beta"),
-          py::arg("cutoff"), py::arg("col_atom_idxs_i") = py::none(),
+          py::arg("num_atoms"), py::arg("row_atom_idxs_i").noconvert(),
+          py::arg("beta"), py::arg("cutoff"),
+          py::arg("col_atom_idxs_i").noconvert() = py::none(),
           py::arg("disable_hilbert_sort") = false,
           py::arg("nblist_padding") = 0.1,
           R"pbdoc(
@@ -2754,6 +2803,101 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                         Margin for the neighborlist.
 
             )pbdoc")
+      .def(py::init([](const int N,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &row_atom_idxs_i,
+                       const double beta, const double cutoff,
+                       std::optional<
+                           std::vector<py::array_t<int, py::array::c_style>>>
+                           &col_atom_idxs_i,
+                       const bool disable_hilbert_sort,
+                       const double nblist_padding) {
+             const int num_batches = row_atom_idxs_i.size();
+             if (num_batches == 0) {
+               throw std::runtime_error(
+                   "provide at least one batch of row atom indices");
+             }
+             if (col_atom_idxs_i) {
+               if (num_batches != static_cast<int>(col_atom_idxs_i->size())) {
+                 throw std::runtime_error("batches of column atom indices must "
+                                          "match row atom indices batches");
+               }
+             }
+             std::vector<std::vector<int>> combined_row_atoms;
+             std::vector<std::vector<int>> combined_col_atoms;
+             for (int i = 0; i < num_batches; i++) {
+               if (row_atom_idxs_i[i].ndim() != 1) {
+                 throw std::runtime_error(
+                     "each batch of row indices must be one dimensional");
+               }
+               combined_row_atoms.push_back(
+                   py_array_to_vector<int>(row_atom_idxs_i[i]));
+
+               std::vector<int> col_atom_idxs;
+               if (col_atom_idxs_i) {
+                 if (col_atom_idxs_i->at(i).ndim() != 1) {
+                   throw std::runtime_error(
+                       "each batch of column indices must be one dimensional");
+                 }
+                 size_t offset = col_atom_idxs.size();
+                 col_atom_idxs.resize(offset + col_atom_idxs_i->at(i).size());
+                 std::memcpy(col_atom_idxs.data() + offset,
+                             col_atom_idxs_i->at(i).data(),
+                             col_atom_idxs_i->at(i).size() * sizeof(int));
+               } else {
+                 std::set<int> unique_row_atom_idxs =
+                     unique_idxs(combined_row_atoms[i]);
+                 col_atom_idxs =
+                     get_indices_difference(N, unique_row_atom_idxs);
+               }
+               combined_col_atoms.push_back(col_atom_idxs);
+             }
+             return new NonbondedInteractionGroup<RealType>(
+                 num_batches, N, combined_row_atoms, combined_col_atoms, beta,
+                 cutoff, disable_hilbert_sort, nblist_padding);
+           }),
+           py::arg("num_atoms"), py::arg("row_atom_idxs_i").noconvert(),
+           py::arg("beta"), py::arg("cutoff"),
+           py::arg("col_atom_idxs_i").noconvert() = py::none(),
+           py::arg("disable_hilbert_sort") = false,
+           py::arg("nblist_padding") = 0.1,
+           R"pbdoc(
+                    Set up batched NonbondedInteractionGroup.
+
+                    Parameters
+                    ----------
+                    num_atoms: int
+                        Number of atoms.
+
+                    row_atom_idxs: NDArray
+                        Batches of group of atoms in the interaction.
+
+                    beta: float
+
+                    cutoff: float
+                        Ignore all interactions beyond this distance in nm.
+
+                    col_atom_idxs: Optional[NDArray]
+                        Batches of group of atoms in the interaction. If not specified,
+                        use all of the atoms not in the `row_atom_idxs`.
+
+                    disable_hilbert_sort: bool
+                        Set to True to disable the Hilbert sort.
+
+                    nblist_padding: float
+                        Margin for the neighborlist.
+
+            )pbdoc")
+      .def(
+          "set_atom_idxs",
+          [](Class &pot, const py::array_t<int, py::array::c_style> &row_idxs_i,
+             const py::array_t<int, py::array::c_style> &col_idxs_i) {
+            pot.set_atom_idxs(std::vector<std::vector<int>>(
+                                  1, py_array_to_vector(row_idxs_i)),
+                              std::vector<std::vector<int>>(
+                                  1, py_array_to_vector(col_idxs_i)));
+          },
+          py::arg("row_atom_idxs"), py::arg("col_atom_idxs"))
       .def("set_atom_idxs", &Class::set_atom_idxs, py::arg("row_atom_idxs"),
            py::arg("col_atom_idxs"),
            R"pbdoc(
@@ -2806,8 +2950,8 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
                 num_batches, num_atoms, pair_idxs, scales, system_idxs, beta,
                 cutoff);
           }),
-          py::arg("num_atoms"), py::arg("pair_idxs_i"), py::arg("scales_i"),
-          py::arg("beta"), py::arg("cutoff"))
+          py::arg("num_atoms"), py::arg("pair_idxs_i"),
+          py::arg("scales_i").noconvert(), py::arg("beta"), py::arg("cutoff"))
       .def(py::init([](const int num_atoms,
                        const std::vector<py::array_t<int, py::array::c_style>>
                            &pair_idxs,
@@ -2844,8 +2988,8 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
                  num_batches, num_atoms, combined_pair_idxs, combined_scales,
                  system_idxs, beta, cutoff);
            }),
-           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("scales"),
-           py::arg("beta"), py::arg("cutoff"))
+           py::arg("num_atoms"), py::arg("pair_idxs_i").noconvert(),
+           py::arg("scales_i").noconvert(), py::arg("beta"), py::arg("cutoff"))
       .def("get_idxs",
            [](Class &pot) -> py::array_t<int, py::array::c_style> {
              std::vector<int> output_idxs = pot.get_idxs_host();
