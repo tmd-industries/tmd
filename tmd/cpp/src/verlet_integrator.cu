@@ -47,17 +47,19 @@ void VelocityVerletIntegrator<RealType>::step_fwd(
     cudaStream_t stream) {
 
   // Can't handle d_idxs with batching yet
-  if (batch_size_ == 1) {
+  if (batch_size_ > 1) {
     assert(d_idxs == nullptr);
   }
 
-  const int D = 3;
-  const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
-  const size_t n_blocks = ceil_divide(batch_size_ * N_, tpb);
-  dim3 dimGrid_dx(n_blocks, D);
   runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
                              nullptr, nullptr, stream);
+
+  const int D = 3;
+  const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
+  const size_t n_blocks = ceil_divide(N_, tpb);
+  dim3 dimGrid_dx(n_blocks, batch_size_);
+
   update_forward_velocity_verlet<RealType><<<dimGrid_dx, tpb, 0, stream>>>(
       batch_size_, N_, D, d_idxs, d_cbs_, d_x_t, d_v_t, d_du_dx_, dt_);
   gpuErrchk(cudaPeekAtLastError());
@@ -73,13 +75,13 @@ void VelocityVerletIntegrator<RealType>::initialize(
     throw std::runtime_error("initialized twice");
   }
 
-  const int D = 3;
-  const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
-  dim3 dimGrid_dx(batch_size_, N_);
-
   runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
                              nullptr, nullptr, stream);
+
+  const int D = 3;
+  const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
+  dim3 dimGrid_dx(ceil_divide(N_, tpb), batch_size_);
 
   half_step_velocity_verlet<RealType, true><<<dimGrid_dx, tpb, 0, stream>>>(
       batch_size_, N_, D, d_idxs, d_cbs_, d_x_t, d_v_t, d_du_dx_, dt_);
@@ -94,20 +96,20 @@ void VelocityVerletIntegrator<RealType>::finalize(
     cudaStream_t stream) {
 
   // Can't handle d_idxs with batching yet
-  if (batch_size_ == 1) {
+  if (batch_size_ > 1) {
     assert(d_idxs == nullptr);
   }
   if (!initialized_) {
     throw std::runtime_error("not initialized");
   }
 
-  const int D = 3;
-  const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
-  dim3 dimGrid_dx(batch_size_, N_);
-
   runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
                              nullptr, nullptr, stream);
+  const int D = 3;
+  const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
+  dim3 dimGrid_dx(ceil_divide(N_, tpb), batch_size_);
+
   half_step_velocity_verlet<RealType, false><<<dimGrid_dx, tpb, 0, stream>>>(
       batch_size_, N_, D, d_idxs, d_cbs_, d_x_t, d_v_t, d_du_dx_, dt_);
   gpuErrchk(cudaPeekAtLastError());

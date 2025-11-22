@@ -182,43 +182,45 @@ __global__ void update_forward_velocity_verlet(
 
   int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
+  const int coord_offset = system_idx * N * D;
+
   while (kernel_idx < N) {
     int atom_idx =
         (idxs == nullptr ? kernel_idx : idxs[system_idx * N + kernel_idx]);
 
     if (atom_idx < N) {
-      RealType force_x = FIXED_TO_FLOAT<RealType>(
-          du_dx[system_idx * N * D + atom_idx * D + 0]);
-      RealType force_y = FIXED_TO_FLOAT<RealType>(
-          du_dx[system_idx * N * D + atom_idx * D + 1]);
-      RealType force_z = FIXED_TO_FLOAT<RealType>(
-          du_dx[system_idx * N * D + atom_idx * D + 2]);
+      RealType force_x =
+          FIXED_TO_FLOAT<RealType>(du_dx[coord_offset + atom_idx * D + 0]);
+      RealType force_y =
+          FIXED_TO_FLOAT<RealType>(du_dx[coord_offset + atom_idx * D + 1]);
+      RealType force_z =
+          FIXED_TO_FLOAT<RealType>(du_dx[coord_offset + atom_idx * D + 2]);
 
-      v_t[system_idx * N * D + atom_idx * D + 0] +=
+      v_t[coord_offset + atom_idx * D + 0] +=
           cbs[system_idx * N + atom_idx] * force_x;
-      v_t[system_idx * N * D + atom_idx * D + 1] +=
+      v_t[coord_offset + atom_idx * D + 1] +=
           cbs[system_idx * N + atom_idx] * force_y;
-      v_t[system_idx * N * D + atom_idx * D + 2] +=
+      v_t[coord_offset + atom_idx * D + 2] +=
           cbs[system_idx * N + atom_idx] * force_z;
 
-      x_t[system_idx * N * D + atom_idx * D + 0] +=
-          dt * v_t[system_idx * N * D + atom_idx * D + 0];
-      x_t[system_idx * N * D + atom_idx * D + 1] +=
-          dt * v_t[system_idx * N * D + atom_idx * D + 1];
-      x_t[system_idx * N * D + atom_idx * D + 2] +=
-          dt * v_t[system_idx * N * D + atom_idx * D + 2];
+      x_t[coord_offset + atom_idx * D + 0] +=
+          dt * v_t[coord_offset + atom_idx * D + 0];
+      x_t[coord_offset + atom_idx * D + 1] +=
+          dt * v_t[coord_offset + atom_idx * D + 1];
+      x_t[coord_offset + atom_idx * D + 2] +=
+          dt * v_t[coord_offset + atom_idx * D + 2];
 
-      du_dx[system_idx * N * D + atom_idx * D + 0] = 0;
-      du_dx[system_idx * N * D + atom_idx * D + 1] = 0;
-      du_dx[system_idx * N * D + atom_idx * D + 2] = 0;
+      du_dx[coord_offset + atom_idx * D + 0] = 0;
+      du_dx[coord_offset + atom_idx * D + 1] = 0;
+      du_dx[coord_offset + atom_idx * D + 2] = 0;
     } else if (idxs != nullptr && kernel_idx < N) {
       // Zero out the forces after using them to avoid having to memset the
       // forces later Needed to handle local MD where the next round kernel_idx
       // may actually take a part. Requires idxs[kernel_idx] == kernel_idx when
       // idxs[kernel_idx] != N
-      du_dx[system_idx * N * D + kernel_idx * D + 0] = 0;
-      du_dx[system_idx * N * D + kernel_idx * D + 1] = 0;
-      du_dx[system_idx * N * D + kernel_idx * D + 2] = 0;
+      du_dx[coord_offset + kernel_idx * D + 0] = 0;
+      du_dx[coord_offset + kernel_idx * D + 1] = 0;
+      du_dx[coord_offset + kernel_idx * D + 2] = 0;
     }
     kernel_idx += gridDim.x * blockDim.x;
   }
