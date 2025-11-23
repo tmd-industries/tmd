@@ -44,10 +44,9 @@ def get_max_block_distances(coords: NDArray, box: NDArray, block_size: int) -> N
     return np.array(block_distances)
 
 
-@pytest.mark.parametrize("num_systems", [1])
 @pytest.mark.parametrize("block_size", [8, 16, 32])
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
-def test_hilbert_sort_dhfr(num_systems, block_size, precision):
+def test_hilbert_sort_dhfr(block_size, precision):
     _, _, coords, box = setup_dhfr()
     distances = get_max_block_distances(coords, box, block_size)
     unsorted_mean_dist = np.mean(distances)
@@ -57,7 +56,7 @@ def test_hilbert_sort_dhfr(num_systems, block_size, precision):
     else:
         sort_class = custom_ops.HilbertSort_f32
 
-    sorter = sort_class(num_systems, coords.shape[0])
+    sorter = sort_class(coords.shape[0])
     perm = sorter.sort(coords, box)
     sorted_coords = coords[perm]
     sorted_dists = get_max_block_distances(sorted_coords, box, block_size)
