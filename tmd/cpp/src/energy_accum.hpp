@@ -27,8 +27,9 @@ private:
   std::size_t temp_storage_bytes_;
   char *d_sum_temp_storage_;
 
-  int *d_sort_keys_out_;    // [batches]
-  __int128 *d_sorted_nrgs_; // [batches]
+  int *d_idxs_unique_;         // [batches_ * max_buffer_size_]
+  int *d_reductions_out_;      // [batches_ * max_buffer_size_]
+  __int128 *d_u_intermediate_; // [batches_ * max_buffer_size_]
 
 public:
   EnergyAccumulator(const int batches, const int total_size);
