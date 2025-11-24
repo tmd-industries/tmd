@@ -596,8 +596,9 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
             if integrator_klass == VelocityVerletIntegrator:
                 assert np.all(xs[0, 0] == x_batch), f"Batch {i} doesn't match the first batch"
             else:
-                assert intg.friction > 0
-                assert np.all(xs[0, 0] != x_batch)
+                # Each batch should be slightly different if langevin and friction is not 0
+                assert friction > 0
+                assert np.all(xs[0, 0] == x_batch, axis=1).sum() == 0, f"Batch {i + 1} has identical atom coordinates"
 
     else:
         assert xs.shape == (1, len(x0), 3)
@@ -742,13 +743,13 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass,
     if batch_size > 1:
         assert xs.shape == (1, batch_size, len(x0), 3)
         assert boxes.shape == (1, batch_size, 3, 3)
-        # Each batch should be slightly different
-        for x_batch in xs.reshape(batch_size, len(x0), 3)[1:]:
+        for i, x_batch in enumerate(xs.reshape(batch_size, len(x0), 3)[1:]):
             if integrator_klass == VelocityVerletIntegrator or friction == 0.0:
                 assert np.all(xs[0, 0] == x_batch)
             else:
-                assert intg.friction != 0
-                assert np.all(xs[0, 0] != x_batch)
+                # Each batch should be slightly different if langevin and friction is not 0
+                assert friction > 0
+                assert np.all(xs[0, 0] == x_batch, axis=1).sum() == 0, f"Batch {i + 1} has identical atom coordinates"
     else:
         assert xs.shape == (1, len(x0), 3)
         assert boxes.shape == (1, 3, 3)
