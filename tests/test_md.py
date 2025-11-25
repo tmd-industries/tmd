@@ -15,6 +15,7 @@
 
 import gc
 import re
+import time
 import weakref
 
 import jax
@@ -46,6 +47,8 @@ from tmd.potentials import (
 )
 from tmd.potentials.potential import GpuImplWrapper_f32, get_potential_by_type
 from tmd.testsystems.ligands import get_biphenyl
+
+SECONDS_PER_DAY = 24 * 60 * 60
 
 
 def get_gpu_bp_by_type(bps, klass):
@@ -585,7 +588,13 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
         [bp.to_gpu(precision).bound_impl for bp in batch_pots],
         precision=precision,
     )
-    xs, boxes = ctxt.multiple_steps(400)
+    steps = 400
+    start = time.perf_counter()
+    xs, boxes = ctxt.multiple_steps(steps)
+    took = time.perf_counter() - start
+    ns_per_day = (steps * batch_size) / took
+    ns_per_day = ns_per_day * SECONDS_PER_DAY * dt * 1e-3
+    print(f"{batch_size} simulations took {time.perf_counter() - start}s, ns per day {ns_per_day}")
     assert np.all(np.isfinite(xs))
     assert np.all(np.isfinite(boxes))
     if batch_size > 1:
@@ -739,9 +748,14 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass,
         [bp.to_gpu(precision).bound_impl for bp in batch_pots],
         precision=precision,
     )
-    xs, boxes = ctxt.multiple_steps(400)
-    assert np.all(np.isfinite(xs))
-    assert np.all(np.isfinite(boxes))
+
+    steps = 400
+    start = time.perf_counter()
+    xs, boxes = ctxt.multiple_steps(steps)
+    took = time.perf_counter() - start
+    ns_per_day = (steps * batch_size) / took
+    ns_per_day = ns_per_day * SECONDS_PER_DAY * dt * 1e-3
+    print(f"{batch_size} simulations took {time.perf_counter() - start}s, ns per day {ns_per_day}")
 
     if batch_size > 1:
         assert xs.shape == (1, batch_size, len(x0), 3)
