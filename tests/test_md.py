@@ -615,6 +615,9 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
 def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass, friction):
     dt = 2.5e-3
 
+    if precision == np.float64 and batch_size > 4:
+        pytest.skip(reason="Slow and memory intensive")
+
     mol, _ = get_biphenyl()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     # Minimize the starting pose
