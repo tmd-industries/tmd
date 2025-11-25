@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 from common import GradientTest, gen_nonbonded_params_with_4d_offsets
 
-from tmd.md.builders import get_box_from_coords
 from tmd.potentials import FanoutSummedPotential, Nonbonded, NonbondedInteractionGroup
 
 pytestmark = [pytest.mark.memcheck]
@@ -167,11 +166,10 @@ def test_nonbonded_interaction_group_batch_correctness(
 ):
     "Verify that batch implementation of NonbondedInteractionGroup is identical to non-batched"
 
-    box_padding = 0.1
     coord_idxs = [rng.choice(example_conf.shape[0], num_atoms, replace=False) for _ in range(num_systems)]
 
     coords = np.stack([example_conf[idxs] for idxs in coord_idxs]).astype(precision)
-    boxes = np.stack([get_box_from_coords(replica) + np.eye(3) * box_padding for replica in coords]).astype(precision)
+    boxes = np.stack([example_box] * num_systems).astype(precision)
     params = np.stack([example_nonbonded_potential.params[idxs].astype(precision) for idxs in coord_idxs]).astype(
         precision
     )

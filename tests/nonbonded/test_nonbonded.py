@@ -205,7 +205,7 @@ def test_batch_correctness(
             for _ in range(num_systems)
         ]
     ).astype(precision)
-    boxes = np.stack([builders.get_box_from_coords(replica) + np.eye(3) for replica in coords]).astype(precision)
+    boxes = np.stack([example_box for _ in coords]).astype(precision)
     params = np.stack(
         [example_nonbonded_potential.params[:num_atoms, :].astype(precision) for _ in range(num_systems)]
     ).astype(precision)
@@ -214,6 +214,7 @@ def test_batch_correctness(
         num_atoms, exclusion_idxs, scales, nonbonded_fn.beta, nonbonded_fn.cutoff, atom_idxs=atom_idxs
     )
 
+    non_zero_nrg = False
     for w_params in gen_nonbonded_params_with_4d_offsets(rng, params, nonbonded_fn.cutoff):
         batch_ub = potential.to_gpu(precision).unbound_impl
         batch_du_dx, batch_du_dp, batch_u = batch_ub.execute_dim(coords, w_params, boxes, 1, 1, 1)
@@ -238,6 +239,9 @@ def test_batch_correctness(
             np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx, err_msg=f"Batch {i}")
             np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp, err_msg=f"Batch {i}")
             np.testing.assert_array_equal(batch_u[i], ref_u, err_msg=f"Batch {i}")
+            if ref_u != 0.0:
+                non_zero_nrg = True
+    assert non_zero_nrg, "Didn't validate energies"
 
 
 @pytest.mark.parametrize(

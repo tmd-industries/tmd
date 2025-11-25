@@ -19,6 +19,22 @@
 
 namespace tmd {
 
+void __global__ k_scatter_accumulate_system_energies(
+    const int *__restrict__ reductions, // [1]
+    const int *__restrict__ indices, // [number of reductions] The replica each
+                                     // energy is associated with
+    const __int128 *__restrict__ in_nrgs, // [number of reductions]
+    __int128 *__restrict__ out_nrgs) {
+  const int num_reductions = *reductions;
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (idx < num_reductions) {
+    const int output_idx = indices[idx];
+    out_nrgs[output_idx] += in_nrgs[idx];
+
+    idx += gridDim.x * blockDim.x;
+  }
+}
+
 EnergyAccumulator::EnergyAccumulator(const int batches, const int total_size)
     : batches_(batches), max_buffer_size_(total_size), temp_storage_bytes_(0) {
   assert(batches_ >= 1);
@@ -30,26 +46,35 @@ EnergyAccumulator::EnergyAccumulator(const int batches, const int total_size)
   } else {
     // Allocates more memory than strictly needed, but would rather be safe
     // if indices are greater than batches, the results will be hosed
-    cudaSafeMalloc(&d_reductions_out_,
-                   max_buffer_size_ * batches_ * sizeof(*d_reductions_out_));
+    cudaSafeMalloc(&d_reductions_out_, sizeof(*d_reductions_out_));
+    cudaSafeMalloc(&d_sorted_idxs_,
+                   max_buffer_size_ * batches_ * sizeof(*d_sorted_idxs_));
     cudaSafeMalloc(&d_idxs_unique_,
                    max_buffer_size_ * batches_ * sizeof(*d_idxs_unique_));
-    // If this isn't large enough can hit invalid memory writes
     cudaSafeMalloc(&d_u_intermediate_,
                    max_buffer_size_ * batches_ * sizeof(*d_u_intermediate_));
-    int *dummy_idxs = nullptr;
+    cudaSafeMalloc(&d_sorted_nrgs_,
+                   max_buffer_size_ * batches_ * sizeof(*d_sorted_nrgs_));
+
+    size_t sort_bytes = 0;
+    gpuErrchk(cub::DeviceRadixSort::SortPairs(
+        nullptr, sort_bytes, d_idxs_unique_, d_idxs_unique_, dummy_nrg_buffer,
+        dummy_nrg_buffer, max_buffer_size_ * batches_));
+
+    size_t reduce_bytes = 0;
     CUBSumOp reduction_op;
     gpuErrchk(cub::DeviceReduce::ReduceByKey(
-        nullptr, temp_storage_bytes_, dummy_idxs, d_idxs_unique_,
-        dummy_nrg_buffer, dummy_nrg_buffer, d_reductions_out_, reduction_op,
+        nullptr, reduce_bytes, d_idxs_unique_, d_idxs_unique_, dummy_nrg_buffer,
+        dummy_nrg_buffer, d_reductions_out_, reduction_op,
         max_buffer_size_ * batches_));
+    temp_storage_bytes_ = max(reduce_bytes, sort_bytes);
   }
 
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, temp_storage_bytes_));
+  gpuErrchk(cudaMalloc(&d_temp_storage_buffer_, temp_storage_bytes_));
 }
 
 EnergyAccumulator::~EnergyAccumulator() {
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
+  gpuErrchk(cudaFree(d_temp_storage_buffer_));
   if (batches_ > 1) {
     gpuErrchk(cudaFree(d_reductions_out_));
     gpuErrchk(cudaFree(d_idxs_unique_));
@@ -62,28 +87,39 @@ void EnergyAccumulator::sum_device(const int num_vals, const __int128 *d_nrg_in,
                                    __int128 *d_nrg_out, cudaStream_t stream) {
 
   if (batches_ == 1) {
-    gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, temp_storage_bytes_,
-                                     d_nrg_in, d_nrg_out, num_vals, stream));
+    gpuErrchk(cub::DeviceReduce::Sum(d_temp_storage_buffer_,
+                                     temp_storage_bytes_, d_nrg_in, d_nrg_out,
+                                     num_vals, stream));
   } else {
     CUBSumOp reduction_op;
 
     // Clear the buffer
     gpuErrchk(cudaMemsetAsync(d_u_intermediate_, 0,
-                              batches_ * sizeof(*d_nrg_out), stream));
+                              max_buffer_size_ * batches_ * sizeof(*d_nrg_out),
+                              stream));
     // Copy any values written to the batch
     gpuErrchk(cudaMemcpyAsync(d_u_intermediate_, d_nrg_out,
                               batches_ * sizeof(*d_nrg_out),
                               cudaMemcpyDeviceToDevice, stream));
-    gpuErrchk(cub::DeviceReduce::ReduceByKey(
-        d_sum_temp_storage_, temp_storage_bytes_, d_system_idxs, d_idxs_unique_,
-        d_nrg_in, d_u_intermediate_, d_reductions_out_, reduction_op, num_vals,
+
+    gpuErrchk(cub::DeviceRadixSort::SortPairs(
+        d_temp_storage_buffer_, temp_storage_bytes_, d_system_idxs,
+        d_sorted_idxs_, d_nrg_in, d_sorted_nrgs_, num_vals,
+        0,                           // begin key bit
+        sizeof(*d_sorted_idxs_) * 8, // end key bit
         stream));
 
-    // Copy the values back to the output
-    gpuErrchk(cudaMemcpyAsync(d_nrg_out, d_u_intermediate_,
-                              batches_ * sizeof(*d_nrg_out),
-                              cudaMemcpyDeviceToDevice, stream));
-    // TBD: HANDLE THE PERMUTATION IMPLIED BY LOCAL MD
+    gpuErrchk(cub::DeviceReduce::ReduceByKey(
+        d_temp_storage_buffer_, temp_storage_bytes_, d_sorted_idxs_,
+        d_idxs_unique_, d_sorted_nrgs_, d_u_intermediate_, d_reductions_out_,
+        reduction_op, num_vals, stream));
+
+    // Copy the values back to the output in the correct order
+    k_scatter_accumulate_system_energies<<<
+        ceil_divide(batches_, DEFAULT_THREADS_PER_BLOCK),
+        DEFAULT_THREADS_PER_BLOCK, 0, stream>>>(
+        d_reductions_out_, d_idxs_unique_, d_u_intermediate_, d_nrg_out);
+    gpuErrchk(cudaPeekAtLastError());
   }
 }
 
