@@ -174,8 +174,17 @@ def test_correctness(
 @pytest.mark.parametrize("num_atoms", [33, 65, 231, 1050])
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 @pytest.mark.parametrize("num_systems", [1, 2, 4, 8])
+@pytest.mark.parametrize("random_idx_lengths", [True, False])
 def test_batch_correctness(
-    rng, example_conf, example_box, example_nonbonded_potential, select_atom_indices, num_atoms, precision, num_systems
+    rng,
+    example_conf,
+    example_box,
+    example_nonbonded_potential,
+    select_atom_indices,
+    num_atoms,
+    precision,
+    num_systems,
+    random_idx_lengths,
 ):
     """
     Test against the unbatched GPU platform, which should be identical. Don't trust results if test_correctness does not also pass.
@@ -192,12 +201,17 @@ def test_batch_correctness(
 
     atom_idxs: Optional[NDArray] = None
     if select_atom_indices:
-        atom_idxs = [
-            np.asarray(rng.choice(num_atoms, num_atoms // 2, replace=False), dtype=np.int32) for _ in range(num_systems)
-        ]
+        if random_idx_lengths:
+            sizes = rng.integers(1, num_atoms, size=num_systems)
+            atom_idxs = [rng.choice(num_atoms, size, replace=False).astype(np.int32) for size in sizes]
+        else:
+            atom_idxs = [
+                np.asarray(rng.choice(num_atoms, num_atoms // 2, replace=False), dtype=np.int32)
+                for _ in range(num_systems)
+            ]
 
-    exclusion_idxs = [np.array(test_exclusions, dtype=np.int32) for _ in range(num_systems)]
-    scales = [np.array(test_scales, dtype=precision) for _ in range(num_systems)]
+    exclusion_idxs = [np.array(test_exclusions, dtype=np.int32)] * num_systems
+    scales = [np.array(test_scales, dtype=precision)] * num_systems
 
     coords = np.stack(
         [

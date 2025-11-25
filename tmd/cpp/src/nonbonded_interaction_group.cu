@@ -115,18 +115,29 @@ static int max_vector_int(const std::vector<int> &vec) {
   return *std::max_element(vec.begin(), vec.end());
 }
 
+// max_vector_int_sum finds maximum sum between two vectors at each index.
+// Vectors must be the same length.
+static int max_vector_int_sum(const std::vector<int> &vec,
+                              const std::vector<int> &vec2) {
+  assert(vec.size() == vec2.size());
+  int max_sum = 0;
+  for (auto i = 0; i < vec.size(); i++) {
+    max_sum = max(max_sum, vec[i] + vec2[i]);
+  }
+  return max_sum;
+}
+
 static int
 max_atoms_from_row_and_columns(const std::vector<int> &row_idx_counts,
                                const std::vector<int> &col_idx_counts,
                                NonbondedInteractionType ixn_type) {
   int K; // number of atoms involved in the interaction group
-  const int max_NC = max_vector_int(col_idx_counts);
   if (ixn_type == NonbondedInteractionType::DISJOINT) {
-    const int max_NR = max_vector_int(row_idx_counts);
-    K = max_NR + max_NC;
+    // If disjoint find the maximum row + column indices
+    K = max_vector_int_sum(col_idx_counts, row_idx_counts);
   } else {
     // NC contains NR already, since they're overlapping
-    K = max_NC;
+    K = max_vector_int(col_idx_counts);
   }
   return K;
 }
@@ -635,7 +646,9 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
   const int K = max_atoms_from_row_and_columns(row_counts, col_counts,
                                                this->interaction_type_);
   if (this->interaction_type_ == NonbondedInteractionType::DISJOINT && K > N_) {
-    throw std::runtime_error("number of idxs must be less than or equal to N");
+    throw std::runtime_error(
+        "number of idxs must be less than or equal to N, got " +
+        std::to_string(K));
   }
 
   constexpr int tpb = DEFAULT_THREADS_PER_BLOCK;
@@ -680,7 +693,7 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
     // nblist args:
     // row_idxs = 012, col_idxs=34567
     k_setup_nblist_row_and_column_indices<<<
-        dim3(ceil_divide(K, tpb), num_systems_, 1), tpb, 0, stream>>>(
+        dim3(ceil_divide(K, tpb), num_systems_), tpb, 0, stream>>>(
         num_systems_, K, d_row_atom_idxs_counts_, d_col_atom_idxs_counts_,
         interaction_type_ == NonbondedInteractionType::DISJOINT,
         d_nblist_row_idxs_, d_nblist_col_idxs_);

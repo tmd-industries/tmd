@@ -503,10 +503,10 @@ void Neighborlist<RealType>::set_idxs_device(const int NR, const int NC,
                                              const cudaStream_t stream) {
 
   if (NC > N_) {
-    throw std::runtime_error("NC > N_ ");
+    throw std::runtime_error("NC > N_");
   }
   if (NR > N_) {
-    throw std::runtime_error("NR > N_ ");
+    throw std::runtime_error("NR > N_");
   }
   if (NC == 0 || NR == 0) {
     throw std::runtime_error(

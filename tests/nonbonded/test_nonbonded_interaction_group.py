@@ -151,7 +151,9 @@ def test_nonbonded_interaction_group_all_pairs_correctness(
 @pytest.mark.parametrize("num_atoms_ligand", [1, 15])
 @pytest.mark.parametrize("num_col_atoms", [0, 1, 10, 33, None])
 @pytest.mark.parametrize("num_systems", [1, 2, 4, 8, 12])
+@pytest.mark.parametrize("random_idx_lengths", [True, False])
 def test_nonbonded_interaction_group_batch_correctness(
+    random_idx_lengths,
     num_systems,
     num_col_atoms,
     num_atoms_ligand,
@@ -174,9 +176,11 @@ def test_nonbonded_interaction_group_batch_correctness(
         precision
     )
 
-    ligand_idxs = [
-        rng.choice(num_atoms, size=(num_atoms_ligand,), replace=False).astype(np.int32) for _ in range(num_systems)
-    ]
+    idxs_per_batch = np.array([num_atoms_ligand] * num_systems)
+    if random_idx_lengths and num_atoms_ligand > 1:
+        idxs_per_batch = rng.integers(1, num_atoms_ligand, size=num_systems)
+
+    ligand_idxs = [rng.choice(num_atoms, size=(size,), replace=False).astype(np.int32) for size in idxs_per_batch]
 
     if num_col_atoms is None:  # means all the rest
         num_col_atoms = num_atoms - num_atoms_ligand
@@ -184,7 +188,14 @@ def test_nonbonded_interaction_group_batch_correctness(
     col_atom_idxs = None
     if num_col_atoms:
         host_idxs = [np.setdiff1d(np.arange(num_atoms), lig_idxs).astype(np.int32) for lig_idxs in ligand_idxs]
-        col_atom_idxs = [rng.choice(idxs, size=(num_col_atoms,), replace=False).astype(np.int32) for idxs in host_idxs]
+        if random_idx_lengths and num_col_atoms > 1:
+            col_atom_counts = rng.integers(1, min(num_col_atoms, num_atoms), size=num_systems)
+        else:
+            col_atom_counts = [num_col_atoms] * num_systems
+        col_atom_idxs = [
+            rng.choice(idxs, size=(size,), replace=False).astype(np.int32)
+            for idxs, size in zip(host_idxs, col_atom_counts)
+        ]
 
     potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs=col_atom_idxs)
 
