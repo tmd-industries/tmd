@@ -68,29 +68,29 @@ def test_nonbonded_pair_list_correctness(
         GradientTest().assert_differentiable_interface_consistency(conf, params_, box, test_impl)
 
         # Testing batching across multiple coords/params
-        num_batches = 3
+        num_systems = 3
 
         coords = np.array(
-            [shift_random_coordinates_by_box(example_conf, example_box, seed=seed + i) for i in range(num_batches)],
+            [shift_random_coordinates_by_box(example_conf, example_box, seed=seed + i) for i in range(num_systems)],
             dtype=precision,
         )
-        batch_pair_idxs = [rng.choice(pair_idxs, size=rng.integers(1, num_pairs), axis=0) for _ in range(num_batches)]
+        batch_pair_idxs = [rng.choice(pair_idxs, size=rng.integers(1, num_pairs), axis=0) for _ in range(num_systems)]
         batch_rescale_mask = [rng.uniform(0, 1, size=(len(idxs), 2)).astype(precision) for idxs in batch_pair_idxs]
 
         batch_params = [
             (np.array(params) + rng.uniform(0.0, 1e-3, size=params.shape)).astype(precision) for idxs in batch_pair_idxs
         ]
         batch_boxes = [
-            (np.array(example_box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_batches)
+            (np.array(example_box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)
         ]
 
         batch_pot = NonbondedPairList(num_atoms, batch_pair_idxs, batch_rescale_mask, beta, cutoff)
 
         batch_impl = batch_pot.to_gpu(precision).unbound_impl
-        assert batch_impl.batch_size() == num_batches
+        assert batch_impl.num_systems() == num_systems
         batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
 
-        assert batch_du_dx.shape[0] == num_batches
+        assert batch_du_dx.shape[0] == num_systems
         assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
         for i, (idxs, rescale_mask, batch_x, batch_box, params_batch) in enumerate(
             zip(batch_pair_idxs, batch_rescale_mask, coords, batch_boxes, batch_params)

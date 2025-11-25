@@ -451,10 +451,6 @@ void __global__ k_nonbonded_unified(
   const RealType cutoff_squared = cutoff * cutoff;
 
   const unsigned int interactions = ixn_count[system_idx];
-  // if (blockIdx.x * blockDim.x + threadIdx.x == 0) {
-  //   printf("System idx %d - %u | tiles %d Ixn offset %d\n", system_idx,
-  //          interactions, tiles_per_system, tiles_per_system * tile_size);
-  // }
 
   const unsigned int NR = row_indice_counts[system_idx];
 

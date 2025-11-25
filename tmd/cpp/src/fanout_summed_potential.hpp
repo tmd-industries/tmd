@@ -46,7 +46,7 @@ public:
 
   const std::vector<std::shared_ptr<Potential<RealType>>> &get_potentials();
 
-  virtual int batch_size() const override;
+  virtual int num_systems() const override;
 
   virtual void execute_device(const int batches, const int N, const int P,
                               const RealType *d_x, const RealType *d_p,

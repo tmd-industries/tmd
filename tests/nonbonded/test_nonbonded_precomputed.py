@@ -70,27 +70,27 @@ def test_nonbonded_pair_list_precomputed_correctness(
         GradientTest().assert_differentiable_interface_consistency(conf, params, box, test_impl)
 
     seed = rng.integers(np.iinfo(np.int32).max)
-    num_batches = 3
+    num_systems = 3
 
     coords = np.array(
         [
             shift_random_coordinates_by_box(rng.uniform(0, 1, size=(num_atoms, 3)) * 3, box, seed=seed + i)
-            for i in range(num_batches)
+            for i in range(num_systems)
         ],
         dtype=precision,
     )
-    batch_pair_idxs = [rng.choice(pair_idxs, size=rng.integers(1, num_pairs), axis=0) for _ in range(num_batches)]
+    batch_pair_idxs = [rng.choice(pair_idxs, size=rng.integers(1, num_pairs), axis=0) for _ in range(num_systems)]
 
     batch_params = [rng.choice(params, size=len(idxs), replace=True).astype(precision) for idxs in batch_pair_idxs]
-    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_batches)]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
 
     batch_pot = NonbondedPairListPrecomputed(num_atoms, batch_pair_idxs, beta, cutoff)
 
     batch_impl = batch_pot.to_gpu(precision).unbound_impl
-    assert batch_impl.batch_size() == num_batches
+    assert batch_impl.num_systems() == num_systems
     batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
 
-    assert batch_du_dx.shape[0] == num_batches
+    assert batch_du_dx.shape[0] == num_systems
     assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
     for i, (idxs, x, box, params) in enumerate(zip(batch_pair_idxs, coords, batch_boxes, batch_params)):
         potential = NonbondedPairListPrecomputed(num_atoms, idxs, beta, cutoff)

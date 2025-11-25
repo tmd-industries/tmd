@@ -33,7 +33,7 @@ class LogFlatBottomBond : public Potential<RealType> {
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
-  const int num_batches_;
+  const int num_systems_;
   const int num_atoms_;
   const int max_idxs_;
   int cur_num_idxs_;
@@ -50,7 +50,7 @@ private:
 public:
   static const int IDXS_DIM = 2;
 
-  LogFlatBottomBond(const int num_batches, const int num_atoms,
+  LogFlatBottomBond(const int num_systems, const int num_atoms,
                     const std::vector<int> &bond_idxs,
                     const std::vector<int> &system_idxs,
                     const RealType beta); // [B, 2]
@@ -64,7 +64,7 @@ public:
                               unsigned long long *d_du_dp, __int128 *d_u,
                               cudaStream_t stream) override;
 
-  virtual int batch_size() const override;
+  virtual int num_systems() const override;
 
   int num_bonds() const { return cur_num_idxs_; }
 

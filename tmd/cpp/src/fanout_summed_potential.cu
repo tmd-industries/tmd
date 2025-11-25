@@ -27,14 +27,14 @@ FanoutSummedPotential<RealType>::FanoutSummedPotential(
     const std::vector<std::shared_ptr<Potential<RealType>>> potentials,
     const bool parallel)
     : potentials_(potentials), parallel_(parallel),
-      num_systems_(potentials.size() > 0 ? potentials[0]->batch_size() : 1),
+      num_systems_(potentials.size() > 0 ? potentials[0]->num_systems() : 1),
       d_u_buffer_(num_systems_ * potentials_.size()),
       d_system_idxs_(num_systems_ * potentials_.size()),
       nrg_accum_(num_systems_, potentials_.size()) {
   for (auto pot : potentials_) {
-    if (pot->batch_size() != num_systems_) {
+    if (pot->num_systems() != num_systems_) {
       throw std::runtime_error("Potentials must all have the same system size" +
-                               std::to_string(pot->batch_size()) + ", " +
+                               std::to_string(pot->num_systems()) + ", " +
                                std::to_string(num_systems_));
     }
   }
@@ -107,7 +107,7 @@ void FanoutSummedPotential<RealType>::du_dp_fixed_to_float(
 }
 
 template <typename RealType>
-int FanoutSummedPotential<RealType>::batch_size() const {
+int FanoutSummedPotential<RealType>::num_systems() const {
   return num_systems_;
 }
 

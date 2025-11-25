@@ -24,7 +24,7 @@ template <typename RealType> class Integrator {
 public:
   virtual ~Integrator() {};
 
-  virtual int batch_size() const = 0;
+  virtual int num_systems() const = 0;
 
   virtual void
   step_fwd(std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,

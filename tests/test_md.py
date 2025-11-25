@@ -490,9 +490,9 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
 @pytest.mark.memcheck
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 @pytest.mark.parametrize("seed", [2025])
-@pytest.mark.parametrize("batch_size", [1, 2, 16, 32, 48])
+@pytest.mark.parametrize("num_systems", [1, 2, 16, 32, 48])
 @pytest.mark.parametrize("integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator])
-def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
+def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass):
     dt = 2.5e-3
 
     mol, _ = get_biphenyl()
@@ -510,18 +510,18 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
     box0 = np.eye(3) * 10.0
 
     x0 = get_romol_conf(mol)
-    batch_coords = [x0.astype(precision)] * batch_size
-    batch_boxes = [box0.astype(precision)] * batch_size
+    batch_coords = [x0.astype(precision)] * num_systems
+    batch_boxes = [box0.astype(precision)] * num_systems
 
     batch_v0 = [np.zeros_like(coords) for coords in batch_coords]
 
     intg_impl = None
     if integrator_klass is VelocityVerletIntegrator:
-        intg = VelocityVerletIntegrator(dt, [masses for _ in range(batch_size)])
+        intg = VelocityVerletIntegrator(dt, [masses for _ in range(num_systems)])
         intg_impl = intg.impl(precision)
     elif integrator_klass is LangevinIntegrator:
         friction = 1.0
-        intg = LangevinIntegrator(constants.DEFAULT_TEMP, dt, friction, [masses for _ in range(batch_size)], seed)
+        intg = LangevinIntegrator(constants.DEFAULT_TEMP, dt, friction, [masses for _ in range(num_systems)], seed)
         intg_impl = intg.impl(precision)
     else:
         assert False, f"Unknown integrator type {integrator_klass}"
@@ -534,51 +534,51 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
         # TBD: Implement a `pot.combine(other_pot) method
         if isinstance(unbound_pot, (HarmonicBond, HarmonicAngle, PeriodicTorsion, ChiralAtomRestraint)):
             klass = type(unbound_pot)
-            unbound_batch = klass(unbound_pot.num_atoms, [unbound_pot.idxs for _ in range(batch_size)])
-            params = [pot.params for _ in range(batch_size)]
+            unbound_batch = klass(unbound_pot.num_atoms, [unbound_pot.idxs for _ in range(num_systems)])
+            params = [pot.params for _ in range(num_systems)]
             batch_pots.append(BoundPotential(unbound_batch, params))
         elif isinstance(unbound_pot, NonbondedPairList):
             klass = type(unbound_pot)
             unbound_batch = klass(
                 unbound_pot.num_atoms,
-                [unbound_pot.idxs for _ in range(batch_size)],
-                [unbound_pot.rescale_mask for _ in range(batch_size)],
+                [unbound_pot.idxs for _ in range(num_systems)],
+                [unbound_pot.rescale_mask for _ in range(num_systems)],
                 unbound_pot.beta,
                 unbound_pot.cutoff,
             )
-            params = [pot.params for _ in range(batch_size)]
+            params = [pot.params for _ in range(num_systems)]
             batch_pots.append(BoundPotential(unbound_batch, params))
         elif isinstance(unbound_pot, NonbondedPairListPrecomputed):
             klass = type(unbound_pot)
             unbound_batch = klass(
                 unbound_pot.num_atoms,
-                [unbound_pot.idxs for _ in range(batch_size)],
+                [unbound_pot.idxs for _ in range(num_systems)],
                 unbound_pot.beta,
                 unbound_pot.cutoff,
             )
-            params = [pot.params for _ in range(batch_size)]
+            params = [pot.params for _ in range(num_systems)]
             batch_pots.append(BoundPotential(unbound_batch, params))
         else:
             assert False, str(type(unbound_pot))
 
     for pot in batch_pots:
-        assert pot.potential.to_gpu(precision).unbound_impl.batch_size() == batch_size
+        assert pot.potential.to_gpu(precision).unbound_impl.num_systems() == num_systems
         bp = pot.to_gpu(precision).bound_impl
         du_dx, u = bp.execute(np.stack(batch_coords), np.stack(batch_boxes))
 
         # Sanity check
         assert np.all(np.isfinite(du_dx))
         assert np.all(np.isfinite(u))
-        if batch_size > 1:
-            assert du_dx.shape == (batch_size, len(x0), 3)
-            assert u.shape == (batch_size,)
+        if num_systems > 1:
+            assert du_dx.shape == (num_systems, len(x0), 3)
+            assert u.shape == (num_systems,)
             assert all([np.all(du_dx[0] == du_dx_batch) for du_dx_batch in du_dx]), (
                 f"Pot {type(pot.potential)} has force mismatch"
             )
             assert all([np.all(u[0] == u_batch) for u_batch in u])
         else:
             assert du_dx.shape == (len(x0), 3)
-            assert u.shape == (batch_size,)
+            assert u.shape == (num_systems,)
 
     ctxt = Context(
         np.stack(batch_coords).squeeze(),
@@ -592,16 +592,16 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
     start = time.perf_counter()
     xs, boxes = ctxt.multiple_steps(steps)
     took = time.perf_counter() - start
-    ns_per_day = (steps * batch_size) / took
+    ns_per_day = (steps * num_systems) / took
     ns_per_day = ns_per_day * SECONDS_PER_DAY * dt * 1e-3
-    print(f"{batch_size} simulations took {time.perf_counter() - start}s, ns per day {ns_per_day}")
+    print(f"{num_systems} simulations took {time.perf_counter() - start}s, ns per day {ns_per_day}")
     assert np.all(np.isfinite(xs))
     assert np.all(np.isfinite(boxes))
-    if batch_size > 1:
-        assert xs.shape == (1, batch_size, len(x0), 3)
-        assert boxes.shape == (1, batch_size, 3, 3)
+    if num_systems > 1:
+        assert xs.shape == (1, num_systems, len(x0), 3)
+        assert boxes.shape == (1, num_systems, 3, 3)
         # Each batch should be slightly different
-        for i, x_batch in enumerate(xs.reshape(batch_size, len(x0), 3)[1:]):
+        for i, x_batch in enumerate(xs.reshape(num_systems, len(x0), 3)[1:]):
             if integrator_klass == VelocityVerletIntegrator:
                 assert np.all(xs[0, 0] == x_batch), f"Batch {i} doesn't match the first batch"
             else:
@@ -616,15 +616,15 @@ def test_vacuum_batch_simulation(precision, seed, batch_size, integrator_klass):
 
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 @pytest.mark.parametrize("seed", [2025])
-@pytest.mark.parametrize("batch_size", [1, 2, 4, 8, 16, 32, 48])
+@pytest.mark.parametrize("num_systems", [1, 2, 4, 8, 16, 32, 48])
 @pytest.mark.parametrize(
     "integrator_klass, friction",
     [(VelocityVerletIntegrator, np.inf), (LangevinIntegrator, 0.0), (LangevinIntegrator, 1.0)],
 )
-def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass, friction):
+def test_solvent_batch_simulation(precision, seed, num_systems, integrator_klass, friction):
     dt = 2.5e-3
 
-    if precision == np.float64 and batch_size > 4:
+    if precision == np.float64 and num_systems > 4:
         pytest.skip(reason="Slow and memory intensive")
 
     mol, _ = get_biphenyl()
@@ -642,17 +642,17 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass,
     bonded_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
     masses = apply_hmr(masses, get_bond_list(bonded_pot)).astype(precision)
 
-    batch_coords = [x0.astype(precision)] * batch_size
-    batch_boxes = [box0.astype(precision)] * batch_size
+    batch_coords = [x0.astype(precision)] * num_systems
+    batch_boxes = [box0.astype(precision)] * num_systems
 
     batch_v0 = [np.zeros_like(coords) for coords in batch_coords]
 
     intg_impl = None
     if integrator_klass is VelocityVerletIntegrator:
-        intg = VelocityVerletIntegrator(dt, [masses for _ in range(batch_size)])
+        intg = VelocityVerletIntegrator(dt, [masses for _ in range(num_systems)])
         intg_impl = intg.impl(precision)
     elif integrator_klass is LangevinIntegrator:
-        intg = LangevinIntegrator(constants.DEFAULT_TEMP, dt, friction, [masses for _ in range(batch_size)], seed)
+        intg = LangevinIntegrator(constants.DEFAULT_TEMP, dt, friction, [masses for _ in range(num_systems)], seed)
         intg_impl = intg.impl(precision)
     else:
         assert False, f"Unknown integrator type {integrator_klass}"
@@ -665,63 +665,63 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass,
         # TBD: Implement a `pot.combine(other_pot) method
         if isinstance(unbound_pot, (HarmonicBond, HarmonicAngle, PeriodicTorsion, ChiralAtomRestraint)):
             klass = type(unbound_pot)
-            unbound_batch = klass(unbound_pot.num_atoms, [unbound_pot.idxs for _ in range(batch_size)])
-            params = [pot.params.astype(precision) for _ in range(batch_size)]
+            unbound_batch = klass(unbound_pot.num_atoms, [unbound_pot.idxs for _ in range(num_systems)])
+            params = [pot.params.astype(precision) for _ in range(num_systems)]
             batch_pots.append(BoundPotential(unbound_batch, params))
         elif isinstance(unbound_pot, NonbondedPairList):
             klass = type(unbound_pot)
             unbound_batch = klass(
                 unbound_pot.num_atoms,
-                [unbound_pot.idxs.astype(np.int32) for _ in range(batch_size)],
-                [unbound_pot.rescale_mask.astype(precision) for _ in range(batch_size)],
+                [unbound_pot.idxs.astype(np.int32) for _ in range(num_systems)],
+                [unbound_pot.rescale_mask.astype(precision) for _ in range(num_systems)],
                 unbound_pot.beta,
                 unbound_pot.cutoff,
             )
-            params = [pot.params.astype(precision) for _ in range(batch_size)]
+            params = [pot.params.astype(precision) for _ in range(num_systems)]
             batch_pots.append(BoundPotential(unbound_batch, params))
         elif isinstance(unbound_pot, NonbondedPairListPrecomputed):
             klass = type(unbound_pot)
             unbound_batch = klass(
                 unbound_pot.num_atoms,
-                [unbound_pot.idxs for _ in range(batch_size)],
+                [unbound_pot.idxs for _ in range(num_systems)],
                 unbound_pot.beta,
                 unbound_pot.cutoff,
             )
-            params = [pot.params.astype(precision) for _ in range(batch_size)]
+            params = [pot.params.astype(precision) for _ in range(num_systems)]
             batch_pots.append(BoundPotential(unbound_batch, params))
         elif isinstance(unbound_pot, NonbondedInteractionGroup):
             klass = type(unbound_pot)
             unbound_batch = klass(
                 unbound_pot.num_atoms,
-                [unbound_pot.row_atom_idxs for _ in range(batch_size)],
+                [unbound_pot.row_atom_idxs for _ in range(num_systems)],
                 unbound_pot.beta,
                 unbound_pot.cutoff,
-                col_atom_idxs=[unbound_pot.col_atom_idxs for _ in range(batch_size)],
+                col_atom_idxs=[unbound_pot.col_atom_idxs for _ in range(num_systems)],
             )
-            params = [pot.params.astype(precision) for _ in range(batch_size)]
+            params = [pot.params.astype(precision) for _ in range(num_systems)]
             batch_pots.append(BoundPotential(unbound_batch, params))
         elif isinstance(unbound_pot, Nonbonded):
             klass = type(unbound_pot)
             unbound_batch = klass(
                 unbound_pot.num_atoms,
-                [unbound_pot.exclusion_idxs for _ in range(batch_size)],
-                [unbound_pot.scale_factors for _ in range(batch_size)],
+                [unbound_pot.exclusion_idxs for _ in range(num_systems)],
+                [unbound_pot.scale_factors for _ in range(num_systems)],
                 unbound_pot.beta,
                 unbound_pot.cutoff,
-                atom_idxs=[unbound_pot.atom_idxs for _ in range(batch_size)] if unbound_pot.atom_idxs else None,
+                atom_idxs=[unbound_pot.atom_idxs for _ in range(num_systems)] if unbound_pot.atom_idxs else None,
             )
-            params = [pot.params.astype(precision) for _ in range(batch_size)]
+            params = [pot.params.astype(precision) for _ in range(num_systems)]
             batch_pots.append(BoundPotential(unbound_batch, params))
         else:
             assert False, str(type(unbound_pot))
 
     for pot in batch_pots:
-        assert pot.potential.to_gpu(precision).unbound_impl.batch_size() == batch_size
+        assert pot.potential.to_gpu(precision).unbound_impl.num_systems() == num_systems
         bp = pot.to_gpu(precision).bound_impl
         ref_du_dx, _, ref_u = pot.potential.to_gpu(precision).unbound_impl.execute_dim(
             np.stack(batch_coords), pot.params, np.stack(batch_boxes), 1, 0, 1
         )
-        assert bp.batch_size() == batch_size
+        assert bp.num_systems() == num_systems
         du_dx, u = bp.execute(np.stack(batch_coords).squeeze(), np.stack(batch_boxes).squeeze())
         np.testing.assert_array_equal(du_dx.squeeze(), ref_du_dx.squeeze())
         np.testing.assert_array_equal(u.squeeze(), ref_u.squeeze())
@@ -729,16 +729,16 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass,
         # Sanity check
         assert np.all(np.isfinite(du_dx))
         assert np.all(np.isfinite(u))
-        if batch_size > 1:
-            assert du_dx.shape == (batch_size, len(x0), 3)
-            assert u.shape == (batch_size,)
+        if num_systems > 1:
+            assert du_dx.shape == (num_systems, len(x0), 3)
+            assert u.shape == (num_systems,)
             assert all([np.all(du_dx[0] == du_dx_batch) for du_dx_batch in du_dx]), (
                 f"Pot {type(pot.potential)} has force mismatch"
             )
             assert all([np.all(u[0] == u_batch) for u_batch in u]), f"Pot {type(pot.potential)} has energy mismatch"
         else:
             assert du_dx.shape == (len(x0), 3)
-            assert u.shape == (batch_size,)
+            assert u.shape == (num_systems,)
 
     ctxt = Context(
         np.stack(batch_coords).squeeze(),
@@ -753,14 +753,14 @@ def test_solvent_batch_simulation(precision, seed, batch_size, integrator_klass,
     start = time.perf_counter()
     xs, boxes = ctxt.multiple_steps(steps)
     took = time.perf_counter() - start
-    ns_per_day = (steps * batch_size) / took
+    ns_per_day = (steps * num_systems) / took
     ns_per_day = ns_per_day * SECONDS_PER_DAY * dt * 1e-3
-    print(f"{batch_size} simulations took {time.perf_counter() - start}s, ns per day {ns_per_day}")
+    print(f"{num_systems} simulations took {time.perf_counter() - start}s, ns per day {ns_per_day}")
 
-    if batch_size > 1:
-        assert xs.shape == (1, batch_size, len(x0), 3)
-        assert boxes.shape == (1, batch_size, 3, 3)
-        for i, x_batch in enumerate(xs.reshape(batch_size, len(x0), 3)[1:]):
+    if num_systems > 1:
+        assert xs.shape == (1, num_systems, len(x0), 3)
+        assert boxes.shape == (1, num_systems, 3, 3)
+        for i, x_batch in enumerate(xs.reshape(num_systems, len(x0), 3)[1:]):
             if integrator_klass == VelocityVerletIntegrator or friction == 0.0:
                 assert np.all(xs[0, 0] == x_batch)
             else:

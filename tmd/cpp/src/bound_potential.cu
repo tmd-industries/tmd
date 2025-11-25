@@ -40,8 +40,8 @@ void BoundPotential<RealType>::execute_device(
                                   d_box, d_du_dx, d_du_dp, d_u, stream);
 }
 
-template <typename RealType> int BoundPotential<RealType>::batch_size() const {
-  return this->potential->batch_size();
+template <typename RealType> int BoundPotential<RealType>::num_systems() const {
+  return this->potential->num_systems();
 }
 
 template <typename RealType>

@@ -171,7 +171,7 @@ public:
   virtual RealType log_probability_host();
   virtual RealType raw_log_probability_host();
 
-  size_t batch_size() const { return batch_size_; }
+  size_t num_systems() const { return batch_size_; }
 
   size_t n_proposed() const { return num_attempted_; }
 

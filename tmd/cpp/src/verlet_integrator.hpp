@@ -40,7 +40,7 @@ public:
 
   virtual ~VelocityVerletIntegrator();
 
-  virtual int batch_size() const override { return batch_size_; };
+  virtual int num_systems() const override { return batch_size_; };
 
   virtual void
   step_fwd(std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,

@@ -312,7 +312,7 @@ void Potential<RealType>::du_dp_fixed_to_float(const int N, const int P,
   }
 }
 
-template <typename RealType> int Potential<RealType>::batch_size() const {
+template <typename RealType> int Potential<RealType>::num_systems() const {
   return 1; // Hardcoded to 1
 }
 

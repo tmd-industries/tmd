@@ -27,11 +27,11 @@ namespace tmd {
 
 template <typename RealType>
 NonbondedPairListPrecomputed<RealType>::NonbondedPairListPrecomputed(
-    const int num_batches, const int num_atoms, const std::vector<int> &idxs,
+    const int num_systems, const int num_atoms, const std::vector<int> &idxs,
     const std::vector<int> &system_idxs, const RealType beta,
     const RealType cutoff)
-    : num_batches_(num_batches), num_atoms_(num_atoms), B_(idxs.size() / 2),
-      beta_(beta), cutoff_(cutoff), nrg_accum_(num_batches_, B_),
+    : num_systems_(num_systems), num_atoms_(num_atoms), B_(idxs.size() / 2),
+      beta_(beta), cutoff_(cutoff), nrg_accum_(num_systems_, B_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -115,7 +115,7 @@ void NonbondedPairListPrecomputed<RealType>::execute_device(
 
     if (d_u) {
       nrg_accum_.sum_device(B_, d_u_buffer_,
-                            num_batches_ > 1 ? d_system_idxs_ : nullptr, d_u,
+                            num_systems_ > 1 ? d_system_idxs_ : nullptr, d_u,
                             stream);
     }
   }
@@ -153,8 +153,8 @@ void NonbondedPairListPrecomputed<RealType>::du_dp_fixed_to_float(
 };
 
 template <typename RealType>
-int NonbondedPairListPrecomputed<RealType>::batch_size() const {
-  return num_batches_;
+int NonbondedPairListPrecomputed<RealType>::num_systems() const {
+  return num_systems_;
 }
 
 template class NonbondedPairListPrecomputed<double>;

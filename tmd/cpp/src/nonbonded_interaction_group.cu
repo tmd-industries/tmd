@@ -808,7 +808,7 @@ void NonbondedInteractionGroup<RealType>::validate_idxs(
 }
 
 template <typename RealType>
-int NonbondedInteractionGroup<RealType>::batch_size() const {
+int NonbondedInteractionGroup<RealType>::num_systems() const {
   return num_systems_;
 }
 

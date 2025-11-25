@@ -25,10 +25,10 @@ namespace tmd {
 
 template <typename RealType>
 ChiralBondRestraint<RealType>::ChiralBondRestraint(
-    const int num_batches, const int num_atoms, const std::vector<int> &idxs,
+    const int num_systems, const int num_atoms, const std::vector<int> &idxs,
     const std::vector<int> &signs, const std::vector<int> &system_idxs)
-    : num_batches_(num_batches), num_atoms_(num_atoms), R_(idxs.size() / 4),
-      nrg_accum_(num_batches_, R_),
+    : num_systems_(num_systems), num_atoms_(num_atoms), R_(idxs.size() / 4),
+      nrg_accum_(num_systems_, R_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -113,8 +113,8 @@ void ChiralBondRestraint<RealType>::execute_device(
 };
 
 template <typename RealType>
-int ChiralBondRestraint<RealType>::batch_size() const {
-  return num_batches_;
+int ChiralBondRestraint<RealType>::num_systems() const {
+  return num_systems_;
 }
 
 template class ChiralBondRestraint<double>;
