@@ -182,7 +182,13 @@ def get_solvent_host(st: SingleTopology) -> tuple[builders.HostConfig, builders.
 
 @pytest.mark.parametrize("lamb", [0.0, 0.4, 0.5, 1.0])
 @pytest.mark.parametrize("temperature_scale_interpolation_fxn", ["linear", "quadratic", "exponential"])
-@pytest.mark.parametrize("mol_pair", np.random.default_rng(2024).choice(hif2a_ligand_pairs, size=3))
+@pytest.mark.parametrize(
+    "mol_pair",
+    [
+        (hif2a_ligand_pairs[0][0], hif2a_ligand_pairs[0][0]),  # Identity transformation
+        *np.random.default_rng(2024).choice(hif2a_ligand_pairs, size=3),  # Random pairs
+    ],
+)
 def test_single_topology_rest_solvent(mol_pair, temperature_scale_interpolation_fxn, lamb):
     mol_a, mol_b = mol_pair
 
@@ -201,6 +207,8 @@ def test_single_topology_rest_solvent(mol_pair, temperature_scale_interpolation_
         )
         num_atoms_host = optimized_host.host_system.nonbonded_all_pairs.potential.num_atoms
         ligand_idxs_ = np.array(list(ligand_idxs), dtype=np.int32) + num_atoms_host
+        if len(ligand_idxs_) == 0:
+            return 0  # If there are 0 ligand indices, the energy is zero
 
         return NonbondedInteractionGroup(
             hgs.nonbonded_all_pairs.potential.num_atoms,
