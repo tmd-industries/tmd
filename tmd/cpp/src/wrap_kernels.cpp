@@ -3191,7 +3191,7 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
                        const RealType temperature, const RealType nb_beta,
                        const RealType cutoff, const int seed,
                        const int num_proposals_per_move, const int interval,
-                       const int num_systems) {
+                       const int batch_size) {
              size_t params_dim = params.ndim();
              if (num_proposals_per_move <= 0) {
                throw std::runtime_error(
@@ -3209,23 +3209,23 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
              if (interval <= 0) {
                throw std::runtime_error("must provide interval greater than 0");
              }
-             if (num_systems <= 0) {
+             if (batch_size <= 0) {
                throw std::runtime_error(
                    "must provide batch size greater than 0");
              }
-             if (num_systems > num_proposals_per_move) {
+             if (batch_size > num_proposals_per_move) {
                throw std::runtime_error("number of proposals per move must be "
                                         "greater than batch size");
              }
              std::vector<RealType> v_params = py_array_to_vector(params);
              return new Class(N, target_mols, v_params, temperature, nb_beta,
                               cutoff, seed, num_proposals_per_move, interval,
-                              num_systems);
+                              batch_size);
            }),
            py::arg("N"), py::arg("target_mols"), py::arg("params"),
            py::arg("temperature"), py::arg("nb_beta"), py::arg("cutoff"),
            py::arg("seed"), py::arg("num_proposals_per_move"),
-           py::arg("interval"), py::arg("num_systems") = 1)
+           py::arg("interval"), py::arg("batch_size") = 1)
       .def(
           "move",
           [](Class &mover,
