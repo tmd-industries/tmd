@@ -35,7 +35,7 @@ template <typename RealType> class HarmonicBond : public Potential<RealType> {
                               __int128 *__restrict__ u_buffer);
 
 private:
-  const int num_batches_;
+  const int num_systems_;
   const int num_atoms_;
   const int max_idxs_;
   int cur_num_idxs_;
@@ -52,7 +52,7 @@ private:
 public:
   static const int IDXS_DIM = 2;
 
-  HarmonicBond(const int num_batches, const int num_atoms,
+  HarmonicBond(const int num_systems, const int num_atoms,
                const std::vector<int> &bond_idxs,  // [B, 2]
                const std::vector<int> &system_idxs // [B]
   );
@@ -67,7 +67,7 @@ public:
                               __int128 *d_u, // buffered
                               cudaStream_t stream) override;
 
-  virtual int batch_size() const override;
+  virtual int num_systems() const override;
 
   void set_idxs_device(const int num_idxs, const int *d_new_idxs,
                        cudaStream_t stream);

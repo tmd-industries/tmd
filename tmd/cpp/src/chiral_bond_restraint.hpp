@@ -33,7 +33,7 @@ class ChiralBondRestraint : public Potential<RealType> {
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
-  const int num_batches_;
+  const int num_systems_;
   const int num_atoms_;
   const int R_;
 
@@ -47,7 +47,7 @@ private:
   std::array<k_chiral_bond_fn, 8> kernel_ptrs_;
 
 public:
-  ChiralBondRestraint(const int num_batches, const int num_atoms,
+  ChiralBondRestraint(const int num_systems, const int num_atoms,
                       const std::vector<int> &idxs,       // [R, 4]
                       const std::vector<int> &signs,      // [R]
                       const std::vector<int> &system_idxs // [R]
@@ -63,7 +63,7 @@ public:
                               __int128 *d_u, // buffered
                               cudaStream_t stream) override;
 
-  virtual int batch_size() const override;
+  virtual int num_systems() const override;
 };
 
 } // namespace tmd

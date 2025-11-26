@@ -33,7 +33,7 @@ class NonbondedPairListPrecomputed : public Potential<RealType> {
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
-  const int num_batches_;
+  const int num_systems_;
   const int num_atoms_;
   const int B_;
 
@@ -49,7 +49,7 @@ private:
   std::array<k_nonbonded_precomputed_fn, 8> kernel_ptrs_;
 
 public:
-  NonbondedPairListPrecomputed(const int num_batches, const int num_atoms,
+  NonbondedPairListPrecomputed(const int num_systems, const int num_atoms,
                                const std::vector<int> &pair_idxs,   // [B, 2]
                                const std::vector<int> &system_idxs, // [B]
                                const RealType beta, const RealType cutoff);
@@ -68,7 +68,7 @@ public:
                             const unsigned long long *du_dp,
                             RealType *du_dp_float) override;
 
-  virtual int batch_size() const override;
+  virtual int num_systems() const override;
 };
 
 } // namespace tmd

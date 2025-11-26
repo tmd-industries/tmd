@@ -23,13 +23,13 @@
 namespace tmd {
 
 template <typename RealType>
-FlatBottomBond<RealType>::FlatBottomBond(const int num_batches,
+FlatBottomBond<RealType>::FlatBottomBond(const int num_systems,
                                          const int num_atoms,
                                          const std::vector<int> &bond_idxs,
                                          const std::vector<int> &system_idxs)
-    : num_batches_(num_batches), num_atoms_(num_atoms),
+    : num_systems_(num_systems), num_atoms_(num_atoms),
       max_idxs_(bond_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      nrg_accum_(num_batches_, cur_num_idxs_),
+      nrg_accum_(num_systems_, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -139,8 +139,8 @@ void FlatBottomBond<RealType>::set_bonds_device(const int num_bonds,
   cur_num_idxs_ = num_bonds;
 }
 
-template <typename RealType> int FlatBottomBond<RealType>::batch_size() const {
-  return num_batches_;
+template <typename RealType> int FlatBottomBond<RealType>::num_systems() const {
+  return num_systems_;
 }
 
 template class FlatBottomBond<double>;

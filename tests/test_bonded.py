@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -152,29 +153,29 @@ def test_harmonic_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
 
     if n_bonds > 0:
         # Testing batching across multiple coords/params
-        num_batches = 3
+        num_systems = 3
 
         coords = np.array(
             [
                 shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
-                for i in range(num_batches)
+                for i in range(num_systems)
             ],
             dtype=precision,
         )
         rng = np.random.default_rng(seed)
-        batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_batches)]
+        batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_systems)]
         batch_params = [rng.uniform(0.0, 1.0, size=(len(idxs), 2)).astype(precision) for idxs in batch_bond_idxs]
         batch_boxes = [
-            (np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_batches)
+            (np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)
         ]
 
         batch_pot = HarmonicBond(n_particles, batch_bond_idxs)
 
         batch_impl = batch_pot.to_gpu(precision).unbound_impl
-        assert batch_impl.batch_size() == num_batches
+        assert batch_impl.num_systems() == num_systems
         batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
 
-        assert batch_du_dx.shape[0] == num_batches
+        assert batch_du_dx.shape[0] == num_systems
         assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
         for i, (idxs, x, box, params) in enumerate(zip(batch_bond_idxs, coords, batch_boxes, batch_params)):
             potential = HarmonicBond(n_particles, idxs)
@@ -236,29 +237,29 @@ def test_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
 
     # Testing batching across multiple coords/params
-    num_batches = 3
+    num_systems = 3
 
     rng = np.random.default_rng(seed)
 
     coords = np.array(
         [
             shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
-            for i in range(num_batches)
+            for i in range(num_systems)
         ],
         dtype=precision,
     )
-    batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_batches)]
+    batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_systems)]
 
     batch_params = [rng.choice(params, size=len(idxs), replace=True).astype(precision) for idxs in batch_bond_idxs]
-    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_batches)]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
 
     batch_pot = FlatBottomBond(n_particles, batch_bond_idxs)
 
     batch_impl = batch_pot.to_gpu(precision).unbound_impl
-    assert batch_impl.batch_size() == num_batches
+    assert batch_impl.num_systems() == num_systems
     batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
 
-    assert batch_du_dx.shape[0] == num_batches
+    assert batch_du_dx.shape[0] == num_systems
     assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
     for i, (idxs, x, box, params) in enumerate(zip(batch_bond_idxs, coords, batch_boxes, batch_params)):
         potential = FlatBottomBond(n_particles, idxs)
@@ -321,29 +322,29 @@ def test_log_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
 
     # Testing batching across multiple coords/params
-    num_batches = 3
+    num_systems = 3
 
     rng = np.random.default_rng(seed)
 
     coords = np.array(
         [
             shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
-            for i in range(num_batches)
+            for i in range(num_systems)
         ],
         dtype=precision,
     )
-    batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_batches)]
+    batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_systems)]
 
     batch_params = [rng.choice(params, size=len(idxs), replace=True).astype(precision) for idxs in batch_bond_idxs]
-    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_batches)]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
 
     batch_pot = LogFlatBottomBond(n_particles, batch_bond_idxs, beta)
 
     batch_impl = batch_pot.to_gpu(precision).unbound_impl
-    assert batch_impl.batch_size() == num_batches
+    assert batch_impl.num_systems() == num_systems
     batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
 
-    assert batch_du_dx.shape[0] == num_batches
+    assert batch_du_dx.shape[0] == num_systems
     assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
     for i, (idxs, x, box, params) in enumerate(zip(batch_bond_idxs, coords, batch_boxes, batch_params)):
         potential = LogFlatBottomBond(n_particles, idxs, beta)
@@ -456,29 +457,29 @@ def test_harmonic_angle(precision, rtol, n_particles=64, n_angles=25, dim=3):
 
     if n_angles > 0:
         # Testing batching across multiple coords/params
-        num_batches = 3
+        num_systems = 3
 
         coords = np.array(
             [
                 shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
-                for i in range(num_batches)
+                for i in range(num_systems)
             ],
             dtype=precision,
         )
         rng = np.random.default_rng(seed)
-        batch_angle_idxs = [rng.choice(angle_idxs, size=rng.integers(1, n_angles), axis=0) for _ in range(num_batches)]
+        batch_angle_idxs = [rng.choice(angle_idxs, size=rng.integers(1, n_angles), axis=0) for _ in range(num_systems)]
         batch_params = [rng.uniform(0.0, 1.0, size=(len(idxs), 3)).astype(precision) for idxs in batch_angle_idxs]
         batch_boxes = [
-            (np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_batches)
+            (np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)
         ]
 
         batch_pot = HarmonicAngle(n_particles, batch_angle_idxs)
 
         batch_impl = batch_pot.to_gpu(precision).unbound_impl
-        assert batch_impl.batch_size() == num_batches
+        assert batch_impl.num_systems() == num_systems
         batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
 
-        assert batch_du_dx.shape[0] == num_batches
+        assert batch_du_dx.shape[0] == num_systems
         assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
         for i, (idxs, x, box, params) in enumerate(zip(batch_angle_idxs, coords, batch_boxes, batch_params)):
             potential = HarmonicAngle(n_particles, idxs)
@@ -534,31 +535,31 @@ def test_periodic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3)
 
     if n_torsions > 0:
         # Testing batching across multiple coords/params
-        num_batches = 3
+        num_systems = 3
 
         coords = np.array(
             [
                 shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
-                for i in range(num_batches)
+                for i in range(num_systems)
             ],
             dtype=precision,
         )
         rng = np.random.default_rng(seed)
         batch_torsion_idxs = [
-            rng.choice(torsion_idxs, size=rng.integers(1, n_torsions), axis=0) for _ in range(num_batches)
+            rng.choice(torsion_idxs, size=rng.integers(1, n_torsions), axis=0) for _ in range(num_systems)
         ]
         batch_params = [rng.uniform(0.0, 1.0, size=(len(idxs), 3)).astype(precision) for idxs in batch_torsion_idxs]
         batch_boxes = [
-            (np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_batches)
+            (np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)
         ]
 
         batch_pot = PeriodicTorsion(n_particles, batch_torsion_idxs)
 
         batch_impl = batch_pot.to_gpu(precision).unbound_impl
-        assert batch_impl.batch_size() == num_batches
+        assert batch_impl.num_systems() == num_systems
         batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
 
-        assert batch_du_dx.shape[0] == num_batches
+        assert batch_du_dx.shape[0] == num_systems
         assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
         for i, (idxs, x, box, params) in enumerate(zip(batch_torsion_idxs, coords, batch_boxes, batch_params)):
             potential = PeriodicTorsion(n_particles, idxs)
@@ -606,29 +607,29 @@ def test_chiral_atom_restraint(precision, rtol, n_particles=64, n_restraints=35,
         bad_potential.to_gpu(precision)
 
     # Testing batching across multiple coords/params
-    num_batches = 3
+    num_systems = 3
 
     coords = np.array(
         [
             shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
-            for i in range(num_batches)
+            for i in range(num_systems)
         ],
         dtype=precision,
     )
     rng = np.random.default_rng(seed)
     batch_restraint_idxs = [
-        rng.choice(restr_idxs, size=rng.integers(1, n_restraints), axis=0) for _ in range(num_batches)
+        rng.choice(restr_idxs, size=rng.integers(1, n_restraints), axis=0) for _ in range(num_systems)
     ]
     batch_params = [rng.uniform(0.0, 1.0, size=len(idxs)).astype(precision) for idxs in batch_restraint_idxs]
-    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_batches)]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
 
     batch_pot = ChiralAtomRestraint(n_particles, batch_restraint_idxs)
 
     batch_impl = batch_pot.to_gpu(precision).unbound_impl
-    assert batch_impl.batch_size() == num_batches
+    assert batch_impl.num_systems() == num_systems
     batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
 
-    assert batch_du_dx.shape[0] == num_batches
+    assert batch_du_dx.shape[0] == num_systems
     assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
     for i, (idxs, x, box, params) in enumerate(zip(batch_restraint_idxs, coords, batch_boxes, batch_params)):
         potential = ChiralAtomRestraint(n_particles, idxs)
@@ -681,29 +682,29 @@ def test_chiral_bond_restraint(precision, rtol, n_particles=64, n_restraints=35,
         bad_potential.to_gpu(precision).unbound_impl
 
     # Testing batching across multiple coords/params
-    num_batches = 3
+    num_systems = 3
 
     coords = np.array(
         [
             shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
-            for i in range(num_batches)
+            for i in range(num_systems)
         ],
         dtype=precision,
     )
     rng = np.random.default_rng(seed)
     batch_restraint_idxs = [
-        rng.choice(restr_idxs, size=rng.integers(1, n_restraints), axis=0) for _ in range(num_batches)
+        rng.choice(restr_idxs, size=rng.integers(1, n_restraints), axis=0) for _ in range(num_systems)
     ]
     batch_params = [rng.uniform(0.0, 1.0, size=len(idxs)).astype(precision) for idxs in batch_restraint_idxs]
-    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_batches)]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
     batch_signs = [rng.choice([-1, 1], size=len(idxs), replace=True).astype(np.int32) for idxs in batch_restraint_idxs]
     batch_pot = ChiralBondRestraint(n_particles, batch_restraint_idxs, batch_signs)
 
     batch_impl = batch_pot.to_gpu(precision).unbound_impl
-    assert batch_impl.batch_size() == num_batches
+    assert batch_impl.num_systems() == num_systems
     batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
 
-    assert batch_du_dx.shape[0] == num_batches
+    assert batch_du_dx.shape[0] == num_systems
     assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
     for i, (idxs, signs, x, box, params) in enumerate(
         zip(batch_restraint_idxs, batch_signs, coords, batch_boxes, batch_params)

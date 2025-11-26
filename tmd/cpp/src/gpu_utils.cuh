@@ -165,7 +165,8 @@ void __global__ k_initialize_curand_states(const int count, const int seed,
                                            curandState_t *states);
 
 template <typename T>
-void __global__ k_initialize_array(int count, T *__restrict__ array, T val) {
+void __global__ k_initialize_array(const size_t count, T *__restrict__ array,
+                                   const T val) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (idx < count) {
     array[idx] = val;

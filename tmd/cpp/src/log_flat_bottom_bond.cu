@@ -25,12 +25,12 @@ namespace tmd {
 
 template <typename RealType>
 LogFlatBottomBond<RealType>::LogFlatBottomBond(
-    const int num_batches, const int num_atoms,
+    const int num_systems, const int num_atoms,
     const std::vector<int> &bond_idxs, const std::vector<int> &system_idxs,
     const RealType beta)
-    : num_batches_(num_batches), num_atoms_(num_atoms),
+    : num_systems_(num_systems), num_atoms_(num_atoms),
       max_idxs_(bond_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      beta_(beta), nrg_accum_(num_batches_, cur_num_idxs_),
+      beta_(beta), nrg_accum_(num_systems_, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -146,8 +146,8 @@ void LogFlatBottomBond<RealType>::set_bonds_device(const int num_bonds,
 }
 
 template <typename RealType>
-int LogFlatBottomBond<RealType>::batch_size() const {
-  return num_batches_;
+int LogFlatBottomBond<RealType>::num_systems() const {
+  return num_systems_;
 }
 
 template class LogFlatBottomBond<double>;

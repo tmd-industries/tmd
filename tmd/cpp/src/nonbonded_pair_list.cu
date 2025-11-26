@@ -26,14 +26,14 @@ namespace tmd {
 
 template <typename RealType, bool Negated>
 NonbondedPairList<RealType, Negated>::NonbondedPairList(
-    const int num_batches, const int num_atoms,
+    const int num_systems, const int num_atoms,
     const std::vector<int> &pair_idxs,   // [M, 2]
     const std::vector<RealType> &scales, // [M, 2]
     const std::vector<int> &system_idxs, // [M]
     const RealType beta, const RealType cutoff)
-    : num_batches_(num_batches), num_atoms_(num_atoms),
+    : num_systems_(num_systems), num_atoms_(num_atoms),
       max_idxs_(pair_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      beta_(beta), cutoff_(cutoff), nrg_accum_(num_batches_, cur_num_idxs_),
+      beta_(beta), cutoff_(cutoff), nrg_accum_(num_systems_, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -110,13 +110,13 @@ void NonbondedPairList<RealType, Negated>::execute_device(
     const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
-  if (P != num_batches_ * num_atoms_ * PARAMS_PER_ATOM) {
+  if (P != num_systems_ * num_atoms_ * PARAMS_PER_ATOM) {
     throw std::runtime_error(
         "NonbondedPairList::execute_device(): expected P == num_atoms_*" +
         std::to_string(PARAMS_PER_ATOM) +
         "*num_batces_, got P=" + std::to_string(P) + ", num_atoms_*" +
-        std::to_string(PARAMS_PER_ATOM) + "*" + std::to_string(num_batches_) +
-        "=" + std::to_string(num_atoms_ * PARAMS_PER_ATOM * num_batches_));
+        std::to_string(PARAMS_PER_ATOM) + "*" + std::to_string(num_systems_) +
+        "=" + std::to_string(num_atoms_ * PARAMS_PER_ATOM * num_systems_));
   }
 
   if (cur_num_idxs_ > 0) {
@@ -222,8 +222,8 @@ NonbondedPairList<RealType, Negated>::get_scales_host() const {
 }
 
 template <typename RealType, bool Negated>
-int NonbondedPairList<RealType, Negated>::batch_size() const {
-  return num_batches_;
+int NonbondedPairList<RealType, Negated>::num_systems() const {
+  return num_systems_;
 }
 
 template class NonbondedPairList<double, true>;

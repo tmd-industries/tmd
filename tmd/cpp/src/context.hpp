@@ -26,7 +26,7 @@ namespace tmd {
 template <typename RealType> class Context {
 
 public:
-  Context(const int batch_size, const int N, const RealType *x_0,
+  Context(const int num_systems, const int N, const RealType *x_0,
           const RealType *v_0, const RealType *box_0,
           std::shared_ptr<Integrator<RealType>> intg,
           std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
@@ -56,7 +56,7 @@ public:
 
   int num_atoms() const;
 
-  int batch_size() const { return batch_size_; };
+  int num_systems() const { return num_systems_; };
 
   void set_x_t(const RealType *in_buffer);
 
@@ -91,7 +91,7 @@ public:
   std::shared_ptr<MonteCarloBarostat<RealType>> get_barostat() const;
 
 private:
-  const int batch_size_;
+  const int num_systems_;
   int N_; // number of particles
 
   cudaStream_t stream_;

@@ -32,7 +32,7 @@ template <typename RealType> class FlatBottomBond : public Potential<RealType> {
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
-  const int num_batches_;
+  const int num_systems_;
   const int num_atoms_;
   const int max_idxs_;
   int cur_num_idxs_;
@@ -48,7 +48,7 @@ private:
 public:
   static const int IDXS_DIM = 2;
 
-  FlatBottomBond(const int num_batches, const int num_atoms,
+  FlatBottomBond(const int num_systems, const int num_atoms,
                  const std::vector<int> &bond_idxs,  // [B, 2]
                  const std::vector<int> &system_idxs // [B]
   );
@@ -67,7 +67,7 @@ public:
   void set_bonds_device(const int num_bonds, const int *d_bonds,
                         const cudaStream_t stream);
 
-  virtual int batch_size() const override;
+  virtual int num_systems() const override;
 };
 
 } // namespace tmd

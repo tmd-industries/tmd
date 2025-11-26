@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,6 +26,7 @@ StreamedPotentialRunner<RealType>::~StreamedPotentialRunner() {}
 // wrap execute_device
 template <typename RealType>
 void StreamedPotentialRunner<RealType>::execute_potentials(
+    const int num_systems,
     std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps, const int N,
     const RealType *d_x,   // [N * 3]
     const RealType *d_box, // [3 * 3]
@@ -37,7 +39,7 @@ void StreamedPotentialRunner<RealType>::execute_potentials(
     manager_.wait_on_master(i, stream);
   }
   for (int i = 0; i < bps.size(); i++) {
-    bps[i]->execute_device(1, N, d_x, d_box, d_du_dx, d_du_dp,
+    bps[i]->execute_device(num_systems, N, d_x, d_box, d_du_dx, d_du_dp,
                            d_u == nullptr ? nullptr : d_u + i,
                            manager_.get_stream(i));
   }

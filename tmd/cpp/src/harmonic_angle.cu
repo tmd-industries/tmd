@@ -25,13 +25,13 @@ namespace tmd {
 
 template <typename RealType>
 HarmonicAngle<RealType>::HarmonicAngle(
-    const int num_batches, const int num_atoms,
+    const int num_systems, const int num_atoms,
     const std::vector<int> &angle_idxs, // [A, 3]
     const std::vector<int> &system_idxs // [A]
     )
-    : num_batches_(num_batches), num_atoms_(num_atoms),
+    : num_systems_(num_systems), num_atoms_(num_atoms),
       max_idxs_(angle_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      nrg_accum_(num_batches_, cur_num_idxs_),
+      nrg_accum_(num_systems_, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -145,8 +145,8 @@ std::vector<int> HarmonicAngle<RealType>::get_idxs_host() const {
   return device_array_to_vector<int>(cur_num_idxs_ * IDXS_DIM, d_angle_idxs_);
 }
 
-template <typename RealType> int HarmonicAngle<RealType>::batch_size() const {
-  return num_batches_;
+template <typename RealType> int HarmonicAngle<RealType>::num_systems() const {
+  return num_systems_;
 }
 
 template class HarmonicAngle<double>;

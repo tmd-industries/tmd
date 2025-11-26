@@ -33,7 +33,7 @@ class PeriodicTorsion : public Potential<RealType> {
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
-  const int num_batches_;
+  const int num_systems_;
   const int num_atoms_;
   const int max_idxs_;
   int cur_num_idxs_;
@@ -49,7 +49,7 @@ private:
 public:
   static const int IDXS_DIM = 4;
 
-  PeriodicTorsion(const int num_batches, const int num_atoms,
+  PeriodicTorsion(const int num_systems, const int num_atoms,
                   const std::vector<int> &torsion_idxs,
                   const std::vector<int> &system_idxs);
 
@@ -62,7 +62,7 @@ public:
                               unsigned long long *d_du_dp, __int128 *d_u,
                               cudaStream_t stream) override;
 
-  virtual int batch_size() const override;
+  virtual int num_systems() const override;
 
   void set_idxs_device(const int num_idxs, const int *d_idxs,
                        cudaStream_t stream);

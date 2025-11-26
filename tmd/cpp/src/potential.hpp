@@ -74,7 +74,7 @@ public:
                                     const unsigned long long *du_dp,
                                     RealType *du_dp_float);
 
-  virtual int batch_size() const;
+  virtual int num_systems() const;
 };
 
 } // namespace tmd

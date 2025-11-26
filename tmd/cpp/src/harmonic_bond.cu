@@ -24,12 +24,12 @@
 namespace tmd {
 
 template <typename RealType>
-HarmonicBond<RealType>::HarmonicBond(const int num_batches, const int num_atoms,
+HarmonicBond<RealType>::HarmonicBond(const int num_systems, const int num_atoms,
                                      const std::vector<int> &bond_idxs,
                                      const std::vector<int> &system_idxs)
-    : num_batches_(num_batches), num_atoms_(num_atoms),
+    : num_systems_(num_systems), num_atoms_(num_atoms),
       max_idxs_(bond_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      nrg_accum_(num_batches_, max_idxs_),
+      nrg_accum_(num_systems_, max_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -152,8 +152,8 @@ std::vector<int> HarmonicBond<RealType>::get_idxs_host() const {
   return device_array_to_vector<int>(cur_num_idxs_ * IDXS_DIM, d_bond_idxs_);
 }
 
-template <typename RealType> int HarmonicBond<RealType>::batch_size() const {
-  return num_batches_;
+template <typename RealType> int HarmonicBond<RealType>::num_systems() const {
+  return num_systems_;
 }
 
 template class HarmonicBond<double>;

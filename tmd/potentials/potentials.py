@@ -144,7 +144,19 @@ class Nonbonded(Potential):
     def to_gpu(self, precision: type[np.float64]) -> "GpuImplWrapper_f64": ...
 
     def to_gpu(self, precision: Precision) -> GpuImplWrapper_f32 | GpuImplWrapper_f64:
-        atom_idxs = self.atom_idxs if self.atom_idxs is not None else np.arange(self.num_atoms, dtype=np.int32)
+        if isinstance(self.exclusion_idxs, list):
+            assert isinstance(self.scale_factors, list), "scale factors must be a list of scale factors"
+            assert self.atom_idxs is None or isinstance(self.atom_idxs, list), (
+                "atom indices must be a list of atom indices"
+            )
+            assert len(self.exclusion_idxs) == len(self.scale_factors)
+            atom_idxs = (
+                self.atom_idxs
+                if self.atom_idxs is not None
+                else [np.arange(self.num_atoms, dtype=np.int32) for _ in range(len(self.exclusion_idxs))]
+            )
+        else:
+            atom_idxs = self.atom_idxs if self.atom_idxs is not None else np.arange(self.num_atoms, dtype=np.int32)
         all_pairs = NonbondedInteractionGroup(
             self.num_atoms,
             atom_idxs,
@@ -154,11 +166,22 @@ class Nonbonded(Potential):
             disable_hilbert_sort=self.disable_hilbert_sort,
             nblist_padding=self.nblist_padding,
         )
-        exclusion_idxs, scale_factors = nonbonded.filter_exclusions(atom_idxs, self.exclusion_idxs, self.scale_factors)
+        if isinstance(self.exclusion_idxs, list):
+            exclusion_idxs = []
+            scale_factors = []
+            for idxs, exc, fac in zip(atom_idxs, self.exclusion_idxs, self.scale_factors):
+                ex, factor = nonbonded.filter_exclusions(idxs, exc, fac)
+                exclusion_idxs.append(ex)
+                scale_factors.append(factor.astype(precision))
+        else:
+            exclusion_idxs, scale_factors = nonbonded.filter_exclusions(
+                atom_idxs, self.exclusion_idxs, self.scale_factors
+            )
+            scale_factors = scale_factors.astype(precision)
         exclusions = NonbondedExclusions(
             self.num_atoms,
             exclusion_idxs,
-            scale_factors.astype(precision),
+            scale_factors,
             precision(self.beta),
             precision(self.cutoff),
         )
@@ -194,7 +217,7 @@ class NonbondedInteractionGroup(Potential):
 class NonbondedPairList(Potential):
     num_atoms: int
     idxs: NDArray[np.int32] | list[NDArray[np.int32]]
-    rescale_mask: NDArray[np.float64] | list[NDArray[np.float64]]
+    rescale_mask: NDArray | list[NDArray]
     beta: float
     cutoff: float
 

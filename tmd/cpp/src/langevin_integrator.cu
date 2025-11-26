@@ -75,16 +75,16 @@ void LangevinIntegrator<RealType>::step_fwd(
     cudaStream_t stream) {
   const int D = 3;
 
-  runner_.execute_potentials(bps, N_, d_x_t, d_box_t,
+  runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
                              nullptr, nullptr, stream);
 
-  const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
-  const size_t n_blocks = ceil_divide(N_, tpb);
+  constexpr size_t tpb = DEFAULT_THREADS_PER_BLOCK;
 
-  k_update_forward_baoab<RealType, D><<<n_blocks, tpb, 0, stream>>>(
-      N_, ca_, d_idxs, d_cbs_, d_ccs_, d_rand_states_.data, d_x_t, d_v_t,
-      d_du_dx_, dt_);
+  k_update_forward_baoab<RealType, D>
+      <<<dim3(ceil_divide(N_, tpb), batch_size_), tpb, 0, stream>>>(
+          batch_size_, N_, ca_, d_idxs, d_cbs_, d_ccs_, d_rand_states_.data,
+          d_x_t, d_v_t, d_du_dx_, dt_);
   gpuErrchk(cudaPeekAtLastError());
 }
 
