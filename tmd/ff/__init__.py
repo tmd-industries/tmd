@@ -339,21 +339,21 @@ def get_water_ff_model(water_ff: str) -> str:
 
 
     For example tip3pfb -> tip3p.
+
+    Exceptions
+    ----------
+        ValueError: Any water forcefield not supported
     """
     water_ff = water_ff.split("/")[-1]
 
     lower_ff = water_ff.lower()
     # Use consistent model name for the various water flavors
-    if lower_ff.startswith("tip3p"):
+    if lower_ff.startswith(("tip4p", "tip5p", "swm4")):
+        raise ValueError(f"TMD does not support water models that use virtual sites: {water_ff}")
+    elif lower_ff.startswith("tip3p"):
         return "tip3p"
-    elif lower_ff.startswith("tip4p"):
-        return "tip4pew"
-    elif lower_ff.startswith("tip5p"):
-        return "tip5p"
     elif lower_ff.startswith("spce"):
         return "spce"
-    elif lower_ff.startswith("swm4"):
-        return "swm4ndp"
     else:
         warn(f"Unknown water model {lower_ff}, falling back to tip3p as the water model")
     return "tip3p"

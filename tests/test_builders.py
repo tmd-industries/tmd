@@ -82,7 +82,15 @@ def test_build_water_system():
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/tip4pfb", "amber14/spce", "amber14/opc3"])
+@pytest.mark.parametrize("water_ff", ["amber14/tip4pfb", "tip5p", "swm4ndp"])
+def test_build_water_system_raises_on_water_ff_with_virtual_sites(water_ff):
+    mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
+    with pytest.raises(ValueError, match="TMD does not support water models that use virtual sites"):
+        build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
+
+
+@pytest.mark.nocuda
+@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/spce", "amber14/opc3"])
 def test_build_water_system_different_water_ffs(water_ff):
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
     host_config = build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
