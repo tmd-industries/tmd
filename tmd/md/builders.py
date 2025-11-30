@@ -259,6 +259,13 @@ def solvate_modeller(
         # Remove the chain filled with the dummy ions
         bad_chains = [chain for chain in current_topo.chains() if chain.id == dummy_chain_id]
         modeller.delete(bad_chains)
+    try:
+        water_res = next(
+            [atom for atom in res.atoms()] for res in modeller.topology.residues() if res.name == WATER_RESIDUE_NAME
+        )
+        assert len(water_res) == 3, "Expect water residues to have three atoms"
+    except StopIteration:
+        pass
 
 
 def load_pdb_system(
