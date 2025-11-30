@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,6 +28,7 @@
 #include "math_utils.cuh"
 #include "nonbonded_common.hpp"
 #include "pinned_host_buffer.hpp"
+#include "potential_utils.hpp"
 #include "set_utils.hpp"
 
 namespace tmd {
@@ -50,15 +52,16 @@ Context<RealType>::Context(
     std::vector<std::shared_ptr<Mover<RealType>>> &movers)
     : num_systems_(num_systems), N_(N), movers_(movers), step_(0), intg_(intg),
       bps_(bps), nonbonded_pots_(0) {
-
+  verify_potentials_are_compatible(bps);
+  for (auto mover : movers) {
+    if (mover->num_systems() != num_systems_) {
+      throw std::runtime_error("Movers must have same number of systems, got " +
+                               std::to_string(mover->num_systems()) +
+                               ", expected " + std::to_string(num_systems_));
+    }
+  }
   std::vector<std::shared_ptr<Potential<RealType>>> pots;
   for (auto bp : bps_) {
-    if (bp->potential->num_systems() != num_systems_) {
-      throw std::runtime_error(
-          "number of systems of all potentials must all be " +
-          std::to_string(num_systems_) + ", got " +
-          std::to_string(bp->potential->num_systems()));
-    }
     pots.push_back(bp->potential);
   }
   // A no-op if running in vacuum or there are no NonbondedInteractionGroup

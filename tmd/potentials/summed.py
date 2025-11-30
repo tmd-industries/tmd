@@ -16,6 +16,7 @@ from collections.abc import Sequence
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
 from .types import Box, Conf, Params, PotentialFxn
 
@@ -46,12 +47,14 @@ def summed_potential(
     shapes: list of tuple
         shapes of the parameter array input for each potential term (must be same length as U_fns)
     """
+    assert isinstance(params, (np.ndarray, Array))
     assert len(U_fns) == len(shapes)
     unflattened_params = unflatten_params(params, shapes)
     return jnp.sum(jnp.array([U_fn(conf, ps, box) for U_fn, ps in zip(U_fns, unflattened_params)]))
 
 
 def unflatten_params(params: Params, shapes: Sequence[tuple[int, ...]]) -> list[Params]:
+    assert isinstance(params, (np.ndarray, Array))
     sizes = [int(np.prod(shape)) for shape in shapes]
     assert params.shape == (sum(sizes),)
     split_indices = np.cumsum(sizes)
@@ -80,4 +83,5 @@ def fanout_summed_potential(
     U_fns: list of functions with signature (conf, params, box) -> energy
         potential terms
     """
+    assert isinstance(params, (np.ndarray, Array))
     return jnp.sum(jnp.array([U_fn(conf, ps, box) for U_fn, ps in zip(U_fns, jnp.array(params))]))

@@ -449,6 +449,7 @@ def get_solvent_phase_system(
     bt = topology.BaseTopology(mol, ff)
     afe = free_energy.AbsoluteFreeEnergy(mol, bt)
     potentials, params, masses = afe.prepare_host_edge(ff, host_config, lamb)
+    print(params[0])
 
     # concatenate (optionally minimized) water_coords and ligand_coords
     ligand_coords = get_romol_conf(mol)

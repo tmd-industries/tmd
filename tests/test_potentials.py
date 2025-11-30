@@ -631,6 +631,7 @@ def test_execute_batch_sparse(
     n_atoms = harmonic_bond.potential.num_atoms
     coords = rng.normal(0, 1, (coords_size, n_atoms, 3)).astype(precision)
 
+    assert isinstance(harmonic_bond.params, (np.ndarray, jax.Array))
     params = rng.uniform(size=(params_size, *harmonic_bond.params.shape)).astype(precision)
     boxes = np.eye(3) * rng.uniform(size=(len(coords), 3))[:, :, np.newaxis]
     boxes = boxes.astype(precision)

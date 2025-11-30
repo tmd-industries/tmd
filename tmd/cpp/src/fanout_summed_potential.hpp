@@ -39,7 +39,7 @@ private:
 
 public:
   FanoutSummedPotential(
-      const std::vector<std::shared_ptr<Potential<RealType>>> potentials,
+      const std::vector<std::shared_ptr<Potential<RealType>>> &potentials,
       const bool parallel);
 
   ~FanoutSummedPotential();

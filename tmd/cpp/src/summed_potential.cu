@@ -17,6 +17,7 @@
 #include "fixed_point.hpp"
 #include "gpu_utils.cuh"
 #include "nonbonded_common.hpp"
+#include "potential_utils.hpp"
 #include "summed_potential.hpp"
 #include <memory>
 #include <numeric>
@@ -26,12 +27,13 @@ namespace tmd {
 
 template <typename RealType>
 SummedPotential<RealType>::SummedPotential(
-    const std::vector<std::shared_ptr<Potential<RealType>>> potentials,
-    const std::vector<int> params_sizes, const bool parallel)
+    const std::vector<std::shared_ptr<Potential<RealType>>> &potentials,
+    const std::vector<int> &params_sizes, const bool parallel)
     : potentials_(potentials), params_sizes_(params_sizes),
       P_(std::accumulate(params_sizes.begin(), params_sizes.end(), 0)),
       parallel_(parallel), d_u_buffer_(potentials.size()),
       nrg_accum_(1, potentials_.size()) {
+  verify_potentials_are_compatible(potentials_);
   if (potentials_.size() != params_sizes_.size()) {
     throw std::runtime_error(
         "number of potentials != number of parameter sizes");

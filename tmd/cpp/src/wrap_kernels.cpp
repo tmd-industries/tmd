@@ -445,16 +445,6 @@ void declare_context(py::module &m, const char *typestr) {
                    throw std::runtime_error(
                        "batch size of potentials must be at least 1");
                  }
-                 for (auto bp : bps) {
-                   int bp_num_systems = bp->potential->num_systems();
-                   if (bp_num_systems != num_systems) {
-                     throw std::runtime_error(
-                         "all bound potentials must have potentials with the "
-                         "same batch size: Expected " +
-                         std::to_string(num_systems) + ", got " +
-                         std::to_string(bp_num_systems));
-                   }
-                 }
                  if (intg->num_systems() != num_systems) {
                    throw std::runtime_error(
                        "integrator batch size (" +
@@ -934,8 +924,12 @@ void declare_context(py::module &m, const char *typestr) {
       .def("get_box",
            [](Context<RealType> &ctxt)
                -> py::array_t<RealType, py::array::c_style> {
-             unsigned int D = 3;
-             py::array_t<RealType, py::array::c_style> buffer({D, D});
+             constexpr int D = 3;
+             py::array_t<RealType, py::array::c_style> buffer(
+                 {ctxt.num_systems(), D, D});
+             if (ctxt.num_systems() == 1) {
+               buffer.resize({D, D});
+             }
              ctxt.get_box(buffer.mutable_data());
              return buffer;
            })
@@ -3017,6 +3011,7 @@ void declare_mover(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def("set_interval", &Class::set_interval, py::arg("interval"))
       .def("get_interval", &Class::get_interval)
+      .def("num_systems", &Class::num_systems)
       .def("set_step", &Class::set_step, py::arg("step"))
       .def(
           "move",

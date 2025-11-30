@@ -415,10 +415,10 @@ void NonbondedInteractionGroup<RealType>::sort(const RealType *d_coords,
 
 template <typename RealType>
 void NonbondedInteractionGroup<RealType>::execute_device(
-    const int batches, const int N, const int P,
-    const RealType *d_x,   // [batches * N * 3]
-    const RealType *d_p,   // [batches * N * PARAMS_PER_ATOM]
-    const RealType *d_box, // [batches * 3 * 3]
+    const int num_systems, const int N, const int P,
+    const RealType *d_x,   // [num_systems * N * 3]
+    const RealType *d_p,   // [num_systems * N * PARAMS_PER_ATOM]
+    const RealType *d_box, // [num_systems * 3 * 3]
     unsigned long long *d_du_dx, unsigned long long *d_du_dp, __int128 *d_u,
     cudaStream_t stream) {
   // (ytz) the nonbonded algorithm proceeds as follows:
@@ -439,11 +439,12 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   // e. inverse permute the forces, du/dps into the original index.
   // f. u is buffered into a per-particle array, and then reduced.
 
-  if (batches != num_systems_) {
-    throw std::runtime_error("NonbondedInteractionGroup::execute_device():"
-                             "expected batches == num_systems_, got batches=" +
-                             std::to_string(batches) +
-                             ", num_systems_=" + std::to_string(num_systems_));
+  if (num_systems != num_systems_) {
+    throw std::runtime_error(
+        "NonbondedInteractionGroup::execute_device():"
+        "expected num_systems == num_systems_, got num_systems=" +
+        std::to_string(num_systems) +
+        ", num_systems_=" + std::to_string(num_systems_));
   }
   if (N != N_) {
     throw std::runtime_error("NonbondedInteractionGroup::execute_device(): "

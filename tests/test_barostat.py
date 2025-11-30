@@ -142,6 +142,7 @@ def test_barostat_with_clashes():
     baro = custom_ops.MonteCarloBarostat_f32(
         coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
     )
+    assert baro.num_systems() == 1
 
     # The clashes will result in overflows, so the box should never change as no move is accepted
     ctxt = custom_ops.Context_f32(
@@ -193,6 +194,7 @@ def test_barostat_zero_interval():
     baro = custom_ops.MonteCarloBarostat_f32(
         coords.shape[0], pressure, temperature, group_indices, 1, u_impls, seed, True, 0.0
     )
+    assert baro.num_systems() == 1
     # Setting back to 0 should raise another error
     with pytest.raises(RuntimeError):
         baro.set_interval(0)
@@ -250,6 +252,7 @@ def test_barostat_partial_group_idxs():
     baro = custom_ops.MonteCarloBarostat_f32(
         coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
     )
+    assert baro.num_systems() == 1
 
     ctxt = custom_ops.Context_f32(
         coords.astype(np.float32),
@@ -263,22 +266,23 @@ def test_barostat_partial_group_idxs():
 
 
 @pytest.mark.parametrize(
-    "box_width, iterations",
+    "box_width, iterations, num_systems",
     [
-        pytest.param(3.0, 30, marks=pytest.mark.memcheck),
+        pytest.param(3.0, 30, 1, marks=pytest.mark.memcheck),
+        pytest.param(3.0, 30, 2, marks=pytest.mark.memcheck),
         # fyork: This test only fails 50-50 times. It tests a race condition in which the coordinates could be corrupted.
         # Needs to be a large system to trigger the failure.
-        (10.0, 1000),
+        (10.0, 1000, 1),
     ],
 )
 @pytest.mark.parametrize("klass", [custom_ops.MonteCarloBarostat_f32, custom_ops.AnisotropicMonteCarloBarostat_f32])
-def test_barostat_is_deterministic(box_width, iterations, klass):
+def test_barostat_is_deterministic(box_width, iterations, num_systems, klass):
     """Verify that the barostat results in the same box size shift after a fixed number of steps
     This is important to debugging as well as providing the ability to replicate
     simulations
     """
     temperature = DEFAULT_TEMP
-    timestep = 1.5e-3
+    timestep = 2.5e-3
     barostat_interval = 3
     collision_rate = 1.0
     seed = 2021
@@ -293,36 +297,45 @@ def test_barostat_is_deterministic(box_width, iterations, klass):
         mol_a, ff, box_width=box_width, lamb=1.0, minimize_energy=False
     )
 
+    batch_coords = np.array([coords] * num_systems).astype(np.float32)
+    batch_boxes = np.array([box] * num_systems).astype(np.float32)
+
     # get list of molecules for barostat by looking at bond table
     harmonic_bond_potential = get_potential_by_type(unbound_potentials, HarmonicBond)
     bond_list = get_bond_list(harmonic_bond_potential)
+    masses = model_utils.apply_hmr(masses, bond_list)
     group_indices = get_group_indices(bond_list, len(masses))
 
     u_impls = []
     for params, unbound_pot in zip(sys_params, unbound_potentials):
         bp = unbound_pot.bind(params)
+        for _ in range(num_systems - 1):
+            bp = bp.combine(unbound_pot.bind(params))
         bp_impl = bp.to_gpu(precision=np.float32).bound_impl
         u_impls.append(bp_impl)
+        assert bp_impl.num_systems() == num_systems
 
     integrator = LangevinIntegrator(
         temperature,
         timestep,
         collision_rate,
-        masses,
+        [masses] * num_systems,
         seed,
     )
 
-    v_0 = sample_velocities(masses, temperature, seed)
+    v_0 = np.array([sample_velocities(masses, temperature, seed) for _ in range(num_systems)])
+
+    # print(v_0.shape, batc)
 
     baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
 
     ctxt = custom_ops.Context_f32(
-        coords.astype(np.float32),
-        v_0.astype(np.float32),
-        box.astype(np.float32),
+        batch_coords.squeeze(),
+        v_0.squeeze(),
+        batch_boxes.squeeze(),
         integrator.impl(),
         u_impls,
-        movers=[baro],
+        # movers=[baro],
     )
     ctxt.multiple_steps(iterations * barostat_interval)
     atm_box = ctxt.get_box()
@@ -331,9 +344,9 @@ def test_barostat_is_deterministic(box_width, iterations, klass):
 
     baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
     ctxt = custom_ops.Context_f32(
-        coords.astype(np.float32),
-        v_0.astype(np.float32),
-        box.astype(np.float32),
+        batch_coords.squeeze(),
+        v_0.squeeze(),
+        batch_boxes.squeeze(),
         integrator.impl(),
         u_impls,
         movers=[baro],
@@ -378,6 +391,7 @@ def test_barostat_varying_pressure():
     baro = custom_ops.MonteCarloBarostat_f32(
         host_config.conf.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
     )
+    assert baro.num_systems() == 1
 
     ctxt = custom_ops.Context_f32(
         host_config.conf.astype(np.float32),

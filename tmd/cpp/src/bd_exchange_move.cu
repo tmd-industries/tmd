@@ -50,7 +50,7 @@ BDExchangeMove<RealType>::BDExchangeMove(
     const RealType nb_beta, const RealType cutoff, const int seed,
     const int num_proposals_per_move, const int interval, const int batch_size,
     const int translation_buffer_size)
-    : Mover<RealType>(interval), N_(N), mol_size_(target_mols[0].size()),
+    : Mover<RealType>(1, interval), N_(N), mol_size_(target_mols[0].size()),
       num_proposals_per_move_(num_proposals_per_move),
       steps_per_move_(num_proposals_per_move_ / batch_size),
       num_target_mols_(target_mols.size()), nb_beta_(nb_beta),
