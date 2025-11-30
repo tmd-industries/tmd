@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -327,16 +328,32 @@ class Forcefield:
         return serialize_handlers(self.get_ordered_handles(), protein_ff=self.protein_ff, water_ff=self.water_ff)
 
 
-def sanitize_water_ff(water_ff: str) -> str:
+def get_water_ff_model(water_ff: str) -> str:
     """
-    Return the sanitized water name for the given water_ff.
+    Given an Openmm water forcefield, return the relevant water model to use when adding
+    solvent to a system.
+
+    This is important as not all water forcefields have radius defined for them and will thus
+    fail to solvate a system.
+    See: https://github.com/openmm/openmm/blob/a112fbfcc7daca8df725dffd08ea5152e7979c92/wrappers/python/openmm/app/modeller.py#L463-L472
+
 
     For example tip3pfb -> tip3p.
     """
     water_ff = water_ff.split("/")[-1]
+
+    lower_ff = water_ff.lower()
     # Use consistent model name for the various water flavors
-    if water_ff.lower() in ["tip3p", "tip3pfb"]:
+    if lower_ff.startswith("tip3p"):
         return "tip3p"
-    if water_ff.lower() in ["tip4p", "tip4pew", "tip4pfb"]:
+    elif lower_ff.startswith("tip4p"):
         return "tip4pew"
-    return water_ff
+    elif lower_ff.startswith("tip5p"):
+        return "tip5p"
+    elif lower_ff.startswith("spce"):
+        return "spce"
+    elif lower_ff.startswith("swm4"):
+        return "swm4ndp"
+    else:
+        warn(f"Unknown water model {lower_ff}, falling back to tip3p as the water model")
+    return "tip3p"

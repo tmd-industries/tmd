@@ -23,7 +23,7 @@ from rdkit import Chem
 
 from tmd.fe.system import HostSystem
 from tmd.fe.utils import get_romol_conf
-from tmd.ff import sanitize_water_ff
+from tmd.ff import get_water_ff_model
 from tmd.ff.handlers import openmm_deserializer
 from tmd.potentials.jax_utils import idxs_within_cutoff
 
@@ -162,7 +162,7 @@ def replace_clashy_waters(
         host_ff,
         numAdded=len(clashy_waters),
         neutralize=False,
-        model=sanitize_water_ff(water_ff),
+        model=get_water_ff_model(water_ff),
         residueTemplates=combined_templates,
     )
     clashy_waters = get_waters_to_delete()
@@ -243,12 +243,12 @@ def solvate_modeller(
             ff,
             boxSize=np.diag(box) * unit.nanometers,
             ionicStrength=ionic_concentration * unit.molar,
-            model=sanitize_water_ff(water_ff),
+            model=get_water_ff_model(water_ff),
             neutralize=neutralize,
             residueTemplates=combined_templates,
         )
     else:
-        assert sanitize_water_ff(water_ff) == "tip3p", "Only supports tip3p waters"
+        assert get_water_ff_model(water_ff) == "tip3p", "Only supports tip3p waters"
         modeller.addMembrane(
             ff,
             ionicStrength=ionic_concentration * unit.molar,
