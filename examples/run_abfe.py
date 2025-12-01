@@ -36,12 +36,11 @@ from typing import Any, Self
 
 import mdtraj
 from numpy.typing import NDArray
-from rbfe_common import compute_total_ns
+from rbfe_common import COMPLEX_LEG, SOLVENT_LEG, compute_total_ns
 
 from tmd import potentials
-from tmd.constants import BOLTZ, DEFAULT_FF
+from tmd.constants import BOLTZ, DEFAULT_FF, DEFAULT_PRESSURE, DEFAULT_TEMP
 from tmd.fe import model_utils
-from tmd.fe.absolute.hydration import setup_initial_states
 from tmd.fe.absolute.restraints import (
     select_ligand_atoms_baumann,
     select_receptor_atoms_baumann,
@@ -59,11 +58,7 @@ from tmd.fe.free_energy import (
     WaterSamplingParams,
     make_pair_bar_plots,
     run_sims_bisection,
-    run_sims_sequential,
     sample,
-)
-from tmd.fe.lambda_schedule import (
-    construct_pre_optimized_absolute_lambda_schedule_solvent,
 )
 from tmd.fe.plots import (
     plot_as_png_fxn,
@@ -77,7 +72,7 @@ from tmd.ff import Forcefield
 from tmd.lib import LangevinIntegrator, MonteCarloBarostat
 from tmd.md import minimizer
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
-from tmd.md.builders import build_protein_system
+from tmd.md.builders import build_protein_system, build_water_system
 from tmd.md.exchange.utils import get_radius_of_mol_pair
 from tmd.parallel.client import AbstractFileClient, CUDAMPSPoolClient, FileClient, iterate_completed_futures
 from tmd.parallel.utils import get_gpu_count
@@ -267,28 +262,6 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
         return ubps, params, masses
 
 
-def estimate_abfe_aqueous(
-    mol,
-    ff: Forcefield,
-    host_config: HostConfig,
-    prefix,
-    md_params: MDParams,
-    n_windows: int,
-    min_overlap: float,
-    _,
-):
-    bt = BaseTopology(mol, ff)
-    afe = AbsoluteFreeEnergy(mol, bt)
-
-    lambda_schedule = construct_pre_optimized_absolute_lambda_schedule_solvent(n_windows)[::-1]
-    temperature = 300
-    initial_states = setup_initial_states(afe, ff, host_config, temperature, lambda_schedule, md_params.seed)
-
-    result, stored_trajectories = run_sims_sequential(initial_states, md_params, temperature)
-    plots = make_pair_bar_plots(result, temperature, prefix)
-    return SimulationResult(result, plots, stored_trajectories, md_params, [])
-
-
 def get_initial_state(afe, ff, host_config, host_conf, temperature, seed, lamb):
     """Get initial state at a particular lambda.
 
@@ -306,7 +279,7 @@ def get_initial_state(afe, ff, host_config, host_conf, temperature, seed, lamb):
 
     hmr_masses = model_utils.apply_hmr(masses, bond_potential.idxs)
     group_idxs = get_group_indices(get_bond_list(bond_potential), len(masses))
-    baro = MonteCarloBarostat(len(hmr_masses), 1.0, temperature, group_idxs, 15, seed)
+    baro = MonteCarloBarostat(len(hmr_masses), DEFAULT_PRESSURE, temperature, group_idxs, 25, seed)
     box0 = host_config.box
 
     v0 = np.zeros_like(x0)  # tbd resample from Maxwell-boltzman?
@@ -321,9 +294,10 @@ def get_initial_state(afe, ff, host_config, host_conf, temperature, seed, lamb):
     return InitialState(bps, intg, baro, x0, v0, box0, lamb, ligand_idxs, np.array([], dtype=np.int32))
 
 
-def estimate_abfe_complex(
+def estimate_abfe_leg(
     mol,
     ff: Forcefield,
+    leg: str,
     host_config: HostConfig,
     prefix,
     md_params: MDParams,
@@ -337,20 +311,25 @@ def estimate_abfe_complex(
         ff,
     )
     bt = BaseTopology(mol, ff)
-    temperature = 300
+    temperature = DEFAULT_TEMP
 
-    # Run short equilibration to obtain trajectory used to pick restraint atoms
     afe = AbsoluteFreeEnergy(mol, bt)
-    initial_state = get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, 0.0)
-    sample_md_params = replace(md_params, n_eq_steps=200000)
-    trj = sample(initial_state, sample_md_params, 100)
+    if leg == COMPLEX_LEG:
+        # Run short equilibration to obtain trajectory used to pick restraint atoms
+        initial_state = get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, 0.0)
+        # TBD: How many frames do you want from here?
+        sample_md_params = replace(md_params, n_eq_steps=200000, n_frames=100)
+        trj = sample(initial_state, sample_md_params, 100)
 
-    afe = AbsoluteBindingFreeEnergy.create(bt, host_config, trj, rst_params)
+        afe = AbsoluteBindingFreeEnergy.create(bt, host_config, trj, rst_params)
 
-    # get equilibrated coordinates and box
-    host_conf = afe.cpx_coords[: len(host_conf)]
-    set_romol_conf(afe.mol, afe.cpx_coords[len(host_conf) :])
-    host_config = replace(host_config, box=afe.box)
+        # get equilibrated coordinates and box
+        host_conf = afe.cpx_coords[: len(host_conf)]
+        set_romol_conf(afe.mol, afe.cpx_coords[len(host_conf) :])
+        host_config = replace(host_config, box=afe.box)
+    else:
+        # Disable water sampling
+        md_params = replace(md_params, water_sampling_params=None)
 
     def create_abfe_initial_state(lamb):
         return get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, lamb)
@@ -383,9 +362,10 @@ def estimate_abfe_complex(
             combined_prefix=prefix,
             min_overlap=min_overlap,
         )
-    sim_result.correction = afe.get_restraint_correction(temperature)  # type: ignore
-    sim_result.rec_atoms = afe.rec_atoms  # type: ignore
-    sim_result.lig_atoms = afe.lig_atoms  # type: ignore
+    if leg == COMPLEX_LEG:
+        sim_result.correction = afe.get_restraint_correction(temperature)  # type: ignore
+        sim_result.rec_atoms = afe.rec_atoms  # type: ignore
+        sim_result.lig_atoms = afe.lig_atoms  # type: ignore
     return sim_result
 
 
@@ -393,6 +373,7 @@ def run_abfe(
     file_client: AbstractFileClient,
     mol_path: Path,
     mol: Chem.Mol,
+    leg: str,
     ff: Forcefield,
     pdb_path: str,
     md_params: MDParams,
@@ -426,6 +407,8 @@ def run_abfe(
         Path to write out molecule results to
     mol : Chem.Mol
         Molecule in the system.
+    leg: str
+        Either complex or solvent
     ff : Forcefield
         Forcefield
     pdb_path : str
@@ -446,11 +429,13 @@ def run_abfe(
     Summary data
         Data contained in the results.npz. Will include pred_dg
     """
+    assert leg in (COMPLEX_LEG, SOLVENT_LEG)
     # Ensure the output directories exists
-    Path(file_client.full_path(mol_path)).mkdir(parents=True, exist_ok=True)
-    results_path = Path(file_client.full_path(mol_path / "results.npz"))
+    leg_path = mol_path / leg
+    Path(file_client.full_path(leg_path)).mkdir(parents=True, exist_ok=True)
+    results_path = Path(file_client.full_path(leg_path / "results.npz"))
     if not force_overwrite and results_path.is_file():
-        print(f"Skipping abfe calculation: {get_mol_name(mol)}")
+        print(f"Skipping abfe {leg} calculation: {get_mol_name(mol)}")
         return dict(np.load(results_path))
 
     with open(file_client.full_path(mol_path / "md_params.pkl"), "wb") as ofs:
@@ -460,15 +445,23 @@ def run_abfe(
 
     np.random.seed(md_params.seed)
     start = time.perf_counter()
-    host_config = build_protein_system(pdb_path, ff.protein_ff, ff.water_ff, mols=[mol], box_margin=0.1)
+    if leg == COMPLEX_LEG:
+        host_config = build_protein_system(pdb_path, ff.protein_ff, ff.water_ff, mols=[mol], box_margin=0.1)
+    else:
+        host_config = build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
     # TBD: Expose restraint params?
-    res = estimate_abfe_complex(mol, ff, host_config, "abfe", md_params, n_windows, min_overlap, RestraintParams())
+    res = estimate_abfe_leg(
+        mol, ff, leg, host_config, f"abfe_{leg}", md_params, n_windows, min_overlap, RestraintParams()
+    )
     took = time.perf_counter() - start
 
     pred_dg = float(np.sum(res.final_result.dGs))
     pred_dg_err = float(np.linalg.norm(res.final_result.dG_errs))
+
+    correction = 0.0 if leg == SOLVENT_LEG else res.correction
+
     print(
-        f"{get_mol_name(mol)} (kJ/mol) {pred_dg:.2f} +- {pred_dg_err:.2f}, Correction {res.correction}, {took:.0f} Seconds"
+        f"{get_mol_name(mol)} {leg} (kJ/mol) {pred_dg:.2f} +- {pred_dg_err:.2f}, Correction {correction:.2f}, {took:.0f} Seconds"
     )
 
     summary_data = {
@@ -476,56 +469,57 @@ def run_abfe(
         "total_ns": compute_total_ns(res, md_params),
         "pred_dg": pred_dg,
         "pred_dg_err": pred_dg_err,
-        "correction": res.correction,
-        "receptor_restraint_atoms": res.rec_atoms,
-        "ligand_restraint_atoms": res.lig_atoms,
-        "overlaps": res.final_result.overlaps,
         "n_windows": len(res.final_result.initial_states),
+        "overlaps": res.final_result.overlaps,
     }
     if isinstance(res, HREXSimulationResult):
         summary_data["bisected_windows"] = len(res.intermediate_results[-1].initial_states)
         summary_data["normalized_kl_divergence"] = res.hrex_diagnostics.normalized_kl_divergence
+    if leg == COMPLEX_LEG:
+        summary_data["correction"] = res.correction
+        summary_data["receptor_restraint_atoms"] = res.rec_atoms
+        summary_data["ligand_restraint_atoms"] = res.lig_atoms
 
     np.savez_compressed(results_path, **summary_data)
 
     if write_trajectories:
         np.savez_compressed(
-            file_client.full_path(mol_path / "lambda0_traj.npz"),
+            file_client.full_path(leg_path / "lambda0_traj.npz"),
             coords=np.array(res.trajectories[0].frames),
             boxes=np.asarray(res.trajectories[0].boxes),
         )
         np.savez_compressed(
-            file_client.full_path(mol_path / "lambda1_traj.npz"),
+            file_client.full_path(leg_path / "lambda1_traj.npz"),
             coords=np.array(res.trajectories[-1].frames),
             boxes=np.asarray(res.trajectories[-1].boxes),
         )
     if host_config is not None:
-        file_client.store(mol_path / "host_config.pkl", pickle.dumps(host_config))
+        file_client.store(leg_path / "host_config.pkl", pickle.dumps(host_config))
 
     if isinstance(res, HREXSimulationResult):
-        file_client.store(mol_path / "hrex_transition_matrix.png", res.hrex_plots.transition_matrix_png)
+        file_client.store(leg_path / "hrex_transition_matrix.png", res.hrex_plots.transition_matrix_png)
         file_client.store(
-            mol_path / "hrex_replica_state_distribution_heatmap.png",
+            leg_path / "hrex_replica_state_distribution_heatmap.png",
             res.hrex_plots.replica_state_distribution_heatmap_png,
         )
         if res.water_sampling_diagnostics is not None:
             file_client.store(
-                mol_path / "water_sampling_acceptances.png",
+                leg_path / "water_sampling_acceptances.png",
                 plot_as_png_fxn(
                     plot_water_proposals_by_state,
                     [state.lamb for state in res.final_result.initial_states],
                     res.water_sampling_diagnostics.cumulative_proposals_by_state,
                 ),
             )
-    file_client.store(mol_path / "dg_errors.png", res.plots.dG_errs_png)
-    file_client.store(mol_path / "overlap_summary.png", res.plots.overlap_summary_png)
+    file_client.store(leg_path / "dg_errors.png", res.plots.dG_errs_png)
+    file_client.store(leg_path / "overlap_summary.png", res.plots.overlap_summary_png)
     u_kln_by_lambda = res.final_result.u_kln_by_component_by_lambda.sum(1)
     file_client.store(
-        mol_path / "forward_and_reverse_dg.png",
+        leg_path / "forward_and_reverse_dg.png",
         plot_forward_and_reverse_dg(u_kln_by_lambda, frames_per_step=min(100, u_kln_by_lambda.shape[-1])),
     )
     # Contains initial states and the complete u_kln
-    file_client.store(mol_path / "final_pairbar_result.pkl", pickle.dumps(res.final_result))
+    file_client.store(leg_path / "final_pairbar_result.pkl", pickle.dumps(res.final_result))
     return summary_data
 
 
@@ -652,21 +646,22 @@ def main():
             else None,
             water_sampling_params=WaterSamplingParams(radius=mol_radius + args.water_sampling_padding),
         )
-
-        fut = pool.submit(
-            run_abfe,
-            file_client,
-            Path(name),
-            mol,
-            ff,
-            args.pdb_path,
-            md_params,
-            args.n_windows,
-            args.min_overlap,
-            args.store_trajectories,
-            args.force_overwrite,
-        )
-        futures.append(fut)
+        for leg in (COMPLEX_LEG, SOLVENT_LEG):
+            fut = pool.submit(
+                run_abfe,
+                file_client,
+                Path(name),
+                mol,
+                leg,
+                ff,
+                args.pdb_path,
+                md_params,
+                args.n_windows,
+                args.min_overlap,
+                args.store_trajectories,
+                args.force_overwrite,
+            )
+            futures.append(fut)
     for fut in iterate_completed_futures(futures):
         fut.result()
 

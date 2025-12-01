@@ -232,7 +232,7 @@ def test_run_rbfe_graph_local(
 
 @pytest.mark.parametrize(
     "n_steps, n_windows, n_frames, n_eq_steps, mps_workers",
-    [(100, 4, 50, 0, 4)],
+    [(100, 4, 50, 0, 2)],
 )
 @pytest.mark.parametrize("seed", [2025])
 def test_run_abfe(
@@ -243,11 +243,18 @@ def test_run_abfe(
     mps_workers,
     seed,
 ):
-    results_hashes = (
-        "fa3fafbda47b2e21ba3d80d07d2aff41d59ade3a3b30cbaa153364777185283b",
-        "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
-        "7f84f079fd7829941989dfe757df77bc28bb0f634147879720dc556881dd4195",
-    )
+    leg_results_hashes = {
+        "solvent": (
+            "009ca0fb958b522cc2c944d2a39cf77973a4bfa8bcfa9358b9d4d1c8bee02806",
+            "a839526092dce8883e246ba43bde84d644d12c04dddbde935e90c3c6cd906563",
+            "e0ed87de3b6f4040999bbe2a19313b35e0afffc4a1addfba72ab61bdce80546c",
+        ),
+        "complex": (
+            "5ad91b50eca1048fdaac537bae4576564106c1b2e5d7a6d37727677a1fcfda39",
+            "b6634c8f3bb6f6b07bc8b3b69f7862138979619e340b2d2903298e230643081a",
+            "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
+        ),
+    }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
         mols = read_sdf(hif2a_dir / "ligands.sdf")
 
@@ -287,46 +294,51 @@ def test_run_abfe(
         for mol in mols_to_run:
             mol_dir = output_dir / get_mol_name(mol)
             mols_by_name = read_sdf_mols_by_name(mol_dir / "mol.sdf")
-
             assert len(mols_by_name) == 1
             assert (mol_dir / "md_params.pkl").is_file()
+            for leg in ("solvent", "complex"):
+                leg_dir = mol_dir / leg
 
-            assert (mol_dir / "results.npz").is_file()
-            if "force_overwrite" in config:
-                assert (mol_dir / "lambda0_traj.npz").is_file()
-                assert (mol_dir / "lambda1_traj.npz").is_file()
-            else:
-                assert not (mol_dir / "lambda0_traj.npz").is_file()
-                assert not (mol_dir / "lambda1_traj.npz").is_file()
+                assert (leg_dir / "results.npz").is_file()
+                if "force_overwrite" in config:
+                    assert (leg_dir / "lambda0_traj.npz").is_file()
+                    assert (leg_dir / "lambda1_traj.npz").is_file()
+                else:
+                    assert not (leg_dir / "lambda0_traj.npz").is_file()
+                    assert not (leg_dir / "lambda1_traj.npz").is_file()
 
-            assert (mol_dir / "final_pairbar_result.pkl").is_file()
-            assert (mol_dir / "host_config.pkl").is_file()
-            assert (mol_dir / "hrex_transition_matrix.png").is_file()
-            assert (mol_dir / "hrex_replica_state_distribution_heatmap.png").is_file()
-            assert (mol_dir / "dg_errors.png").is_file()
-            assert (mol_dir / "overlap_summary.png").is_file()
-            assert (mol_dir / "forward_and_reverse_dg.png").is_file()
-            assert (mol_dir / "water_sampling_acceptances.png").is_file()
+                assert (leg_dir / "final_pairbar_result.pkl").is_file()
+                assert (leg_dir / "host_config.pkl").is_file()
+                assert (leg_dir / "hrex_transition_matrix.png").is_file()
+                assert (leg_dir / "hrex_replica_state_distribution_heatmap.png").is_file()
+                assert (leg_dir / "dg_errors.png").is_file()
+                assert (leg_dir / "overlap_summary.png").is_file()
+                assert (leg_dir / "forward_and_reverse_dg.png").is_file()
+                if leg == "complex":
+                    assert (leg_dir / "water_sampling_acceptances.png").is_file()
 
-            results = np.load(str(mol_dir / "results.npz"))
-            assert results["pred_dg"].size == 1
-            assert results["pred_dg"].dtype == np.float64
-            assert results["pred_dg"] != 0.0
+                results = np.load(str(leg_dir / "results.npz"))
+                assert results["pred_dg"].size == 1
+                assert results["pred_dg"].dtype == np.float64
+                assert results["pred_dg"] != 0.0
 
-            assert results["pred_dg_err"].size == 1
-            assert results["pred_dg_err"].dtype == np.float64
-            assert results["pred_dg_err"] != 0.0
+                assert results["pred_dg_err"].size == 1
+                assert results["pred_dg_err"].dtype == np.float64
+                assert results["pred_dg_err"] != 0.0
 
-            assert results["correction"].size == 1
-            assert results["correction"].dtype == np.float64
-            assert results["correction"] != 0.0
+                if leg == "complex":
+                    assert results["correction"].size == 1
+                    assert results["correction"].dtype == np.float64
+                    assert results["correction"] != 0.0
+                else:
+                    assert "correction" not in results
 
-            assert results["n_windows"].size == 1
-            assert results["n_windows"].dtype == np.intp
-            assert 2 <= results["n_windows"] <= config["n_windows"]
-            assert isinstance(results["overlaps"], np.ndarray)
-            assert all(isinstance(overlap, float) for overlap in results["overlaps"])
-            verify_leg_results_hashes(mol_dir, results_hashes)
+                assert results["n_windows"].size == 1
+                assert results["n_windows"].dtype == np.intp
+                assert 2 <= results["n_windows"] <= config["n_windows"]
+                assert isinstance(results["overlaps"], np.ndarray)
+                assert all(isinstance(overlap, float) for overlap in results["overlaps"])
+                verify_leg_results_hashes(leg_dir, leg_results_hashes[leg])
 
 
 @pytest.mark.nocuda
