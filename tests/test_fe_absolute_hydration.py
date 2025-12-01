@@ -15,7 +15,7 @@
 import numpy as np
 
 from tmd import testsystems
-from tmd.fe import absolute_hydration
+from tmd.fe.absolute import hydration as absolute_hydration
 from tmd.fe.free_energy import MDParams
 from tmd.ff import Forcefield
 
