@@ -32,7 +32,7 @@ from rdkit import Chem
 
 from tmd.constants import DEFAULT_FF
 from tmd.fe.free_energy import assert_deep_eq
-from tmd.fe.utils import read_sdf, read_sdf_mols_by_name
+from tmd.fe.utils import get_mol_name, read_sdf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
@@ -228,6 +228,105 @@ def test_run_rbfe_graph_local(
             proc = run_example("run_rbfe_graph.py", get_cli_args(config))
             assert proc.returncode == 0
             verify_run(edges, Path(config["output_dir"]))
+
+
+@pytest.mark.parametrize(
+    "n_steps, n_windows, n_frames, n_eq_steps, mps_workers",
+    [(100, 4, 50, 0, 4)],
+)
+@pytest.mark.parametrize("seed", [2025])
+def test_run_abfe(
+    n_steps,
+    n_windows,
+    n_frames,
+    n_eq_steps,
+    mps_workers,
+    seed,
+):
+    results_hashes = (
+        "fa3fafbda47b2e21ba3d80d07d2aff41d59ade3a3b30cbaa153364777185283b",
+        "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
+        "7f84f079fd7829941989dfe757df77bc28bb0f634147879720dc556881dd4195",
+    )
+    with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
+        mols = read_sdf(hif2a_dir / "ligands.sdf")
+
+        config = dict(
+            pdb_path=hif2a_dir / "5tbm_prepared.pdb",
+            seed=seed,
+            n_eq_steps=n_eq_steps,
+            n_frames=n_frames,
+            n_windows=n_windows,
+            steps_per_frame=n_steps,
+            local_md_steps=n_steps,
+            forcefield=DEFAULT_FF,
+            mps_workers=mps_workers,
+            output_dir=f"{ARTIFACT_DIR_NAME}/abfe_graph_local_{seed}",
+            experimental_field="IC50[uM](SPA)",
+            experimental_units="uM",
+            force_overwrite=None,
+            store_trajectories=None,
+            target_overlap=0.1,
+        )
+
+        rng = np.random.default_rng(seed)
+        mols_to_run = rng.choice(mols, replace=False, size=1)
+        with NamedTemporaryFile(suffix=".sdf") as temp_mols:
+            with Chem.SDWriter(temp_mols.name) as writer:
+                for mol in mols_to_run:
+                    writer.write(mol)
+
+            config["sdf_path"] = temp_mols.name
+            proc = run_example("run_abfe.py", get_cli_args(config))
+            assert proc.returncode == 0
+
+        output_dir = Path(config["output_dir"])
+        assert Forcefield.load_from_file(output_dir / "ff.py") is not None
+        assert output_dir.is_dir()
+        assert len(mols_to_run) == 1
+        for mol in mols_to_run:
+            mol_dir = output_dir / get_mol_name(mol)
+            mols_by_name = read_sdf_mols_by_name(mol_dir / "mol.sdf")
+
+            assert len(mols_by_name) == 1
+            assert (mol_dir / "md_params.pkl").is_file()
+
+            assert (mol_dir / "results.npz").is_file()
+            if "force_overwrite" in config:
+                assert (mol_dir / "lambda0_traj.npz").is_file()
+                assert (mol_dir / "lambda1_traj.npz").is_file()
+            else:
+                assert not (mol_dir / "lambda0_traj.npz").is_file()
+                assert not (mol_dir / "lambda1_traj.npz").is_file()
+
+            assert (mol_dir / "final_pairbar_result.pkl").is_file()
+            assert (mol_dir / "host_config.pkl").is_file()
+            assert (mol_dir / "hrex_transition_matrix.png").is_file()
+            assert (mol_dir / "hrex_replica_state_distribution_heatmap.png").is_file()
+            assert (mol_dir / "dg_errors.png").is_file()
+            assert (mol_dir / "overlap_summary.png").is_file()
+            assert (mol_dir / "forward_and_reverse_dg.png").is_file()
+            assert (mol_dir / "water_sampling_acceptances.png").is_file()
+
+            results = np.load(str(mol_dir / "results.npz"))
+            assert results["pred_dg"].size == 1
+            assert results["pred_dg"].dtype == np.float64
+            assert results["pred_dg"] != 0.0
+
+            assert results["pred_dg_err"].size == 1
+            assert results["pred_dg_err"].dtype == np.float64
+            assert results["pred_dg_err"] != 0.0
+
+            assert results["correction"].size == 1
+            assert results["correction"].dtype == np.float64
+            assert results["correction"] != 0.0
+
+            assert results["n_windows"].size == 1
+            assert results["n_windows"].dtype == np.intp
+            assert 2 <= results["n_windows"] <= config["n_windows"]
+            assert isinstance(results["overlaps"], np.ndarray)
+            assert all(isinstance(overlap, float) for overlap in results["overlaps"])
+            verify_leg_results_hashes(mol_dir, results_hashes)
 
 
 @pytest.mark.nocuda
