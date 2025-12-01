@@ -598,37 +598,40 @@ def get_context(initial_state: InitialState, md_params: Optional[MDParams] = Non
     movers = []
     if initial_state.barostat:
         movers.append(initial_state.barostat.impl(bound_impls))
+
     if md_params is not None and md_params.water_sampling_params is not None:
-        # Setup the water indices
-        hb_potential = get_bound_potential_by_type(initial_state.potentials, HarmonicBond).potential
-        group_indices = get_group_indices(get_bond_list(hb_potential), len(initial_state.integrator.masses))
+        try:
+            # Select a Nonbonded Potential to get the the cutoff/beta, assumes all have same cutoff/beta.
+            nb = get_bound_potential_by_type(initial_state.potentials, Nonbonded).potential
+            # Setup the water indices
+            hb_potential = get_bound_potential_by_type(initial_state.potentials, HarmonicBond).potential
+            group_indices = get_group_indices(get_bond_list(hb_potential), len(initial_state.integrator.masses))
 
-        water_idxs = get_water_idxs(group_indices, ligand_idxs=initial_state.ligand_idxs)
+            water_idxs = get_water_idxs(group_indices, ligand_idxs=initial_state.ligand_idxs)
 
-        # Select a Nonbonded Potential to get the the cutoff/beta, assumes all have same cutoff/beta.
-        nb = get_bound_potential_by_type(initial_state.potentials, Nonbonded).potential
+            water_params = get_water_sampler_params(initial_state)
 
-        water_params = get_water_sampler_params(initial_state)
+            # Generate a new random seed based on the integrator seed, MDParams seed is constant across states
+            rng = np.random.default_rng(initial_state.integrator.seed)
+            water_sampler_seed = rng.integers(np.iinfo(np.int32).max)
 
-        # Generate a new random seed based on the integrator seed, MDParams seed is constant across states
-        rng = np.random.default_rng(initial_state.integrator.seed)
-        water_sampler_seed = rng.integers(np.iinfo(np.int32).max)
-
-        water_sampler = custom_ops.TIBDExchangeMove_f32(
-            initial_state.x0.shape[0],
-            initial_state.ligand_idxs.tolist(),  # type: ignore
-            water_idxs,
-            water_params,
-            initial_state.integrator.temperature,
-            nb.beta,
-            nb.cutoff,
-            md_params.water_sampling_params.radius,
-            water_sampler_seed,
-            md_params.water_sampling_params.n_proposals,
-            md_params.water_sampling_params.interval,
-            batch_size=md_params.water_sampling_params.batch_size,
-        )
-        movers.append(water_sampler)
+            water_sampler = custom_ops.TIBDExchangeMove_f32(
+                initial_state.x0.shape[0],
+                initial_state.ligand_idxs.tolist(),  # type: ignore
+                water_idxs,
+                water_params,
+                initial_state.integrator.temperature,
+                nb.beta,
+                nb.cutoff,
+                md_params.water_sampling_params.radius,
+                water_sampler_seed,
+                md_params.water_sampling_params.n_proposals,
+                md_params.water_sampling_params.interval,
+                batch_size=md_params.water_sampling_params.batch_size,
+            )
+            movers.append(water_sampler)
+        except ValueError:
+            warn("System has no Nonbonded potential, disabling water sampling")
 
     return Context_f32(initial_state.x0, initial_state.v0, initial_state.box0, intg_impl, bound_impls, movers=movers)
 
@@ -672,7 +675,15 @@ def sample_with_context_iter(
     rng = np.random.default_rng(md_params.seed)
 
     if md_params.local_md_params is not None:
-        ctxt.setup_local_md(temperature, md_params.local_md_params.freeze_reference)
+        try:
+            ctxt.setup_local_md(temperature, md_params.local_md_params.freeze_reference)
+        except RuntimeError as e:
+            # Expect a specific type of exception, else raise the exception
+            if str(e) == "must have exactly one NonbondedInteractionGroup potential":
+                warn("System has no Nonbonded potential, disabling local md")
+                md_params = replace(md_params, local_md_params=None)
+            else:
+                raise
 
     def run_global_steps(n_steps: int, store_frames: bool) -> tuple[NDArray, NDArray, NDArray]:
         coords, boxes = ctxt.multiple_steps(
