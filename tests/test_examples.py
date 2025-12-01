@@ -230,6 +230,7 @@ def test_run_rbfe_graph_local(
             verify_run(edges, Path(config["output_dir"]))
 
 
+@pytest.mark.fixed_output
 @pytest.mark.parametrize(
     "n_steps, n_windows, n_frames, n_eq_steps, mps_workers",
     [(100, 4, 50, 0, 2)],
