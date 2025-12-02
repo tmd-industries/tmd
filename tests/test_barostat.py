@@ -699,7 +699,7 @@ def test_barostat_scaling_behavior(klass):
 
     baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
     # Initial volume scaling is 0
-    assert baro.get_volume_scale_factor() == 0.0
+    assert np.all(np.array(baro.get_volume_scale_factor()) == 0.0)
     assert baro.get_adaptive_scaling()
 
     ctxt = custom_ops.Context_f32(
@@ -714,32 +714,32 @@ def test_barostat_scaling_behavior(klass):
 
     # Verify that the volume scaling is non-zero
     scaling = baro.get_volume_scale_factor()
-    assert scaling > 0
+    assert np.all(np.array(scaling) > 0)
 
     # Set to an intentionally bad factor to ensure it adapts
     bad_scaling_factor = 0.5 * compute_box_volume(box)
     baro.set_volume_scale_factor(bad_scaling_factor)
-    assert baro.get_volume_scale_factor() == bad_scaling_factor
+    assert np.all(np.array(baro.get_volume_scale_factor()) == bad_scaling_factor)
     ctxt.multiple_steps(100)
     # The scaling should adapt between moves
     assert bad_scaling_factor > baro.get_volume_scale_factor()
 
     # Reset the scaling to the previous value
-    baro.set_volume_scale_factor(scaling)
-    assert scaling == baro.get_volume_scale_factor()
+    baro.set_volume_scale_factor(scaling[0])
+    assert np.all(np.array(baro.get_volume_scale_factor()) == scaling)
 
     # Set back to the initial volume scaling, effectively disabling the barostat
     baro.set_volume_scale_factor(0.0)
     baro.set_adaptive_scaling(False)
     assert not baro.get_adaptive_scaling()
     ctxt.multiple_steps(100)
-    assert baro.get_volume_scale_factor() == 0.0
+    assert np.all(np.array(baro.get_volume_scale_factor()) == 0.0)
 
     # Turning adaptive scaling back on should change the scaling after some MD
     baro.set_adaptive_scaling(True)
     assert baro.get_adaptive_scaling()
     ctxt.multiple_steps(100)
-    assert baro.get_volume_scale_factor() != 0.0
+    assert np.all(np.array(baro.get_volume_scale_factor()) != 0.0)
 
     # Check that the adaptive_scaling_enabled, initial_volume_scale_factor constructor arguments works as expected
     baro = klass(
@@ -754,7 +754,7 @@ def test_barostat_scaling_behavior(klass):
         initial_volume_scale_factor=1.23,
     )
     assert not baro.get_adaptive_scaling()
-    assert baro.get_volume_scale_factor() == np.float32(1.23)
+    assert np.all(np.array(baro.get_volume_scale_factor()) == np.float32(1.23))
 
 
 @pytest.mark.parametrize("scale_x, scale_y, scale_z", itertools.product([False, True], repeat=3))
@@ -788,16 +788,6 @@ def test_anisotropic_barostat(scale_x, scale_y, scale_z):
         bp_impl = bp.to_gpu(precision=np.float32).bound_impl
         u_impls.append(bp_impl)
 
-    integrator = LangevinIntegrator(
-        temperature,
-        timestep,
-        collision_rate,
-        masses,
-        seed,
-    )
-
-    v_0 = sample_velocities(masses, temperature, seed)
-
     if not (scale_x or scale_y or scale_z):
         with pytest.raises(RuntimeError, match="must scale at least one dimension"):
             custom_ops.AnisotropicMonteCarloBarostat_f32(
@@ -815,6 +805,16 @@ def test_anisotropic_barostat(scale_x, scale_y, scale_z):
                 scale_z,
             )
         return
+
+    integrator = LangevinIntegrator(
+        temperature,
+        timestep,
+        collision_rate,
+        masses,
+        seed,
+    )
+
+    v_0 = sample_velocities(masses, temperature, seed)
 
     # Reduce the default scaling factor
     baro = custom_ops.AnisotropicMonteCarloBarostat_f32(
@@ -851,4 +851,4 @@ def test_anisotropic_barostat(scale_x, scale_y, scale_z):
     assert np.all(np.diag(box)[adjusted_dims] != np.diag(boxes[-1])[adjusted_dims])
     # Verify that the volume scaling is non-zero
     scaling = baro.get_volume_scale_factor()
-    assert scaling > 0
+    assert np.all(np.array(scaling) > 0)

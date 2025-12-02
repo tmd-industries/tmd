@@ -758,7 +758,9 @@ def sample_with_context(
 
     assert np.all(np.isfinite(all_coords[-1])), "Production resulted in a nan"
 
-    final_barostat_volume_scale_factor = ctxt.get_barostat().get_volume_scale_factor() if ctxt.get_barostat() else None
+    final_barostat_volume_scale_factor = (
+        float(np.mean(ctxt.get_barostat().get_volume_scale_factor())) if ctxt.get_barostat() else None
+    )
 
     return Trajectory(all_coords, all_boxes, final_velocities, final_barostat_volume_scale_factor)
 
@@ -1578,7 +1580,9 @@ def run_sims_hrex(
                     final_water_proposals,
                 )
 
-            final_barostat_volume_scale_factor = barostat.get_volume_scale_factor() if barostat is not None else None
+            final_barostat_volume_scale_factor = (
+                float(np.mean(barostat.get_volume_scale_factor())) if barostat is not None else None
+            )
 
             return frame[-1], box[-1], final_velos, final_barostat_volume_scale_factor
 

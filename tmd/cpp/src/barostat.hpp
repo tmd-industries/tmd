@@ -44,7 +44,7 @@ public:
   virtual void move(const int num_systems, const int N, RealType *d_x,
                     RealType *d_box, cudaStream_t stream) override;
 
-  RealType get_volume_scale_factor();
+  std::vector<RealType> get_volume_scale_factor() const;
 
   void set_volume_scale_factor(const RealType volume_scale_factor);
 
