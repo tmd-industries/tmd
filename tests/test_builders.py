@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,10 +24,11 @@ from rdkit import Chem
 from tmd.constants import DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, ONE_4PI_EPS0, NBParamIdx
 from tmd.fe.free_energy import HostConfig
 from tmd.fe.utils import get_romol_conf, read_sdf, read_sdf_mols_by_name, set_romol_conf
-from tmd.ff import sanitize_water_ff
+from tmd.ff import get_water_ff_model
 from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
 from tmd.md.builders import (
     WATER_RESIDUE_NAME,
+    build_membrane_system,
     build_protein_system,
     build_water_system,
     get_box_from_coords,
@@ -80,7 +82,15 @@ def test_build_water_system():
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/tip4pfb", "amber14/spce"])
+@pytest.mark.parametrize("water_ff", ["amber14/tip4pfb", "tip5p", "swm4ndp"])
+def test_build_water_system_raises_on_water_ff_with_virtual_sites(water_ff):
+    mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
+    with pytest.raises(ValueError, match="TMD does not support water models that use virtual sites"):
+        build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
+
+
+@pytest.mark.nocuda
+@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/spce", "amber14/opc3"])
 def test_build_water_system_different_water_ffs(water_ff):
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
     host_config = build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
@@ -110,6 +120,16 @@ def test_build_protein_system_returns_correct_water_count():
             if last_num_waters is not None:
                 assert last_num_waters == host_config.num_water_atoms
             last_num_waters = host_config.num_water_atoms
+
+
+@pytest.mark.nocuda
+def test_build_protein_system_with_membrane():
+    with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "ligands.sdf") as sdf_path:
+        mols = read_sdf(sdf_path)
+    # Add all the mols in a single pass, as this runs OpenMM CPU MD which is slow
+    with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "a2a_hip278.pdb") as pdb_path:
+        host_config = build_membrane_system(str(pdb_path), "amber14/protein.ff14SB", "amber14/tip3p", mols=mols)
+    assert host_config.num_membrane_atoms == 30016
 
 
 def validate_host_config_ions_and_charge(
@@ -196,6 +216,31 @@ def test_water_system_ion_concentration_and_neutralization(ionic_concentration, 
             # Since the ligand isn't in the system, should be missing the charge of the ligand
             expected_charge = -Chem.GetFormalCharge(mol)
         validate_host_config_ions_and_charge(host_config, mol, ionic_concentration, expected_charge, neutralize)
+
+
+@pytest.mark.nocuda
+def test_build_systems_large_batch_of_ligands():
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
+        host_pdbfile = str(pdb_path)
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as sdf_path:
+        mols = read_sdf(sdf_path)
+    batched_mols = mols * 25
+    assert len(batched_mols) > 1000
+    host_config = build_protein_system(
+        host_pdbfile, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, box_margin=0.1, mols=batched_mols
+    )
+
+    def verify_no_nearby_waters(host_config: HostConfig, mols: list[Chem.Mol]):
+        water_coords = host_config.conf[-host_config.num_water_atoms :]
+        box = host_config.box
+        for i, mol in enumerate(mols):
+            clashy_idxs = idxs_within_cutoff(water_coords, get_romol_conf(mol), box, cutoff=0.2)
+            assert len(clashy_idxs) == 0, f"Mol {i} has water within 2 angstroms"
+
+    verify_no_nearby_waters(host_config, batched_mols)
+
+    host_config = build_water_system(4.0, DEFAULT_WATER_FF, box_margin=0.1, mols=batched_mols)
+    verify_no_nearby_waters(host_config, batched_mols)
 
 
 @pytest.mark.nocuda
@@ -323,7 +368,7 @@ def test_build_protein_system_waters_before_protein():
     top = app.Topology()
     pos = unit.Quantity((), unit.angstroms)
     modeller = app.Modeller(top, pos)
-    modeller.addSolvent(host_ff, numAdded=num_waters, neutralize=False, model=sanitize_water_ff(DEFAULT_WATER_FF))
+    modeller.addSolvent(host_ff, numAdded=num_waters, neutralize=False, model=get_water_ff_model(DEFAULT_WATER_FF))
     assert modeller.getTopology().getNumAtoms() == num_waters * 3
 
     modeller.add(host_pdbfile.topology, host_pdbfile.positions)

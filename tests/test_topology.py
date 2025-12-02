@@ -300,5 +300,5 @@ def test_exclude_all_ligand_ligand_ixns():
     num_guest_atoms = 0
     num_terms = num_guest_atoms * (num_guest_atoms - 1) // 2
     guest_exclusions, guest_scale_factors = topology.exclude_all_ligand_ligand_ixns(num_host_atoms, num_guest_atoms)
-    assert guest_exclusions.shape == (0,)
-    assert guest_scale_factors.shape == (0,)
+    assert guest_exclusions.shape == (0, 2)
+    assert guest_scale_factors.shape == (0, 2)

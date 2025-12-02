@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,7 +26,8 @@ import pytest
 from psutil import Process
 from scipy import stats
 
-from tmd.constants import DEFAULT_TEMP
+from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_TEMP
+from tmd.fe.atom_mapping import get_cores
 from tmd.fe.free_energy import (
     HostConfig,
     HREXParams,
@@ -43,7 +45,8 @@ from tmd.fe.plots import (
     plot_hrex_swap_acceptance_rates_convergence,
     plot_hrex_transition_matrix,
 )
-from tmd.fe.rbfe import estimate_relative_free_energy_bisection_hrex
+from tmd.fe.rbfe import estimate_relative_free_energy_bisection_hrex, setup_optimized_host
+from tmd.fe.utils import read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.md import builders
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
@@ -300,6 +303,50 @@ def test_hrex_rbfe_hif2a(
         np.testing.assert_array_equal(ref_res.overlap, comp_res.overlap)
         np.testing.assert_array_equal(ref_res.dG_err_by_component, comp_res.dG_err_by_component)
         np.testing.assert_array_equal(ref_res.overlap_by_component, comp_res.overlap_by_component)
+
+
+@pytest.mark.parametrize("seed", [2024])
+def test_hrex_rbfe_gpcr(seed):
+    ff = Forcefield.load_from_file("smirnoff_2_2_1_amber_am1bcc.py")
+    # Use the Amber 14 protein FF since it is assumed to use with the membrane ff
+    ff = replace(ff, protein_ff="amber14/protein.ff14SB")
+    with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "ligands.sdf") as sdf_path:
+        mols_by_name = read_sdf_mols_by_name(sdf_path)
+    mol_a = mols_by_name["4g"]
+    mol_b = mols_by_name["4h"]
+    core = get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+
+    with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "a2a_hip278.pdb") as pdb_path:
+        host_config = builders.build_membrane_system(str(pdb_path), ff.protein_ff, ff.water_ff, mols=[mol_a, mol_b])
+
+    min_overlap = 0.05
+    min_cutoff = 0.7
+    n_windows = 4
+
+    md_params = MDParams(
+        n_frames=10,
+        n_eq_steps=10,
+        steps_per_frame=300,
+        seed=seed,
+        local_md_params=LocalMDParams(local_steps=200),
+        hrex_params=HREXParams(n_frames_bisection=1),
+    )
+
+    host_config = setup_optimized_host(host_config, [mol_a, mol_b], ff, seed=md_params.seed)
+    complex_res = estimate_relative_free_energy_bisection_hrex(
+        mol_a,
+        mol_b,
+        core,
+        ff,
+        host_config,
+        prefix="complex",
+        md_params=md_params,
+        n_windows=n_windows,
+        min_overlap=min_overlap,
+        min_cutoff=min_cutoff,
+    )
+    assert np.isfinite(np.sum(complex_res.final_result.dGs))
+    assert np.isfinite(np.linalg.norm(complex_res.final_result.dG_errs))
 
 
 def plot_hrex_rbfe_hif2a(result: HREXSimulationResult):

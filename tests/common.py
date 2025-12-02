@@ -314,13 +314,11 @@ class GradientTest(unittest.TestCase):
         if params.dtype == np.float64:
             params = (params.astype(np.float32)).astype(np.float64)
 
-        ref_u = ref_potential(x, params, box)
+        ref_u, (ref_du_dx, ref_du_dp) = jax.value_and_grad(ref_potential, argnums=(0, 1))(x, params, box)
 
         assert np.abs(ref_u) < np.iinfo(np.int64).max / custom_ops.FIXED_EXPONENT, (
             "System is invalid, GPU platform unable to represent energies"
         )
-        grad_fn = jax.grad(ref_potential, argnums=(0, 1))
-        ref_du_dx, ref_du_dp = grad_fn(x, params, box)
 
         for combo in itertools.product([False, True], repeat=3):
             compute_du_dx, compute_du_dp, compute_u = combo
@@ -381,7 +379,7 @@ def gen_nonbonded_params_with_4d_offsets(
     def params_with_w_coords(w_coords):
         params_ = np.array(params)
         params_[:, 3] = w_coords
-        return params
+        return params_
 
     # all zero
     yield params_with_w_coords(0.0)

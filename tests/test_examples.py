@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,6 +19,7 @@ import pickle
 import subprocess
 import sys
 from collections.abc import Sequence
+from csv import DictReader
 from importlib import resources
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -95,15 +97,7 @@ def test_run_rbfe_graph_local(
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
         mols = read_sdf(hif2a_dir / "ligands.sdf")
 
-        temp_mols = NamedTemporaryFile(suffix=".sdf")
-        writer = Chem.SDWriter(temp_mols.name)
-        rng = np.random.default_rng(seed)
-        for mol in rng.choice(mols, replace=False, size=3):
-            writer.write(mol)
-
-        writer.close()
         config = dict(
-            sdf_path=temp_mols.name,
             pdb_path=hif2a_dir / "5tbm_prepared.pdb",
             seed=seed,
             n_eq_steps=n_eq_steps,
@@ -114,10 +108,25 @@ def test_run_rbfe_graph_local(
             forcefield=DEFAULT_FF,
             mps_workers=mps_workers,
             output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_graph_local_{seed}",
+            experimental_field="IC50[uM](SPA)",
+            experimental_units="uM",
         )
+
+        temp_mols = NamedTemporaryFile(suffix=".sdf")
+        writer = Chem.SDWriter(temp_mols.name)
+        rng = np.random.default_rng(seed)
+        num_mols = 3
+        for i, mol in enumerate(rng.choice(mols, replace=False, size=num_mols)):
+            if i == num_mols - 1:
+                # One mol should not have an experimental field
+                mol.ClearProp(config["experimental_field"])
+            writer.write(mol)
+
+        writer.close()
 
         def verify_run(edges: Sequence[dict], output_dir: Path):
             assert output_dir.is_dir()
+            leg_names = ["vacuum", "solvent", "complex"]
             for edge in edges:
                 mol_a = edge["mol_a"]
                 mol_b = edge["mol_b"]
@@ -135,7 +144,7 @@ def test_run_rbfe_graph_local(
 
                 assert Forcefield.load_from_file(edge_dir / "ff.py") is not None
 
-                for leg in ["vacuum", "solvent", "complex"]:
+                for leg in leg_names:
                     leg_dir = edge_dir / leg
                     assert leg_dir.is_dir()
                     assert (leg_dir / "results.npz").is_file()
@@ -173,6 +182,36 @@ def test_run_rbfe_graph_local(
                     assert 2 <= results["n_windows"] <= config["n_windows"]
                     assert isinstance(results["overlaps"], np.ndarray)
                     assert all(isinstance(overlap, float) for overlap in results["overlaps"])
+            assert (output_dir / "dg_results.csv").is_file()
+            dg_rows = list(DictReader(open(output_dir / "dg_results.csv")))
+            expected_dg_keys = {"mol", "smiles", "pred_dg (kcal/mol)", "pred_dg_err (kcal/mol)", "exp_dg (kcal/mol)"}
+            for row in dg_rows:
+                assert set(row.keys()) == expected_dg_keys
+                assert len(row["mol"]) > 0
+                assert len(row["smiles"]) > 0
+                exp_dg = row["exp_dg (kcal/mol)"]
+                if exp_dg != "":
+                    assert np.isfinite(float(exp_dg))
+
+            assert (output_dir / "ddg_results.csv").is_file()
+            ddg_rows = list(DictReader(open(output_dir / "ddg_results.csv")))
+            expected_ddg_keys = {
+                "mol_a",
+                "mol_b",
+                "pred_ddg (kcal/mol)",
+                "pred_ddg_err (kcal/mol)",
+                "exp_ddg (kcal/mol)",
+            }
+            for leg in leg_names:
+                expected_ddg_keys.add(f"{leg}_pred_dg (kcal/mol)")
+                expected_ddg_keys.add(f"{leg}_pred_dg_err (kcal/mol)")
+            for row in ddg_rows:
+                assert set(row.keys()) == expected_ddg_keys
+                assert len(row["mol_a"]) > 0
+                assert len(row["mol_b"]) > 0
+                exp_ddg = row["exp_ddg (kcal/mol)"]
+                if exp_ddg != "":
+                    assert np.isfinite(float(exp_ddg))
 
         with NamedTemporaryFile(suffix=".json") as temp:
             # Build a graph
@@ -184,6 +223,7 @@ def test_run_rbfe_graph_local(
                 assert all(isinstance(edge, dict) for edge in edges)
                 for expected_key in ["mol_a", "mol_b", "core"]:
                     assert all(expected_key in edge for edge in edges)
+            config["sdf_path"] = temp_mols.name
             config["graph_json"] = temp.name
             proc = run_example("run_rbfe_graph.py", get_cli_args(config))
             assert proc.returncode == 0

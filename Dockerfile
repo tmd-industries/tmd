@@ -22,13 +22,15 @@ RUN wget --quiet https://github.com/conda-forge/miniforge/releases/download/${MI
     ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh && \
     echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc
 
+WORKDIR /opt/
+
 # Setup CMake
 ARG CMAKE_VERSION=3.24.3
 RUN wget --quiet https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz -O cmake.tar.gz && \
     tar -xzf cmake.tar.gz && \
     rm -rf cmake.tar.gz
 
-ENV PATH=$PATH:$PWD/cmake-${CMAKE_VERSION}-linux-x86_64/bin/
+ENV PATH=$PATH:/opt/cmake-${CMAKE_VERSION}-linux-x86_64/bin/
 
 # Copy the environment yml to cache environment when possible
 COPY environment.yml /code/tmd/

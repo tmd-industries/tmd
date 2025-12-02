@@ -287,15 +287,17 @@ class SingleTopologyREST(SingleTopology):
         # parameters corresponding to water atoms were identical in the host-host all-pairs potential and the host-guest
         # interaction group potential. We no longer have the interaction group potential in the system, therefore we choose option (1).
 
-        energy_scale = self.get_energy_scale_factor(lamb)
+        if len(rest_region_atom_idxs) > 0:
+            energy_scale = self.get_energy_scale_factor(lamb)
 
-        nonbonded_all_pairs = replace(
-            ref_state.nonbonded_all_pairs,
-            params=jnp.array(ref_state.nonbonded_all_pairs.params)
-            .at[rest_region_atom_idxs, NBParamIdx.Q_IDX]
-            .mul(energy_scale)  # scale ligand charges
-            .at[rest_region_atom_idxs, NBParamIdx.LJ_EPS_IDX]
-            .mul(energy_scale),  # scale ligand epsilons
-        )
+            nonbonded_all_pairs = replace(
+                ref_state.nonbonded_all_pairs,
+                params=jnp.array(ref_state.nonbonded_all_pairs.params)
+                .at[rest_region_atom_idxs, NBParamIdx.Q_IDX]
+                .mul(energy_scale)  # scale ligand charges
+                .at[rest_region_atom_idxs, NBParamIdx.LJ_EPS_IDX]
+                .mul(energy_scale),  # scale ligand epsilons
+            )
+            ref_state = replace(ref_state, nonbonded_all_pairs=nonbonded_all_pairs)
 
-        return replace(ref_state, nonbonded_all_pairs=nonbonded_all_pairs)
+        return ref_state

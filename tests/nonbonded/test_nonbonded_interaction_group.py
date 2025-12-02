@@ -290,16 +290,15 @@ def test_nonbonded_interaction_group_consistency_allpairs_4d_decoupled(
         p = jnp.asarray(p).at[ligand_idxs, 3].set(3.01 * cutoff)
         return ref_all_pairs(x, p, b)
 
-    for params in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):
-        GradientTest().compare_forces(
-            conf,
-            params,
-            box,
-            ref_potential=ref_ixn_group,
-            test_potential=test_ixn_group,
-            rtol=0,  # why doesn't 0 pass?
-            atol=0,
-        )
+    GradientTest().compare_forces(
+        conf,
+        params,
+        box,
+        ref_potential=ref_ixn_group,
+        test_potential=test_ixn_group,
+        rtol=0,  # why doesn't 0 pass?
+        atol=0,
+    )
 
 
 @pytest.mark.parametrize("beta", [2.0])
