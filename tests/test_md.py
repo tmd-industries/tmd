@@ -34,14 +34,10 @@ from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.enhanced import get_solvent_phase_system
 from tmd.md.minimizer import check_force_norm, replace_conformer_with_minimized
 from tmd.potentials import (
-    BoundPotential,
-    ChiralAtomRestraint,
     HarmonicAngle,
     HarmonicBond,
     Nonbonded,
     NonbondedInteractionGroup,
-    NonbondedPairList,
-    NonbondedPairListPrecomputed,
     PeriodicTorsion,
     make_summed_potential,
 )
@@ -527,41 +523,15 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
         assert False, f"Unknown integrator type {integrator_klass}"
     assert intg_impl is not None
 
-    batch_pots = []
+    bps = []
     for pot in guest_system.get_U_fns():
-        unbound_pot = pot.potential
-        assert unbound_pot.num_atoms == len(x0)
-        # TBD: Implement a `pot.combine(other_pot) method
-        if isinstance(unbound_pot, (HarmonicBond, HarmonicAngle, PeriodicTorsion, ChiralAtomRestraint)):
-            klass = type(unbound_pot)
-            unbound_batch = klass(unbound_pot.num_atoms, [unbound_pot.idxs for _ in range(num_systems)])
-            params = [pot.params for _ in range(num_systems)]
-            batch_pots.append(BoundPotential(unbound_batch, params))
-        elif isinstance(unbound_pot, NonbondedPairList):
-            klass = type(unbound_pot)
-            unbound_batch = klass(
-                unbound_pot.num_atoms,
-                [unbound_pot.idxs for _ in range(num_systems)],
-                [unbound_pot.rescale_mask for _ in range(num_systems)],
-                unbound_pot.beta,
-                unbound_pot.cutoff,
-            )
-            params = [pot.params for _ in range(num_systems)]
-            batch_pots.append(BoundPotential(unbound_batch, params))
-        elif isinstance(unbound_pot, NonbondedPairListPrecomputed):
-            klass = type(unbound_pot)
-            unbound_batch = klass(
-                unbound_pot.num_atoms,
-                [unbound_pot.idxs for _ in range(num_systems)],
-                unbound_pot.beta,
-                unbound_pot.cutoff,
-            )
-            params = [pot.params for _ in range(num_systems)]
-            batch_pots.append(BoundPotential(unbound_batch, params))
-        else:
-            assert False, str(type(unbound_pot))
+        combined_bp = pot
+        for _ in range(num_systems - 1):
+            combined_bp = combined_bp.combine(pot)
+        assert combined_bp.potential.to_gpu(precision).unbound_impl.num_systems() == num_systems
+        bps.append(combined_bp)
 
-    for pot in batch_pots:
+    for pot in bps:
         assert pot.potential.to_gpu(precision).unbound_impl.num_systems() == num_systems
         bp = pot.to_gpu(precision).bound_impl
         du_dx, u = bp.execute(np.stack(batch_coords), np.stack(batch_boxes))
@@ -585,7 +555,7 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
         np.stack(batch_v0).squeeze(),
         np.stack(batch_boxes).squeeze(),
         intg_impl,
-        [bp.to_gpu(precision).bound_impl for bp in batch_pots],
+        [bp.to_gpu(precision).bound_impl for bp in bps],
         precision=precision,
     )
     steps = 400
@@ -621,7 +591,8 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
     "integrator_klass, friction",
     [(VelocityVerletIntegrator, np.inf), (LangevinIntegrator, 0.0), (LangevinIntegrator, 1.0)],
 )
-def test_solvent_batch_simulation(precision, seed, num_systems, integrator_klass, friction):
+@pytest.mark.parametrize("enable_barostat", [True, False])
+def test_solvent_batch_simulation(precision, seed, num_systems, integrator_klass, friction, enable_barostat):
     dt = 2.5e-3
 
     if precision == np.float64 and num_systems > 4:
@@ -637,89 +608,44 @@ def test_solvent_batch_simulation(precision, seed, num_systems, integrator_klass
     )
     bps = []
     for p, pot in zip(sys_params, unbound_potentials):
-        bps.append(pot.bind(p))
+        combined_bp = pot.bind(p)
+        for _ in range(num_systems - 1):
+            combined_bp = combined_bp.combine(pot.bind(p))
+        assert combined_bp.potential.to_gpu(precision).unbound_impl.num_systems() == num_systems
+        bps.append(combined_bp)
 
     bonded_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
-    masses = apply_hmr(masses, get_bond_list(bonded_pot)).astype(precision)
+    bond_list = get_bond_list(bonded_pot)
+    masses = apply_hmr(masses, bond_list).astype(precision)
 
     batch_coords = [x0.astype(precision)] * num_systems
     batch_boxes = [box0.astype(precision)] * num_systems
 
     batch_v0 = [np.zeros_like(coords) for coords in batch_coords]
 
+    temperature = constants.DEFAULT_TEMP
+
     intg_impl = None
     if integrator_klass is VelocityVerletIntegrator:
         intg = VelocityVerletIntegrator(dt, [masses for _ in range(num_systems)])
         intg_impl = intg.impl(precision)
     elif integrator_klass is LangevinIntegrator:
-        intg = LangevinIntegrator(constants.DEFAULT_TEMP, dt, friction, [masses for _ in range(num_systems)], seed)
+        intg = LangevinIntegrator(temperature, dt, friction, [masses for _ in range(num_systems)], seed)
         intg_impl = intg.impl(precision)
     else:
         assert False, f"Unknown integrator type {integrator_klass}"
     assert intg_impl is not None
 
-    batch_pots = []
     for pot in bps:
-        unbound_pot = pot.potential
-        assert unbound_pot.num_atoms == len(x0)
-        # TBD: Implement a `pot.combine(other_pot) method
-        if isinstance(unbound_pot, (HarmonicBond, HarmonicAngle, PeriodicTorsion, ChiralAtomRestraint)):
-            klass = type(unbound_pot)
-            unbound_batch = klass(unbound_pot.num_atoms, [unbound_pot.idxs for _ in range(num_systems)])
-            params = [pot.params.astype(precision) for _ in range(num_systems)]
-            batch_pots.append(BoundPotential(unbound_batch, params))
-        elif isinstance(unbound_pot, NonbondedPairList):
-            klass = type(unbound_pot)
-            unbound_batch = klass(
-                unbound_pot.num_atoms,
-                [unbound_pot.idxs.astype(np.int32) for _ in range(num_systems)],
-                [unbound_pot.rescale_mask.astype(precision) for _ in range(num_systems)],
-                unbound_pot.beta,
-                unbound_pot.cutoff,
-            )
-            params = [pot.params.astype(precision) for _ in range(num_systems)]
-            batch_pots.append(BoundPotential(unbound_batch, params))
-        elif isinstance(unbound_pot, NonbondedPairListPrecomputed):
-            klass = type(unbound_pot)
-            unbound_batch = klass(
-                unbound_pot.num_atoms,
-                [unbound_pot.idxs for _ in range(num_systems)],
-                unbound_pot.beta,
-                unbound_pot.cutoff,
-            )
-            params = [pot.params.astype(precision) for _ in range(num_systems)]
-            batch_pots.append(BoundPotential(unbound_batch, params))
-        elif isinstance(unbound_pot, NonbondedInteractionGroup):
-            klass = type(unbound_pot)
-            unbound_batch = klass(
-                unbound_pot.num_atoms,
-                [unbound_pot.row_atom_idxs for _ in range(num_systems)],
-                unbound_pot.beta,
-                unbound_pot.cutoff,
-                col_atom_idxs=[unbound_pot.col_atom_idxs for _ in range(num_systems)],
-            )
-            params = [pot.params.astype(precision) for _ in range(num_systems)]
-            batch_pots.append(BoundPotential(unbound_batch, params))
-        elif isinstance(unbound_pot, Nonbonded):
-            klass = type(unbound_pot)
-            unbound_batch = klass(
-                unbound_pot.num_atoms,
-                [unbound_pot.exclusion_idxs for _ in range(num_systems)],
-                [unbound_pot.scale_factors for _ in range(num_systems)],
-                unbound_pot.beta,
-                unbound_pot.cutoff,
-                atom_idxs=[unbound_pot.atom_idxs for _ in range(num_systems)] if unbound_pot.atom_idxs else None,
-            )
-            params = [pot.params.astype(precision) for _ in range(num_systems)]
-            batch_pots.append(BoundPotential(unbound_batch, params))
-        else:
-            assert False, str(type(unbound_pot))
-
-    for pot in batch_pots:
         assert pot.potential.to_gpu(precision).unbound_impl.num_systems() == num_systems
         bp = pot.to_gpu(precision).bound_impl
         ref_du_dx, _, ref_u = pot.potential.to_gpu(precision).unbound_impl.execute_dim(
-            np.stack(batch_coords), pot.params, np.stack(batch_boxes), 1, 0, 1
+            np.stack(batch_coords),
+            [pot.params.astype(precision)] if num_systems == 1 else [p.astype(precision) for p in pot.params],
+            np.stack(batch_boxes),
+            1,
+            0,
+            1,
         )
         assert bp.num_systems() == num_systems
         du_dx, u = bp.execute(np.stack(batch_coords).squeeze(), np.stack(batch_boxes).squeeze())
@@ -740,13 +666,26 @@ def test_solvent_batch_simulation(precision, seed, num_systems, integrator_klass
             assert du_dx.shape == (len(x0), 3)
             assert u.shape == (num_systems,)
 
+    u_impls = [bp.to_gpu(precision).bound_impl for bp in bps]
+
+    movers = []
+    if enable_barostat:
+        group_idxs = get_group_indices(bond_list, len(masses))
+
+        pressure = constants.DEFAULT_PRESSURE
+
+        barostat = MonteCarloBarostat(len(masses), pressure, temperature, group_idxs, 15, seed)
+        barostat_impl = barostat.impl(u_impls, precision=precision)
+        movers.append(barostat_impl)
+
     ctxt = Context(
         np.stack(batch_coords).squeeze(),
         np.stack(batch_v0).squeeze(),
         np.stack(batch_boxes).squeeze(),
         intg_impl,
-        [bp.to_gpu(precision).bound_impl for bp in batch_pots],
+        u_impls,
         precision=precision,
+        movers=movers,
     )
 
     steps = 400
@@ -761,11 +700,11 @@ def test_solvent_batch_simulation(precision, seed, num_systems, integrator_klass
         assert xs.shape == (1, num_systems, len(x0), 3)
         assert boxes.shape == (1, num_systems, 3, 3)
         for i, x_batch in enumerate(xs.reshape(num_systems, len(x0), 3)[1:]):
-            if integrator_klass == VelocityVerletIntegrator or friction == 0.0:
+            if not enable_barostat and (integrator_klass == VelocityVerletIntegrator or friction == 0.0):
                 assert np.all(xs[0, 0] == x_batch)
             else:
-                # Each batch should be slightly different if langevin and friction is not 0
-                assert friction > 0
+                # Each batch should be slightly different if langevin and friction is not 0 or if the barostat is enabled
+                assert friction > 0 or enable_barostat
                 assert np.all(xs[0, 0] == x_batch, axis=1).sum() == 0, f"Batch {i + 1} has identical atom coordinates"
     else:
         assert xs.shape == (1, len(x0), 3)
