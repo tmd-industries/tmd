@@ -3187,16 +3187,26 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
                        const RealType cutoff, const int seed,
                        const int num_proposals_per_move, const int interval,
                        const int batch_size) {
-             size_t params_dim = params.ndim();
+             const size_t params_dim = params.ndim();
              if (num_proposals_per_move <= 0) {
                throw std::runtime_error(
                    "proposals per move must be greater than 0");
              }
-             if (params_dim != 2) {
-               throw std::runtime_error("parameters dimensions must be 2");
-             }
-             if (params.shape(0) != N) {
-               throw std::runtime_error("Number of parameters must match N");
+             int num_systems = 1;
+             if (params_dim == 3) {
+               if (params.shape(1) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+               num_systems = params.shape(0);
+
+             } else if (params_dim == 2) {
+               if (params.shape(0) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+             } else {
+               throw std::runtime_error(
+                   "parameters dimensions must be 2 or 3, got " +
+                   std::to_string(params_dim));
              }
              if (target_mols.size() == 0) {
                throw std::runtime_error("must provide at least one molecule");
@@ -3213,9 +3223,9 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
                                         "greater than batch size");
              }
              std::vector<RealType> v_params = py_array_to_vector(params);
-             return new Class(N, target_mols, v_params, temperature, nb_beta,
-                              cutoff, seed, num_proposals_per_move, interval,
-                              batch_size);
+             return new Class(num_systems, N, target_mols, v_params,
+                              temperature, nb_beta, cutoff, seed,
+                              num_proposals_per_move, interval, batch_size);
            }),
            py::arg("N"), py::arg("target_mols"), py::arg("params"),
            py::arg("temperature"), py::arg("nb_beta"), py::arg("cutoff"),
@@ -3361,11 +3371,21 @@ void declare_targeted_insertion_biased_deletion_exchange_move(
                throw std::runtime_error(
                    "proposals per move must be greater than 0");
              }
-             if (params_dim != 2) {
-               throw std::runtime_error("parameters dimensions must be 2");
-             }
-             if (params.shape(0) != N) {
-               throw std::runtime_error("Number of parameters must match N");
+             int num_systems = 1;
+             if (params_dim == 3) {
+               if (params.shape(1) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+               num_systems = params.shape(0);
+
+             } else if (params_dim == 2) {
+               if (params.shape(0) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+             } else {
+               throw std::runtime_error(
+                   "parameters dimensions must be 2 or 3, got " +
+                   std::to_string(params_dim));
              }
              if (ligand_idxs.size() == 0) {
                throw std::runtime_error(
@@ -3386,9 +3406,10 @@ void declare_targeted_insertion_biased_deletion_exchange_move(
                                         "greater than batch size");
              }
              std::vector<RealType> v_params = py_array_to_vector(params);
-             return new Class(N, ligand_idxs, target_mols, v_params,
-                              temperature, nb_beta, cutoff, radius, seed,
-                              num_proposals_per_move, interval, batch_size);
+             return new Class(num_systems, N, ligand_idxs, target_mols,
+                              v_params, temperature, nb_beta, cutoff, radius,
+                              seed, num_proposals_per_move, interval,
+                              batch_size);
            }),
            py::arg("N"), py::arg("ligand_idxs"), py::arg("target_mols"),
            py::arg("params"), py::arg("temperature"), py::arg("nb_beta"),

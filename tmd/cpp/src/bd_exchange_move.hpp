@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -115,10 +116,13 @@ protected:
   curandGenerator_t cr_rng_samples_;      // Generate noise for selecting waters
   curandGenerator_t cr_rng_mh_; // Generate noise for Metropolis-Hastings
 
-  void compute_initial_log_weights_device(const int N, RealType *d_coords,
-                                          RealType *d_box, cudaStream_t stream);
+  void compute_initial_log_weights_device(const int N, const RealType *d_coords,
+                                          const RealType *d_box,
+                                          const RealType *d_params,
+                                          cudaStream_t stream);
 
-  BDExchangeMove(const int N, const std::vector<std::vector<int>> &target_mols,
+  BDExchangeMove(const int num_system, const int N,
+                 const std::vector<std::vector<int>> &target_mols,
                  const std::vector<RealType> &params,
                  const RealType temperature, const RealType nb_beta,
                  const RealType cutoff, const int seed,
@@ -126,7 +130,8 @@ protected:
                  const int batch_size, const int translation_buffer_size);
 
 public:
-  BDExchangeMove(const int N, const std::vector<std::vector<int>> &target_mols,
+  BDExchangeMove(const int num_system, const int N,
+                 const std::vector<std::vector<int>> &target_mols,
                  const std::vector<RealType> &params,
                  const RealType temperature, const RealType nb_beta,
                  const RealType cutoff, const int seed,
@@ -136,6 +141,7 @@ public:
   void compute_incremental_log_weights_device(const int N, const bool scale,
                                               const RealType *d_box,
                                               const RealType *d_coords,
+                                              const RealType *d_params,
                                               const RealType *d_quaternions,
                                               const RealType *d_translations,
                                               cudaStream_t stream);
