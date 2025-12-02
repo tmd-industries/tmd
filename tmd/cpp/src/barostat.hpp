@@ -96,6 +96,8 @@ protected:
   RealType *d_x_proposed_;
   RealType *d_box_proposed_;
 
+  int *d_system_idxs_;
+
   int *d_atom_idxs_;   // grouped index to atom coords
   int *d_mol_idxs_;    // grouped index to molecule index
   int *d_mol_offsets_; // Offset of molecules to determine size of mols

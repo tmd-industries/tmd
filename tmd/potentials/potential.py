@@ -35,7 +35,6 @@ _P = TypeVar("_P", bound="Potential", covariant=True)
 def combine_pot_params(param_a, param_b) -> list:
     if isinstance(param_a, (np.ndarray, Array)):
         param_a = [param_a]
-        print(len(param_a))
     if isinstance(param_b, (np.ndarray, Array)):
         param_b = [param_b]
     return param_a + param_b

@@ -268,8 +268,10 @@ def test_barostat_partial_group_idxs():
 @pytest.mark.parametrize(
     "box_width, iterations, num_systems",
     [
-        pytest.param(3.0, 30, 1, marks=pytest.mark.memcheck),
-        pytest.param(3.0, 30, 2, marks=pytest.mark.memcheck),
+        pytest.param(4.0, 1000, 1, marks=pytest.mark.memcheck),
+        pytest.param(4.0, 1000, 2, marks=pytest.mark.memcheck),
+        pytest.param(4.0, 1000, 4, marks=pytest.mark.memcheck),
+        pytest.param(4.0, 1000, 12, marks=pytest.mark.memcheck),
         # fyork: This test only fails 50-50 times. It tests a race condition in which the coordinates could be corrupted.
         # Needs to be a large system to trigger the failure.
         (10.0, 1000, 1),
@@ -294,7 +296,7 @@ def test_barostat_is_deterministic(box_width, iterations, num_systems, klass):
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
     unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(
-        mol_a, ff, box_width=box_width, lamb=1.0, minimize_energy=False
+        mol_a, ff, box_width=box_width, lamb=1.0, minimize_energy=False, margin=0.1
     )
 
     batch_coords = np.array([coords] * num_systems).astype(np.float32)
@@ -323,9 +325,7 @@ def test_barostat_is_deterministic(box_width, iterations, num_systems, klass):
         seed,
     )
 
-    v_0 = np.array([sample_velocities(masses, temperature, seed) for _ in range(num_systems)])
-
-    # print(v_0.shape, batc)
+    v_0 = np.array([sample_velocities(masses, temperature, seed + i) for i in range(num_systems)])
 
     baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
 
@@ -335,12 +335,16 @@ def test_barostat_is_deterministic(box_width, iterations, num_systems, klass):
         batch_boxes.squeeze(),
         integrator.impl(),
         u_impls,
-        # movers=[baro],
+        movers=[baro],
     )
-    ctxt.multiple_steps(iterations * barostat_interval)
+    _, boxes = ctxt.multiple_steps(iterations * barostat_interval, 100)
     atm_box = ctxt.get_box()
-    # Verify that the volume of the box has changed
-    assert compute_box_volume(atm_box) != compute_box_volume(box)
+    if num_systems == 1:
+        # Verify that the volume of the box has changed
+        assert compute_box_volume(atm_box) != compute_box_volume(box)
+    else:
+        for sys_box in atm_box:
+            assert compute_box_volume(sys_box) != compute_box_volume(box)
 
     baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
     ctxt = custom_ops.Context_f32(
@@ -353,7 +357,7 @@ def test_barostat_is_deterministic(box_width, iterations, num_systems, klass):
     )
     ctxt.multiple_steps(iterations * barostat_interval)
     # Verify that we get back bitwise reproducible boxes
-    assert compute_box_volume(atm_box) == compute_box_volume(ctxt.get_box())
+    np.testing.assert_array_equal(atm_box, ctxt.get_box())
 
 
 def test_barostat_varying_pressure():

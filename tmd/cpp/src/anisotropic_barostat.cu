@@ -57,7 +57,7 @@ void AnisotropicMonteCarloBarostat<RealType>::propose_move(
     cudaStream_t stream) {
   // Create duplicates of the coords that we can modify
   gpuErrchk(cudaMemcpyAsync(this->d_x_proposed_, d_x,
-                            this->N_ * 3 * sizeof(*d_x),
+                            this->num_systems_ * this->N_ * 3 * sizeof(*d_x),
                             cudaMemcpyDeviceToDevice, stream));
 
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
@@ -65,11 +65,13 @@ void AnisotropicMonteCarloBarostat<RealType>::propose_move(
   // blocks, rather than matching the number of blocks to be
   // ceil_divide(units_of_work, tpb). The kernels already support this, but at
   // the moment we match the blocks * tpb to equal units_of_work
-  const int blocks = ceil_divide(this->num_grouped_atoms_, tpb);
+  const dim3 blocks(ceil_divide(this->num_grouped_atoms_, tpb),
+                    this->num_systems_);
 
   k_find_group_centroids<RealType><<<blocks, tpb, 0, stream>>>(
-      this->num_grouped_atoms_, this->d_x_proposed_, this->d_atom_idxs_,
-      this->d_mol_idxs_, this->d_centroids_);
+      this->num_systems_, this->N_, this->num_mols_, this->num_grouped_atoms_,
+      this->d_x_proposed_, this->d_atom_idxs_, this->d_mol_idxs_,
+      this->d_centroids_);
   gpuErrchk(cudaPeekAtLastError());
 
   RealType rand = distribution_(generator_);
@@ -91,14 +93,17 @@ void AnisotropicMonteCarloBarostat<RealType>::propose_move(
   assert(0 <= scaling_dim < 3);
 
   if (scaling_dim == 0) {
-    k_setup_barostat_move<RealType, true, false, false><<<1, 1, 0, stream>>>(
-        this->adaptive_scaling_enabled_, this->d_rand_state_, d_box,
-        this->d_volume_delta_, this->d_volume_scale_, this->d_length_scale_,
-        this->d_volume_, this->d_metropolis_hasting_rand_);
+    k_setup_barostat_move<RealType, true, false, false>
+        <<<dim3(1, this->num_systems_), 1, 0, stream>>>(
+            this->num_systems_, this->adaptive_scaling_enabled_,
+            this->d_rand_state_, d_box, this->d_volume_delta_,
+            this->d_volume_scale_, this->d_length_scale_, this->d_volume_,
+            this->d_metropolis_hasting_rand_);
     gpuErrchk(cudaPeekAtLastError());
     // Scale centroids
     k_rescale_positions<RealType, true, false, false>
         <<<blocks, tpb, 0, stream>>>(
+            this->num_systems_, this->N_, this->num_mols_,
             this->num_grouped_atoms_, this->d_x_proposed_,
             this->d_length_scale_, d_box,
             this->d_box_proposed_, // Proposed box will be d_box rescaled by
@@ -107,14 +112,17 @@ void AnisotropicMonteCarloBarostat<RealType>::propose_move(
             this->d_centroids_);
     gpuErrchk(cudaPeekAtLastError());
   } else if (scaling_dim == 1) {
-    k_setup_barostat_move<RealType, false, true, false><<<1, 1, 0, stream>>>(
-        this->adaptive_scaling_enabled_, this->d_rand_state_, d_box,
-        this->d_volume_delta_, this->d_volume_scale_, this->d_length_scale_,
-        this->d_volume_, this->d_metropolis_hasting_rand_);
+    k_setup_barostat_move<RealType, false, true, false>
+        <<<dim3(1, this->num_systems_), 1, 0, stream>>>(
+            this->num_systems_, this->adaptive_scaling_enabled_,
+            this->d_rand_state_, d_box, this->d_volume_delta_,
+            this->d_volume_scale_, this->d_length_scale_, this->d_volume_,
+            this->d_metropolis_hasting_rand_);
     gpuErrchk(cudaPeekAtLastError());
     // Scale centroids
     k_rescale_positions<RealType, false, true, false>
         <<<blocks, tpb, 0, stream>>>(
+            this->num_systems_, this->N_, this->num_mols_,
             this->num_grouped_atoms_, this->d_x_proposed_,
             this->d_length_scale_, d_box,
             this->d_box_proposed_, // Proposed box will be d_box rescaled by
@@ -123,14 +131,17 @@ void AnisotropicMonteCarloBarostat<RealType>::propose_move(
             this->d_centroids_);
     gpuErrchk(cudaPeekAtLastError());
   } else {
-    k_setup_barostat_move<RealType, false, false, true><<<1, 1, 0, stream>>>(
-        this->adaptive_scaling_enabled_, this->d_rand_state_, d_box,
-        this->d_volume_delta_, this->d_volume_scale_, this->d_length_scale_,
-        this->d_volume_, this->d_metropolis_hasting_rand_);
+    k_setup_barostat_move<RealType, false, false, true>
+        <<<dim3(1, this->num_systems_), 1, 0, stream>>>(
+            this->num_systems_, this->adaptive_scaling_enabled_,
+            this->d_rand_state_, d_box, this->d_volume_delta_,
+            this->d_volume_scale_, this->d_length_scale_, this->d_volume_,
+            this->d_metropolis_hasting_rand_);
     gpuErrchk(cudaPeekAtLastError());
     // Scale centroids
     k_rescale_positions<RealType, false, false, true>
         <<<blocks, tpb, 0, stream>>>(
+            this->num_systems_, this->N_, this->num_mols_,
             this->num_grouped_atoms_, this->d_x_proposed_,
             this->d_length_scale_, d_box,
             this->d_box_proposed_, // Proposed box will be d_box rescaled by

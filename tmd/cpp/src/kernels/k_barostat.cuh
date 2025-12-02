@@ -24,7 +24,8 @@ namespace tmd {
 // potential barostat move
 template <typename RealType, bool SCALE_X, bool SCALE_Y, bool SCALE_Z>
 void __global__ k_rescale_positions(
-    const int num_systems, const int N,              // Number of atoms to shift
+    const int num_systems, const int atoms_per_system, const int num_mols,
+    const int N,                                     // Number of atoms to shift
     RealType *__restrict__ coords,                   // Coordinates
     const RealType *__restrict__ length_scale,       // [num_systems]
     const RealType *__restrict__ box,                // [num_systems, 9]
@@ -36,10 +37,18 @@ void __global__ k_rescale_positions(
 ) {
   static_assert(SCALE_X | SCALE_Y | SCALE_Z);
 
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  RealType center_x = box[0 * 3 + 0] * static_cast<RealType>(0.5);
-  RealType center_y = box[1 * 3 + 1] * static_cast<RealType>(0.5);
-  RealType center_z = box[2 * 3 + 2] * static_cast<RealType>(0.5);
+  RealType center_x =
+      box[system_idx * 9 + 0 * 3 + 0] * static_cast<RealType>(0.5);
+  RealType center_y =
+      box[system_idx * 9 + 1 * 3 + 1] * static_cast<RealType>(0.5);
+  RealType center_z =
+      box[system_idx * 9 + 2 * 3 + 2] * static_cast<RealType>(0.5);
 
   RealType scale = *length_scale;
   if (idx == 0) {
@@ -74,11 +83,17 @@ void __global__ k_rescale_positions(
         static_cast<RealType>(mol_offsets[mol_idx + 1] - mol_offsets[mol_idx]);
 
     RealType centroid_x =
-        FIXED_TO_FLOAT<RealType>(centroids[mol_idx * 3 + 0]) / num_atoms;
+        FIXED_TO_FLOAT<RealType>(
+            centroids[system_idx * num_mols * 3 + mol_idx * 3 + 0]) /
+        num_atoms;
     RealType centroid_y =
-        FIXED_TO_FLOAT<RealType>(centroids[mol_idx * 3 + 1]) / num_atoms;
+        FIXED_TO_FLOAT<RealType>(
+            centroids[system_idx * num_mols * 3 + mol_idx * 3 + 1]) /
+        num_atoms;
     RealType centroid_z =
-        FIXED_TO_FLOAT<RealType>(centroids[mol_idx * 3 + 2]) / num_atoms;
+        FIXED_TO_FLOAT<RealType>(
+            centroids[system_idx * num_mols * 3 + mol_idx * 3 + 2]) /
+        num_atoms;
 
     // compute displacement needed to shift centroid back into the scaled
     // homebox
@@ -86,13 +101,13 @@ void __global__ k_rescale_positions(
       RealType displacement_x =
           ((centroid_x - center_x) * scale) + center_x - centroid_x;
       centroid_x += displacement_x;
-      RealType scaled_box_x = box[0 * 3 + 0] * scale;
+      RealType scaled_box_x = box[system_idx * 9 + 0 * 3 + 0] * scale;
       RealType new_center_x = scaled_box_x * floor(centroid_x / scaled_box_x);
-      coords[system_idx * N * 3 + atom_idx * 3 + 0] +=
+      coords[system_idx * atoms_per_system * 3 + atom_idx * 3 + 0] +=
           displacement_x - new_center_x;
     } else {
       // Still need to image to avoid drift
-      coords[system_idx * N * 3 + atom_idx * 3 + 0] -=
+      coords[system_idx * atoms_per_system * 3 + atom_idx * 3 + 0] -=
           box[system_idx * 9 + 0 * 3 + 0] *
           floor(centroid_x / box[system_idx * 9 + 0 * 3 + 0]);
     }
@@ -103,11 +118,11 @@ void __global__ k_rescale_positions(
       centroid_y += displacement_y;
       RealType scaled_box_y = box[system_idx * 9 + 1 * 3 + 1] * scale;
       RealType new_center_y = scaled_box_y * floor(centroid_y / scaled_box_y);
-      coords[system_idx * N * 3 + atom_idx * 3 + 1] +=
+      coords[system_idx * atoms_per_system * 3 + atom_idx * 3 + 1] +=
           displacement_y - new_center_y;
     } else {
       // Still need to image to avoid drift
-      coords[system_idx * N * 3 + atom_idx * 3 + 1] -=
+      coords[system_idx * atoms_per_system * 3 + atom_idx * 3 + 1] -=
           box[system_idx * 9 + 1 * 3 + 1] *
           floor(centroid_y / box[system_idx * 9 + 1 * 3 + 1]);
     }
@@ -118,11 +133,11 @@ void __global__ k_rescale_positions(
       centroid_z += displacement_z;
       RealType scaled_box_z = box[system_idx * 9 + 2 * 3 + 2] * scale;
       RealType new_center_z = scaled_box_z * floor(centroid_z / scaled_box_z);
-      coords[system_idx * N * 3 + atom_idx * 3 + 2] +=
+      coords[system_idx * atoms_per_system * 3 + atom_idx * 3 + 2] +=
           displacement_z - new_center_z;
     } else {
       // Still need to image to avoid drift
-      coords[system_idx * N * 3 + atom_idx * 3 + 2] -=
+      coords[system_idx * atoms_per_system * 3 + atom_idx * 3 + 2] -=
           box[system_idx * 9 + 2 * 3 + 2] *
           floor(centroid_z / box[system_idx * 9 + 2 * 3 + 2]);
     }
@@ -134,22 +149,34 @@ void __global__ k_rescale_positions(
 // k_find_group_centroids computes the centroids of a group of atoms.
 template <typename RealType>
 void __global__ k_find_group_centroids(
-    const int N,                               // Number of atoms to shift
-    const RealType *__restrict__ coords,       // Coordinates [N * 3]
-    const int *__restrict__ atom_idxs,         // [N]
-    const int *__restrict__ mol_idxs,          // [N]
-    unsigned long long *__restrict__ centroids // [num_molecules * 3]
+    const int num_systems, const int atoms_per_system, const int num_mols,
+    const int N,                         // Number of atoms to shift
+    const RealType *__restrict__ coords, // Coordinates [num_systems, N, 3]
+    const int *__restrict__ atom_idxs,   // [num_systems, N]
+    const int *__restrict__ mol_idxs,    // [num_systems, N]
+    unsigned long long
+        *__restrict__ centroids // [num_systems, num_molecules, 3]
 ) {
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (idx < N) {
     int atom_idx = atom_idxs[idx];
     int mol_idx = mol_idxs[idx];
-    atomicAdd(centroids + mol_idx * 3 + 0,
-              FLOAT_TO_FIXED<RealType>(coords[atom_idx * 3 + 0]));
-    atomicAdd(centroids + mol_idx * 3 + 1,
-              FLOAT_TO_FIXED<RealType>(coords[atom_idx * 3 + 1]));
-    atomicAdd(centroids + mol_idx * 3 + 2,
-              FLOAT_TO_FIXED<RealType>(coords[atom_idx * 3 + 2]));
+    atomicAdd(
+        centroids + system_idx * num_mols * 3 + mol_idx * 3 + 0,
+        FLOAT_TO_FIXED<RealType>(
+            coords[system_idx * atoms_per_system * 3 + atom_idx * 3 + 0]));
+    atomicAdd(
+        centroids + system_idx * num_mols * 3 + mol_idx * 3 + 1,
+        FLOAT_TO_FIXED<RealType>(
+            coords[system_idx * atoms_per_system * 3 + atom_idx * 3 + 1]));
+    atomicAdd(
+        centroids + system_idx * num_mols * 3 + mol_idx * 3 + 2,
+        FLOAT_TO_FIXED<RealType>(
+            coords[system_idx * atoms_per_system * 3 + atom_idx * 3 + 2]));
     idx += gridDim.x * blockDim.x;
   }
 }
@@ -185,16 +212,18 @@ void __global__ k_setup_barostat_move(
   // Need to store this in global memory to avoid race condition in
   // k_decide_move
   d_metropolis_hastings_rand[system_idx] = metropolis_hastings;
+
   // Only safe so long as there is a single thread
   rng[system_idx] = local_rng;
 
   const RealType volume = d_box[system_idx * 9 + 0 * 3 + 0] *
                           d_box[system_idx * 9 + 1 * 3 + 1] *
                           d_box[system_idx * 9 + 2 * 3 + 2];
-  if (adaptive && *d_volume_scale == 0.0) {
+  if (adaptive && d_volume_scale[system_idx] == 0.0) {
     d_volume_scale[system_idx] = 0.01 * volume;
   }
-  const RealType delta_volume = *d_volume_scale * 2 * (rand_scale - 0.5);
+  const RealType delta_volume =
+      d_volume_scale[system_idx] * 2 * (rand_scale - 0.5);
   const RealType new_volume = volume + delta_volume;
   d_volume[system_idx] = volume;
   d_volume_delta[system_idx] = delta_volume;
@@ -264,7 +293,7 @@ void __global__ k_decide_move(
       num_attempted[system_idx]++;
       if (adaptive && num_attempted[system_idx] >= 10) {
         if (num_accepted[system_idx] < 0.25 * num_attempted[system_idx]) {
-          *d_volume_scale /= 1.1;
+          d_volume_scale[system_idx] /= 1.1;
           // Reset the counters
           num_attempted[system_idx] = 0;
           num_accepted[system_idx] = 0;
@@ -289,8 +318,8 @@ void __global__ k_decide_move(
 
 #pragma unroll 3
     for (int i = 0; i < 3; i++) {
-      d_x[num_systems * N * 3 + idx * 3 + i] =
-          d_x_proposed[num_systems * N * 3 + idx * 3 + i];
+      d_x[system_idx * N * 3 + idx * 3 + i] =
+          d_x_proposed[system_idx * N * 3 + idx * 3 + i];
     }
     idx += gridDim.x * blockDim.x;
   }
