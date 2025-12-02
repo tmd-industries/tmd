@@ -263,8 +263,8 @@ def test_fit_solvent_absolute_hydration_bcc_params(forcefield):
     print(adjusted_bcc_params)
     print()
 
-    # Use the updated BCC charges for intermolecular and the original for intramolecular
-    ff = replace(ff, q_handle=AM1CCCHandler(ff.q_handle.smirks, adjusted_bcc_params, None), q_handle_intra=ff.q_handle)
+    # Use the updated BCC charges for intermolecular
+    ff = replace(ff, q_handle=AM1CCCHandler(ff.q_handle.smirks, adjusted_bcc_params, None))
     comp_res, host_config = absolute_hydration.run_solvent(mol, ff, None, md_params=md_params, n_windows=n_windows)
 
     new_pred = np.sum(comp_res.final_result.dGs) / KCAL_TO_KJ
