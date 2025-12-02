@@ -24,14 +24,18 @@ import pytest
 from common import GradientTest, prepare_nb_system
 
 from tmd import constants
+from tmd.fe.free_energy import AbsoluteFreeEnergy
 from tmd.fe.model_utils import apply_hmr
+from tmd.fe.rbfe import setup_optimized_host
 from tmd.fe.topology import BaseTopology
-from tmd.fe.utils import get_mol_masses, get_romol_conf
+from tmd.fe.utils import get_mol_masses, get_romol_conf, read_sdf
 from tmd.ff import Forcefield
 from tmd.integrator import langevin_coefficients
 from tmd.lib import Context, LangevinIntegrator, MonteCarloBarostat, VelocityVerletIntegrator, custom_ops
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
+from tmd.md.builders import build_protein_system, build_water_system
 from tmd.md.enhanced import get_solvent_phase_system
+from tmd.md.exchange.exchange_mover import get_water_idxs
 from tmd.md.minimizer import check_force_norm, replace_conformer_with_minimized
 from tmd.potentials import (
     HarmonicAngle,
@@ -41,8 +45,9 @@ from tmd.potentials import (
     PeriodicTorsion,
     make_summed_potential,
 )
-from tmd.potentials.potential import GpuImplWrapper_f32, get_potential_by_type
+from tmd.potentials.potential import GpuImplWrapper_f32, get_bound_potential_by_type, get_potential_by_type
 from tmd.testsystems.ligands import get_biphenyl
+from tmd.utils import path_to_internal_file
 
 SECONDS_PER_DAY = 24 * 60 * 60
 
@@ -586,26 +591,63 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
 
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 @pytest.mark.parametrize("seed", [2025])
-@pytest.mark.parametrize("num_systems", [1, 2, 4, 8, 16, 32, 48])
+@pytest.mark.parametrize(
+    "num_systems",
+    [
+        pytest.param(1, marks=pytest.mark.memcheck),
+        pytest.param(2, marks=pytest.mark.memcheck),
+        pytest.param(4, marks=pytest.mark.memcheck),
+        8,
+        16,
+        32,
+        48,
+    ],
+)
 @pytest.mark.parametrize(
     "integrator_klass, friction",
     [(VelocityVerletIntegrator, np.inf), (LangevinIntegrator, 0.0), (LangevinIntegrator, 1.0)],
 )
 @pytest.mark.parametrize("enable_barostat", [True, False])
-def test_solvent_batch_simulation(precision, seed, num_systems, integrator_klass, friction, enable_barostat):
-    dt = 2.5e-3
-
+@pytest.mark.parametrize("enable_ws", [True, False])
+@pytest.mark.parametrize("host", ["solvent", "complex"])
+def test_host_batch_simulation(
+    precision, seed, num_systems, integrator_klass, friction, enable_barostat, enable_ws, host
+):
     if precision == np.float64 and num_systems > 4:
         pytest.skip(reason="Slow and memory intensive")
+    if enable_ws:
+        if host == "solvent":
+            pytest.skip(reason="No reason to run water sampling in solvent")
+        elif friction == 0.0 or integrator_klass == VelocityVerletIntegrator:
+            pytest.skip(reason="Only run water sampling with langevin")
 
-    mol, _ = get_biphenyl()
-    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
-    # Minimize the starting pose
-    replace_conformer_with_minimized(mol, ff)
+    dt = 2.5e-3
 
-    unbound_potentials, sys_params, masses, x0, box0 = get_solvent_phase_system(
-        mol, ff, 0.0, box_width=4.0, minimize_energy=True
-    )
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
+        mols = read_sdf(path_to_ligand)
+    mol = mols[0]
+
+    ff = Forcefield.load_default()
+
+    host_config = None
+    if host == "complex":
+        with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as protein_path:
+            host_config = build_protein_system(
+                str(protein_path), ff.protein_ff, ff.water_ff, mols=[mol], box_margin=0.1
+            )
+    elif host == "solvent":
+        host_config = build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
+    assert host_config is not None
+    host_config = setup_optimized_host(host_config, [mol], ff)
+
+    bt = BaseTopology(mol, ff)
+    afe = AbsoluteFreeEnergy(mol, bt)
+
+    unbound_potentials, sys_params, masses = afe.prepare_host_edge(ff, host_config, lamb=0.0)
+
+    x0 = afe.prepare_combined_coords(host_config.conf)
+    box0 = host_config.box
+
     bps = []
     for p, pot in zip(sys_params, unbound_potentials):
         combined_bp = pot.bind(p)
@@ -616,6 +658,7 @@ def test_solvent_batch_simulation(precision, seed, num_systems, integrator_klass
 
     bonded_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
     bond_list = get_bond_list(bonded_pot)
+    group_idxs = get_group_indices(bond_list, len(masses))
     masses = apply_hmr(masses, bond_list).astype(precision)
 
     batch_coords = [x0.astype(precision)] * num_systems
@@ -670,13 +713,34 @@ def test_solvent_batch_simulation(precision, seed, num_systems, integrator_klass
 
     movers = []
     if enable_barostat:
-        group_idxs = get_group_indices(bond_list, len(masses))
-
         pressure = constants.DEFAULT_PRESSURE
 
         barostat = MonteCarloBarostat(len(masses), pressure, temperature, group_idxs, 15, seed)
         barostat_impl = barostat.impl(u_impls, precision=precision)
         movers.append(barostat_impl)
+    if enable_ws:
+        ligand_idxs = np.arange(mol.GetNumAtoms(), dtype=np.int32) + len(host_config.conf)
+        nb = get_bound_potential_by_type(bps, Nonbonded)
+
+        water_idxs = get_water_idxs(group_idxs, ligand_idxs=ligand_idxs)
+
+        ws_klass = custom_ops.TIBDExchangeMove_f32 if precision == np.float32 else custom_ops.TIBDExchangeMove_f64
+
+        water_sampler = ws_klass(
+            len(masses),
+            ligand_idxs.tolist(),  # type: ignore
+            water_idxs,
+            np.array(nb.params, dtype=precision),
+            temperature,
+            nb.potential.beta,
+            nb.potential.cutoff,
+            1.5,  # Fixed radius
+            seed,
+            1000,
+            100,
+            batch_size=250,
+        )
+        movers.append(water_sampler)
 
     ctxt = Context(
         np.stack(batch_coords).squeeze(),
