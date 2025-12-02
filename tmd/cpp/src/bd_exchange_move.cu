@@ -144,11 +144,13 @@ template <typename RealType> BDExchangeMove<RealType>::~BDExchangeMove() {
 }
 
 template <typename RealType>
-void BDExchangeMove<RealType>::move(const int N,
+void BDExchangeMove<RealType>::move(const int num_systems, const int N,
                                     RealType *d_coords, // [N, 3]
                                     RealType *d_box,    // [3, 3]
                                     cudaStream_t stream) {
-
+  if (num_systems != this->num_systems_) {
+    throw std::runtime_error("num_systems != num_systems_");
+  }
   if (N != N_) {
     throw std::runtime_error("N != N_");
   }

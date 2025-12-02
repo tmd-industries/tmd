@@ -83,9 +83,9 @@ public:
 
   ~TIBDExchangeMove();
 
-  void move(const int N,
-            RealType *d_coords, // [N, 3]
-            RealType *d_box,    // [3, 3]
+  void move(const int num_systems, const int N,
+            RealType *d_coords, // [num_systems, N, 3]
+            RealType *d_box,    // [num_systems, 3, 3]
             cudaStream_t stream) override;
 
   std::array<std::vector<RealType>, 2>

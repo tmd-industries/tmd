@@ -197,10 +197,13 @@ void MonteCarloBarostat<RealType>::set_adaptive_scaling(
 }
 
 template <typename RealType>
-void MonteCarloBarostat<RealType>::move(const int N,
-                                        RealType *d_x,   // [N*3]
-                                        RealType *d_box, // [3*3]
+void MonteCarloBarostat<RealType>::move(const int num_systems, const int N,
+                                        RealType *d_x,   // [num_systems, N, 3]
+                                        RealType *d_box, // [num_systems, 3, 3]
                                         cudaStream_t stream) {
+  if (num_systems != this->num_systems_) {
+    throw std::runtime_error("num_systems != num_systems_");
+  }
   if (N != N_) {
     throw std::runtime_error("N != N_");
   }

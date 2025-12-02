@@ -131,11 +131,13 @@ TIBDExchangeMove<RealType>::TIBDExchangeMove(
 template <typename RealType> TIBDExchangeMove<RealType>::~TIBDExchangeMove() {}
 
 template <typename RealType>
-void TIBDExchangeMove<RealType>::move(const int N,
-                                      RealType *d_coords, // [N, 3]
-                                      RealType *d_box,    // [3, 3]
+void TIBDExchangeMove<RealType>::move(const int num_systems, const int N,
+                                      RealType *d_coords, // [num_systems, N, 3]
+                                      RealType *d_box,    // [num_systems, 3, 3]
                                       cudaStream_t stream) {
-
+  if (num_systems != this->num_systems_) {
+    throw std::runtime_error("num_systems != num_systems_");
+  }
   if (N != this->N_) {
     throw std::runtime_error("N != N_");
   }
@@ -394,7 +396,7 @@ TIBDExchangeMove<RealType>::move_host(const int N, const RealType *h_coords,
 
   cudaStream_t stream = static_cast<cudaStream_t>(0);
 
-  this->move(N, d_coords.data, d_box.data, stream);
+  this->move(1, N, d_coords.data, d_box.data, stream);
   gpuErrchk(cudaStreamSynchronize(stream));
 
   std::vector<RealType> out_coords(d_coords.length);

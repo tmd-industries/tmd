@@ -359,7 +359,7 @@ void Context<RealType>::_step(
   if (d_atom_idxs == nullptr) {
     for (auto mover : movers_) {
       // May modify coords and box size
-      mover->move(N_, d_x_t_, d_box_t_, stream);
+      mover->move(this->num_systems_, N_, d_x_t_, d_box_t_, stream);
     }
   }
 

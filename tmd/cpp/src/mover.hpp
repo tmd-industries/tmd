@@ -58,8 +58,8 @@ public:
 
   int num_systems() const { return this->num_systems_; };
 
-  virtual void move(const int N, RealType *d_x, RealType *d_box,
-                    cudaStream_t stream) = 0;
+  virtual void move(const int num_systems, const int N, RealType *d_x,
+                    RealType *d_box, cudaStream_t stream) = 0;
 
   virtual std::array<std::vector<RealType>, 2>
   move_host(const int N, const RealType *h_x, const RealType *h_box);

@@ -41,8 +41,8 @@ public:
   ~MonteCarloBarostat();
 
   // move() may modify d_x and d_box
-  virtual void move(const int N, RealType *d_x, RealType *d_box,
-                    cudaStream_t stream) override;
+  virtual void move(const int num_systems, const int N, RealType *d_x,
+                    RealType *d_box, cudaStream_t stream) override;
 
   RealType get_volume_scale_factor();
 
