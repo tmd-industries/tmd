@@ -231,7 +231,7 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
         V0 = 1660 * (0.1**3)  # 1M standard state in nm^3
         kT = BOLTZ * temperature
 
-        kb = self.params.ka * 0.5  # TMD applies a factor of 0.5
+        kb = self.params.kb * 0.5  # TMD applies a factor of 0.5
         ka = self.params.ka * 0.5  # TMD applies a factor of 0.5
         kd = self.params.kd  # no prefactor I think
 
