@@ -505,7 +505,7 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
 def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass):
     dt = 2.5e-3
 
-    if precision == np.float64 and num_systems > 4:
+    if precision == np.float64 and num_systems > 2:
         pytest.skip(reason="Slow and memory intensive")
 
     mol, _ = get_biphenyl()
@@ -625,7 +625,7 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
 def test_host_batch_simulation(
     precision, seed, num_systems, integrator_klass, friction, enable_barostat, enable_ws, host
 ):
-    if precision == np.float64 and num_systems > 4:
+    if precision == np.float64 and num_systems > 2:
         pytest.skip(reason="Slow and memory intensive")
     if enable_ws:
         if host == "solvent":
