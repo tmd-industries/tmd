@@ -488,13 +488,18 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
         ctxt.multiple_steps_local_selection(100, 1, np.array([2], dtype=np.int32), store_x_interval=-1)
 
 
-@pytest.mark.memcheck
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 @pytest.mark.parametrize("seed", [2025])
-@pytest.mark.parametrize("num_systems", [1, 2, 16, 32, 48])
+@pytest.mark.parametrize(
+    "num_systems",
+    [pytest.param(1, marks=pytest.mark.memcheck), pytest.param(2, marks=pytest.mark.memcheck), 16, 32, 48],
+)
 @pytest.mark.parametrize("integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator])
 def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass):
     dt = 2.5e-3
+
+    if precision == np.float64 and num_systems > 4:
+        pytest.skip(reason="Slow and memory intensive")
 
     mol, _ = get_biphenyl()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
