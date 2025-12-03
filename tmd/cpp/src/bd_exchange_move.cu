@@ -62,7 +62,8 @@ BDExchangeMove<RealType>::BDExchangeMove(
                                   (BOLTZ * static_cast<double>(temperature)))),
       cutoff_squared_(cutoff * cutoff), batch_size_(batch_size),
       num_intermediates_per_reduce_(ceil_divide(N_, WEIGHT_THREADS_PER_BLOCK)),
-      num_attempted_(0), mol_potential_(N, target_mols, nb_beta, cutoff),
+      num_attempted_(num_systems, 0),
+      mol_potential_(N, target_mols, nb_beta, cutoff),
       sampler_(num_target_mols_, batch_size_, seed),
       logsumexp_(num_target_mols_, batch_size_),
       d_intermediate_coords_(batch_size_ * mol_size_ * 3), d_params_(params),
@@ -78,7 +79,7 @@ BDExchangeMove<RealType>::BDExchangeMove(
       d_samples_(batch_size_), d_selected_sample_(1),
       d_quaternions_(
           round_up_even(QUATERNIONS_PER_STEP * num_proposals_per_move_)),
-      d_mh_noise_(num_proposals_per_move), d_num_accepted_(1),
+      d_mh_noise_(num_proposals_per_move), d_num_accepted_(num_systems),
       d_target_mol_atoms_(batch_size_ * mol_size_),
       d_target_mol_offsets_(num_target_mols_ + 1),
       d_intermediate_sample_weights_(batch_size_ *
@@ -286,7 +287,7 @@ void BDExchangeMove<RealType>::move(const int num_systems, const int N,
               coords_ptr, d_before_mol_energy_buffer_.data,
               d_proposal_mol_energy_buffer_.data, d_noise_offset_.data,
               nullptr, // No inner/outer flags in Biased deletion
-              d_num_accepted_.data);
+              d_num_accepted_.data + system_idx);
       gpuErrchk(cudaPeekAtLastError());
       gpuErrchk(cudaMemcpyAsync(p_noise_offset_.data, d_noise_offset_.data,
                                 d_noise_offset_.size(), cudaMemcpyDeviceToHost,
@@ -300,7 +301,7 @@ void BDExchangeMove<RealType>::move(const int num_systems, const int N,
       gpuErrchk(cudaPeekAtLastError());
     }
     // Number of attempts is always the number of proposals per moves
-    num_attempted_ += num_proposals_per_move_;
+    num_attempted_[system_idx] += num_proposals_per_move_;
   }
 }
 
@@ -556,9 +557,9 @@ RealType BDExchangeMove<RealType>::log_probability_host() {
 }
 
 template <typename RealType>
-size_t BDExchangeMove<RealType>::n_accepted() const {
-  size_t h_accepted;
-  d_num_accepted_.copy_to(&h_accepted);
+std::vector<size_t> BDExchangeMove<RealType>::n_accepted() const {
+  std::vector<size_t> h_accepted(this->num_systems_);
+  d_num_accepted_.copy_to(&h_accepted[0]);
   return h_accepted;
 }
 

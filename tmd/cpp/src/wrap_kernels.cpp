@@ -3265,13 +3265,13 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
             verify_coords_and_box(coords, box);
             const int N = coords.shape()[0];
 
-            if (mol_idxs.size() != static_cast<ssize_t>(mover.num_systems())) {
+            if (mol_idxs.size() != static_cast<ssize_t>(mover.batch_size())) {
               throw std::runtime_error(
                   "number of mol idxs must match batch size");
             }
 
             if (quaternions.shape()[0] !=
-                static_cast<ssize_t>(mover.num_systems())) {
+                static_cast<ssize_t>(mover.batch_size())) {
               throw std::runtime_error(
                   "number of quaternions must match batch size");
             }
@@ -3280,7 +3280,7 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
             }
 
             if (translations.shape()[0] !=
-                static_cast<ssize_t>(mover.num_systems())) {
+                static_cast<ssize_t>(mover.batch_size())) {
               throw std::runtime_error(
                   "number of translations must match batch size");
             }

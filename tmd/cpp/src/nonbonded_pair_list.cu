@@ -110,6 +110,9 @@ void NonbondedPairList<RealType, Negated>::execute_device(
     const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
+  if (N != num_atoms_) {
+    throw std::runtime_error("N != num_atoms_");
+  }
   if (P != num_systems_ * num_atoms_ * PARAMS_PER_ATOM) {
     throw std::runtime_error(
         "NonbondedPairList::execute_device(): expected P == num_atoms_*" +

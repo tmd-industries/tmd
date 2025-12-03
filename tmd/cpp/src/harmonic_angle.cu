@@ -89,6 +89,10 @@ void HarmonicAngle<RealType>::execute_device(
     const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
+  if (N != num_atoms_) {
+    throw std::runtime_error("N != num_atoms_");
+  }
+
   if (cur_num_idxs_ > 0) {
     const int tpb = DEFAULT_THREADS_PER_BLOCK;
     const int blocks = ceil_divide(cur_num_idxs_, tpb);

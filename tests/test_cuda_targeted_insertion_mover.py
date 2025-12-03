@@ -174,10 +174,10 @@ def verify_targeted_moves(
     print(f"Accepted {accepted} of {total_num_proposals} moves")
     assert accepted > 0, "No moves were made, nothing was tested"
     if proposals_per_move == 1:
-        assert bdem.n_accepted() == accepted
+        assert all(x == accepted for x in bdem.n_accepted())
     else:
-        assert bdem.n_accepted() >= accepted
-    np.testing.assert_allclose(bdem.acceptance_fraction(), bdem.n_accepted() / bdem.n_proposed())
+        assert all(x >= accepted for x in bdem.n_accepted())
+    np.testing.assert_allclose(bdem.acceptance_fraction(), np.array(bdem.n_accepted()) / np.array(bdem.n_proposed()))
 
 
 # (YTZ) not-@cacheable for some reason, maybe results are being modified? investigate later
@@ -499,7 +499,7 @@ def test_targeted_insertion_buckyball_edge_cases(
     ref_bdem = RefTIBDExchangeMove(nb.potential.beta, cutoff, params, water_idxs, DEFAULT_TEMP, ligand_idxs, radius)
 
     verify_targeted_moves(all_group_idxs, bdem, ref_bdem, conf, box, moves, proposals_per_move, rtol, atol)
-    assert bdem.n_proposed() == moves
+    assert all(x == moves for x in bdem.n_proposed())
 
 
 @pytest.mark.parametrize("proposals_per_move, batch_size", [(20000, 1), (20000, 200)])
@@ -569,8 +569,8 @@ def test_targeted_insertion_brd4_rbfe_with_context(
         movers=[bdem, baro_impl],
     )
     xs, boxes = ctxt.multiple_steps(steps)
-    assert bdem.n_proposed() == (steps // interval) * proposals_per_move
-    assert bdem.n_accepted() > 0
+    assert all(x == (steps // interval) * proposals_per_move for x in bdem.n_proposed())
+    assert all(x > 0 for x in bdem.n_accepted())
 
     for bp in bound_impls:
         du_dx, _ = bp.execute(xs[-1], boxes[-1], True, False)
@@ -647,10 +647,10 @@ def test_tibd_exchange_deterministic_batch_moves(radius, proposals_per_move, bat
         assert not np.all(conf == iterative_moved_coords)
     batch_moved_coords, _ = bdem_b.move(conf, box)
 
-    assert bdem_a.n_accepted() > 0
-    assert bdem_a.n_proposed() == proposals_per_move * iterations
-    assert bdem_a.n_accepted() == bdem_b.n_accepted()
-    assert bdem_a.n_proposed() == bdem_b.n_proposed()
+    assert all(x >= 0 for x in bdem_a.n_accepted())
+    assert all(x == proposals_per_move * iterations for x in bdem_a.n_proposed())
+    np.testing.assert_array_equal(bdem_a.n_accepted(), bdem_b.n_accepted())
+    np.testing.assert_array_equal(bdem_a.n_proposed(), bdem_b.n_proposed())
 
     # Moves should be deterministic regardless the number of proposals per move
     np.testing.assert_array_equal(iterative_moved_coords, batch_moved_coords)
@@ -739,10 +739,10 @@ def test_targeted_insertion_buckyball_determinism(radius, proposals_per_move, ba
     assert not np.all(conf == serially_moved_coords)
     batch_moved_coords, _ = bdem_b.move(conf, box)
 
-    assert bdem_a.n_accepted() > 0
-    assert bdem_a.n_proposed() == proposals_per_move
-    assert bdem_a.n_accepted() == bdem_b.n_accepted()
-    assert bdem_a.n_proposed() == bdem_b.n_proposed()
+    assert all(x > 0 for x in bdem_a.n_accepted())
+    assert all(x == proposals_per_move for x in bdem_a.n_proposed())
+    np.testing.assert_array_equal(bdem_a.n_accepted(), bdem_b.n_accepted())
+    np.testing.assert_array_equal(bdem_a.n_proposed(), bdem_b.n_proposed())
 
     # Moves should be deterministic regardless the number of proposals per move
     np.testing.assert_array_equal(serially_moved_coords, batch_moved_coords)
@@ -814,12 +814,12 @@ def test_tibd_exchange_deterministic_moves(radius, proposals_per_move, batch_siz
     for _ in range(proposals_per_move):
         iterative_moved_coords, _ = bdem_a.move(iterative_moved_coords, box)
         assert not np.all(conf == iterative_moved_coords)  # We should move every time since its a single mol
+    assert all(x == proposals_per_move for x in bdem_a.n_proposed())
+    assert all(x > 0 for x in bdem_a.n_accepted())
     batch_moved_coords, _ = bdem_b.move(conf, box)
-    assert bdem_a.n_accepted() > 0
-    assert bdem_a.n_proposed() == proposals_per_move
-    assert bdem_a.n_accepted() == bdem_b.n_accepted()
-    assert bdem_a.n_proposed() == bdem_b.n_proposed()
 
+    np.testing.assert_array_equal(bdem_a.n_accepted(), bdem_b.n_accepted())
+    np.testing.assert_array_equal(bdem_a.n_proposed(), bdem_b.n_proposed())
     # Moves should be deterministic regardless the number of proposals per move
     np.testing.assert_array_equal(iterative_moved_coords, batch_moved_coords)
     if batch_size == 1:
@@ -888,7 +888,7 @@ def test_targeted_moves_in_bulk_water(
     verify_targeted_moves(
         all_group_idxs, bdem, ref_bdem, conf, box, total_num_proposals, proposals_per_move, rtol, atol
     )
-    assert bdem.n_proposed() == total_num_proposals
+    assert all(x == total_num_proposals for x in bdem.n_proposed())
 
 
 @pytest.mark.parametrize("radius", [1.2])
@@ -954,7 +954,7 @@ def test_moves_with_three_waters(
     verify_targeted_moves(
         all_group_idxs, bdem, ref_bdem, conf, box, total_num_proposals, proposals_per_move, rtol, atol
     )
-    assert bdem.n_proposed() == total_num_proposals
+    assert all(x == total_num_proposals for x in bdem.n_proposed())
 
 
 @pytest.mark.parametrize("radius", [1.1])
@@ -1036,7 +1036,7 @@ def test_targeted_moves_with_complex_and_ligand_in_brd4(
             verify_targeted_moves(
                 all_group_idxs, bdem, ref_bdem, conf, box, total_num_proposals, proposals_per_move, rtol, atol
             )
-            assert bdem.n_proposed() == (i + 1) * total_num_proposals
+            assert all(x == (i + 1) * total_num_proposals for x in bdem.n_proposed())
             # If we verified the target moves, we can exit
             return
         except AssertionError as e:

@@ -15,7 +15,7 @@
 
 import warnings
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
 from functools import cache, cached_property, partial
 from typing import Any, Optional
@@ -2134,8 +2134,15 @@ class SingleTopology(AtomMapMixin):
             angle=combined_angle,
             proper=combined_proper,
             improper=combined_improper,
-            chiral_atom=guest_system.chiral_atom,
-            chiral_bond=guest_system.chiral_bond,
-            nonbonded_pair_list=guest_system.nonbonded_pair_list,
+            chiral_atom=replace(
+                guest_system.chiral_atom, potential=replace(guest_system.chiral_atom.potential, num_atoms=N)
+            ),
+            chiral_bond=replace(
+                guest_system.chiral_bond, potential=replace(guest_system.chiral_bond.potential, num_atoms=N)
+            ),
+            nonbonded_pair_list=replace(
+                guest_system.nonbonded_pair_list,
+                potential=replace(guest_system.nonbonded_pair_list.potential, num_atoms=N),
+            ),
             nonbonded_all_pairs=host_nonbonded_all_pairs,
         )

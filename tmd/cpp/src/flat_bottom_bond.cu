@@ -96,6 +96,10 @@ void FlatBottomBond<RealType>::execute_device(
   const int num_params_per_bond = 3;
   int expected_P = num_params_per_bond * cur_num_idxs_;
 
+  if (N != num_atoms_) {
+    throw std::runtime_error("N != num_atoms_");
+  }
+
   if (P != expected_P) {
     throw std::runtime_error(
         "FlatBottomBond::execute_device(): expected P == " +

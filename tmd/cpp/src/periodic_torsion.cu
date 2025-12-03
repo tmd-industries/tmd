@@ -95,6 +95,10 @@ void PeriodicTorsion<RealType>::execute_device(
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
   const int blocks = ceil_divide(cur_num_idxs_, tpb);
 
+  if (N != num_atoms_) {
+    throw std::runtime_error("N != num_atoms_");
+  }
+
   if (blocks > 0) {
     if (P != 3 * cur_num_idxs_) {
       throw std::runtime_error("PeriodicTorsion::execute_device(): expected P "

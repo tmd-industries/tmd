@@ -372,7 +372,7 @@ void TIBDExchangeMove<RealType>::move(const int num_systems, const int N,
           this->d_intermediate_coords_.data, coords_ptr,
           this->d_before_mol_energy_buffer_.data,
           this->d_proposal_mol_energy_buffer_.data, this->d_noise_offset_.data,
-          d_inner_flags_.data, this->d_num_accepted_.data);
+          d_inner_flags_.data, this->d_num_accepted_.data + system_idx);
       gpuErrchk(cudaPeekAtLastError());
       k_convert_energies_to_log_weights<RealType>
           <<<mol_blocks, tpb, 0, stream>>>(
@@ -387,7 +387,7 @@ void TIBDExchangeMove<RealType>::move(const int num_systems, const int N,
       // Synchronize to get the new offset
       gpuErrchk(cudaStreamSynchronize(stream));
     }
-    this->num_attempted_ += this->num_proposals_per_move_;
+    this->num_attempted_[system_idx] += this->num_proposals_per_move_;
   }
 }
 

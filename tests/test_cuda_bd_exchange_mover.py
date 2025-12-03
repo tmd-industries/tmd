@@ -99,10 +99,10 @@ def verify_bias_deletion_moves(
     print(f"Accepted {bdem.n_accepted()} of {total_num_proposals} moves")
     assert accepted > 0, "No moves were made, nothing was tested"
     if proposals_per_move == 1:
-        assert bdem.n_accepted() == accepted
+        assert all(x == accepted for x in bdem.n_accepted())
     else:
-        assert bdem.n_accepted() >= accepted
-    np.testing.assert_allclose(bdem.acceptance_fraction(), bdem.n_accepted() / bdem.n_proposed())
+        assert all(x >= accepted for x in bdem.n_accepted())
+    np.testing.assert_allclose(bdem.acceptance_fraction(), np.array(bdem.n_accepted()) / np.array(bdem.n_proposed()))
 
 
 @pytest.mark.memcheck
@@ -265,7 +265,7 @@ def test_pair_of_waters_in_box(proposals_per_move, total_num_proposals, batch_si
     verify_bias_deletion_moves(
         group_idxs, bdem, ref_bdem, conf, box, total_num_proposals, proposals_per_move, rtol, atol
     )
-    assert bdem.n_proposed() == total_num_proposals
+    assert all(x == total_num_proposals for x in bdem.n_proposed())
 
 
 @pytest.mark.memcheck
@@ -319,7 +319,7 @@ def test_sampling_single_water_in_bulk(
     verify_bias_deletion_moves(
         all_group_idxs, bdem, ref_bdem, conf, box, total_num_proposals, proposals_per_move, rtol, atol
     )
-    assert bdem.n_proposed() == total_num_proposals
+    assert all(x == total_num_proposals for x in bdem.n_proposed())
 
 
 @pytest.mark.parametrize("batch_size", [1, 200])
@@ -386,8 +386,8 @@ def test_bias_deletion_bulk_water_with_context(precision, seed, batch_size):
         movers=[bdem, baro_impl],
     )
     xs, boxes = ctxt.multiple_steps(steps)
-    assert bdem.n_proposed() == (steps // interval) * proposals_per_move
-    assert bdem.n_accepted() > 0
+    assert all(x == (steps // interval) * proposals_per_move for x in bdem.n_proposed())
+    assert all(x > 0 for x in bdem.n_accepted())
 
     # Verify that the system is still stable
     for bp in bound_impls:
@@ -446,13 +446,14 @@ def test_bd_exchange_deterministic_moves(proposals_per_move, batch_size, precisi
     for _ in range(proposals_per_move):
         iterative_moved_coords, _ = bdem_a.move(iterative_moved_coords, box)
         assert not np.all(conf == iterative_moved_coords)
+    # Typically this should accept at least half the number of moves as proposals
+    assert all(x == proposals_per_move for x in bdem_a.n_proposed())
+    assert all(x >= max(proposals_per_move // 2, 1) for x in bdem_a.n_accepted())
+
     batch_moved_coords, _ = bdem_b.move(conf, box)
 
-    # Typically this should accept at least half the number of moves as proposals
-    assert bdem_a.n_accepted() >= max(proposals_per_move // 2, 1)
-    assert bdem_a.n_proposed() == proposals_per_move
-    assert bdem_a.n_accepted() == bdem_b.n_accepted()
-    assert bdem_a.n_proposed() == bdem_b.n_proposed()
+    np.testing.assert_array_equal(bdem_a.n_accepted(), bdem_b.n_accepted())
+    np.testing.assert_array_equal(bdem_a.n_proposed(), bdem_b.n_proposed())
 
     # Moves should be deterministic regardless the number of proposals per move
     np.testing.assert_array_equal(iterative_moved_coords, batch_moved_coords)
@@ -511,12 +512,12 @@ def test_bd_exchange_deterministic_batch_moves(proposals_per_move, batch_size, p
     for _ in range(iterations):
         iterative_moved_coords, _ = bdem_a.move(iterative_moved_coords, box)
         assert not np.all(conf == iterative_moved_coords)
+    assert all(x >= 0 for x in bdem_a.n_accepted())
+    assert all(x == proposals_per_move * iterations for x in bdem_a.n_proposed())
     batch_moved_coords, _ = bdem_b.move(conf, box)
 
-    assert bdem_a.n_accepted() > 0
-    assert bdem_a.n_proposed() == proposals_per_move * iterations
-    assert bdem_a.n_accepted() == bdem_b.n_accepted()
-    assert bdem_a.n_proposed() == bdem_b.n_proposed()
+    np.testing.assert_array_equal(bdem_a.n_accepted(), bdem_b.n_accepted())
+    np.testing.assert_array_equal(bdem_a.n_proposed(), bdem_b.n_proposed())
 
     # Moves should be deterministic regardless the number of proposals per move
     np.testing.assert_array_equal(iterative_moved_coords, batch_moved_coords)
@@ -618,7 +619,7 @@ def test_moves_in_a_water_box(
             verify_bias_deletion_moves(
                 group_idxs, bdem, ref_bdem, conf, box, total_num_proposals, num_proposals_per_move, rtol, atol
             )
-            assert bdem.n_proposed() == (i + 1) * total_num_proposals
+            assert all(x == (i + 1) * total_num_proposals for x in bdem.n_proposed())
             # If we verified the target moves, we can exit
             return
         except AssertionError as e:
@@ -685,8 +686,8 @@ def test_compute_incremental_log_weights_match_initial_log_weights_when_recomput
 
     updated_coords, _ = bdem.move(conf, box)
     assert not np.all(updated_coords == conf)
-    assert bdem.n_accepted() >= 1
-    assert bdem.n_proposed() == proposals_per_move
+    assert all(x >= 1 for x in bdem.n_accepted())
+    assert all(x == proposals_per_move for x in bdem.n_proposed())
 
     before_log_weights = bdem.get_before_log_weights()
     ref_log_weights = bdem.compute_initial_log_weights(updated_coords, box)
@@ -889,7 +890,7 @@ def test_moves_with_complex(
     verify_bias_deletion_moves(
         all_group_idxs, bdem, ref_bdem, conf, box, total_num_proposals, num_proposals_per_move, rtol, atol
     )
-    assert bdem.n_proposed() == total_num_proposals
+    assert all(x == total_num_proposals for x in bdem.n_proposed())
 
 
 @pytest.fixture(scope="module")
@@ -986,7 +987,7 @@ def test_bd_moves_with_complex_and_ligand(
             verify_bias_deletion_moves(
                 all_group_idxs, bdem, ref_bdem, conf, box, total_num_proposals, num_proposals_per_move, rtol, atol
             )
-            assert bdem.n_proposed() == (i + 1) * total_num_proposals
+            assert all(x == (i + 1) * total_num_proposals for x in bdem.n_proposed())
             # If we verified the target moves, we can exit
             return
         except AssertionError as e:

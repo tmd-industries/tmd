@@ -91,7 +91,10 @@ void HarmonicBond<RealType>::execute_device(
     const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
-  // assert(batches == 1);
+  if (N != num_atoms_) {
+    throw std::runtime_error("N != num_atoms_");
+  }
+
   if (cur_num_idxs_ > 0) {
     if (P != 2 * cur_num_idxs_) {
       throw std::runtime_error(
