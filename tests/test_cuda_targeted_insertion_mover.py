@@ -570,14 +570,17 @@ def test_targeted_insertion_brd4_rbfe_with_context(
         batch_size=batch_size,
     )
 
-    for bp in bound_impls:
-        du_dx, _ = bp.execute(
-            np.array([conf] * num_systems, dtype=precision).squeeze(),
-            np.array([box] * num_systems, dtype=precision).squeeze(),
-            True,
-            False,
-        )
-        np.testing.assert_array_equal(du_dx[1], du_dx[0], err_msg=f"{bp.get_potential()} mismatch")
+    if num_systems > 1:
+        for bp in bound_impls:
+            du_dx, _ = bp.execute(
+                np.array([conf] * num_systems, dtype=precision).squeeze(),
+                np.array([box] * num_systems, dtype=precision).squeeze(),
+                True,
+                False,
+            )
+            du_dx = du_dx.reshape(num_systems, *conf.shape)
+            for du_dx_batch in du_dx[1:]:
+                np.testing.assert_array_equal(du_dx_batch, du_dx[0], err_msg=f"{bp.get_potential()} mismatch")
 
     assert initial_state.barostat is not None
     baro_impl = initial_state.barostat.impl(bound_impls)
