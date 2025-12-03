@@ -53,7 +53,6 @@ from tmd.fe.free_energy import (
     InitialState,
     LocalMDParams,
     MDParams,
-    RESTParams,
     SimulationResult,
     WaterSamplingParams,
     make_pair_bar_plots,
@@ -550,20 +549,9 @@ def main():
         help="How much to expand the radius of the sphere used for water sampling (nm). Half of the largest intramolecular distance is used as the starting radius to which the padding is added: dist/2 + padding",
     )
     parser.add_argument(
-        "--rest_max_temperature_scale",
-        default=3.0,
-        type=float,
-        help="Maximum scale factor for the effective temperature of REST-softened interactions. Setting to 1.0 effectively disables REST.",
-    )
-    parser.add_argument(
-        "--rest_temperature_scale_interpolation",
-        default="exponential",
-        type=str,
-        help="Functional form to use for temperature scale interpolation in REST",
-    )
-    parser.add_argument(
         "--output_dir", default=None, help="Directory to output results, else generates a directory based on the time"
     )
+    parser.add_argument("--legs", default=[COMPLEX_LEG, SOLVENT_LEG], nargs="+")
     parser.add_argument("--local_md_k", default=10_000.0, type=float, help="Local MD k parameter")
     parser.add_argument("--local_md_radius", default=1.2, type=float, help="Local MD radius")
     parser.add_argument("--local_md_free_reference", action="store_true")
@@ -633,7 +621,6 @@ def main():
             seed=args.seed,
             hrex_params=HREXParams(
                 optimize_target_overlap=args.target_overlap,
-                rest_params=RESTParams(args.rest_max_temperature_scale, args.rest_temperature_scale_interpolation),
             ),
             local_md_params=LocalMDParams(
                 args.local_md_steps,
@@ -646,7 +633,7 @@ def main():
             else None,
             water_sampling_params=WaterSamplingParams(radius=mol_radius + args.water_sampling_padding),
         )
-        for leg in (COMPLEX_LEG, SOLVENT_LEG):
+        for leg in args.legs:
             fut = pool.submit(
                 run_abfe,
                 file_client,
