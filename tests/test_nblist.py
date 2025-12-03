@@ -522,10 +522,11 @@ def test_neighborlist_on_subset_of_system(num_systems):
                 assert_ixn_lists_are_equal(reference_subset_ixns, system_idxs)
 
 
-@pytest.mark.memcheck
 @pytest.mark.parametrize("num_systems", [1, 2])
 @pytest.mark.parametrize("block_size", [32])
-@pytest.mark.parametrize("tiles", [2, 10, 100])
+@pytest.mark.parametrize(
+    "tiles", [pytest.param(2, marks=pytest.mark.memcheck), pytest.param(10, marks=pytest.mark.memcheck), 100]
+)
 @pytest.mark.parametrize("upper_triangular", [False, True])
 def test_nblist_max_interactions(num_systems, block_size, tiles, upper_triangular):
     """Verify that if all particles in the system interact, that the neighborlist correctly assigns large enough buffers"""
@@ -537,7 +538,7 @@ def test_nblist_max_interactions(num_systems, block_size, tiles, upper_triangula
     coords = rng.random(size=(num_systems, n_atoms, 3)).squeeze()
     box = np.array([np.eye(3) * 100.0] * num_systems).squeeze()
 
-    nblist = custom_ops.Neighborlist_f32(num_systems, n_atoms, True)
+    nblist = custom_ops.Neighborlist_f32(num_systems, n_atoms, upper_triangular)
     max_ixn_count = nblist.get_max_ixn_count()
     test_ixn_list = nblist.get_nblist(coords, box, cutoff, padding)
     assert np.mean(compute_tile_densities(nblist, coords, box, cutoff, padding)) == 1.0
