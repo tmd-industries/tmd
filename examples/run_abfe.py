@@ -317,7 +317,7 @@ def estimate_abfe_leg(
         # Run short equilibration to obtain trajectory used to pick restraint atoms
         initial_state = get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, 0.0)
         # TBD: How many frames do you want from here?
-        sample_md_params = replace(md_params, n_eq_steps=200000, n_frames=100)
+        sample_md_params = replace(md_params, n_eq_steps=200000)
         trj = sample(initial_state, sample_md_params, 100)
 
         afe = AbsoluteBindingFreeEnergy.create(bt, host_config, trj, rst_params)
