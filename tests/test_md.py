@@ -596,7 +596,7 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
     [
         pytest.param(1, marks=pytest.mark.memcheck),
         pytest.param(2, marks=pytest.mark.memcheck),
-        pytest.param(4, marks=pytest.mark.memcheck),
+        4,
         8,
         16,
         32,
