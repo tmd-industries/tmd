@@ -104,7 +104,7 @@ void Context<RealType>::_verify_coords_and_box(const RealType *coords_buffer,
         throw std::runtime_error(
             "cutoff with padding is more than half of the box width, "
             "neighborlist is no longer reliable. Batch " +
-            std::to_string(i + 1));
+            std::to_string(i));
       }
     }
     const RealType max_box_dim =
@@ -119,7 +119,7 @@ void Context<RealType>::_verify_coords_and_box(const RealType *coords_buffer,
       throw std::runtime_error(
           "simulation unstable: dimensions of coordinates two orders of "
           "magnitude larger than max box dimension. Batch " +
-          std::to_string(i + 1));
+          std::to_string(i));
     }
   }
 }

@@ -152,25 +152,24 @@ void TIBDExchangeMove<RealType>::move(const int num_systems, const int N,
   curandErrchk(curandSetStream(this->cr_rng_translations_, stream));
   curandErrchk(curandSetStream(this->cr_rng_samples_, stream));
   curandErrchk(curandSetStream(this->cr_rng_mh_, stream));
+  const int tpb = DEFAULT_THREADS_PER_BLOCK;
+  const int mol_blocks = ceil_divide(this->num_target_mols_, tpb);
+  const int sample_blocks = ceil_divide(this->batch_size_, tpb);
+
+  dim3 atom_by_atom_grid(ceil_divide(N, tpb), this->mol_size_);
 
   for (int system_idx = 0; system_idx < this->num_systems_; system_idx++) {
     // Set the offset to 0
     gpuErrchk(cudaMemsetAsync(this->d_noise_offset_.data, 0,
                               this->d_noise_offset_.size(), stream));
 
-    RealType *coords_ptr = d_coords + N * system_idx * 3;
+    RealType *coords_ptr = d_coords + system_idx * N * 3;
     RealType *box_ptr = d_box + system_idx * 9;
     const RealType *params_ptr =
         this->d_params_.data + system_idx * N * PARAMS_PER_ATOM;
 
     this->compute_initial_log_weights_device(N, coords_ptr, box_ptr, params_ptr,
                                              stream);
-
-    const int tpb = DEFAULT_THREADS_PER_BLOCK;
-    const int mol_blocks = ceil_divide(this->num_target_mols_, tpb);
-    const int sample_blocks = ceil_divide(this->batch_size_, tpb);
-
-    dim3 atom_by_atom_grid(ceil_divide(N, tpb), this->mol_size_, 1);
 
     k_compute_centroid_of_atoms<RealType><<<1, tpb, 0, stream>>>(
         static_cast<int>(d_ligand_idxs_.length), d_ligand_idxs_.data,

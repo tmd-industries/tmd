@@ -35,7 +35,7 @@ from tmd.fe.single_topology import SingleTopology
 from tmd.fe.topology import BaseTopology
 from tmd.fe.utils import read_sdf
 from tmd.ff import Forcefield
-from tmd.lib import custom_ops
+from tmd.lib import LangevinIntegrator, custom_ops
 from tmd.md import builders
 from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
 from tmd.md.exchange.exchange_mover import TIBDExchangeMove as RefTIBDExchangeMove
@@ -502,12 +502,13 @@ def test_targeted_insertion_buckyball_edge_cases(
     assert all(x == moves for x in bdem.n_proposed())
 
 
+@pytest.mark.parametrize("num_systems", [1, 2])
 @pytest.mark.parametrize("proposals_per_move, batch_size", [(20000, 1), (20000, 200)])
 @pytest.mark.parametrize("radius", [1.3])
 @pytest.mark.parametrize("precision", [np.float32])
 @pytest.mark.parametrize("seed", [2023])
 def test_targeted_insertion_brd4_rbfe_with_context(
-    brd4_rbfe_state: InitialState, proposals_per_move, batch_size, radius, precision, seed
+    brd4_rbfe_state: InitialState, proposals_per_move, batch_size, radius, precision, seed, num_systems
 ):
     # Interval has to be large enough to resolve clashes in the MD steps
     interval = 800
@@ -539,15 +540,26 @@ def test_targeted_insertion_brd4_rbfe_with_context(
 
     bound_impls = []
     for potential in initial_state.potentials:
-        bound_impls.append(potential.to_gpu(precision=np.float32).bound_impl)
+        combined_bp = potential
+        for _ in range(num_systems - 1):
+            combined_bp = combined_bp.combine(potential)
+        bound_impls.append(combined_bp.to_gpu(precision=np.float32).bound_impl)
 
     ligand_idxs = [int(x) for x in initial_state.ligand_idxs]
+
+    intg = LangevinIntegrator(
+        initial_state.integrator.temperature,
+        initial_state.integrator.dt,
+        initial_state.integrator.friction,
+        np.array([initial_state.integrator.masses] * num_systems),
+        seed,
+    ).impl()
 
     bdem = custom_ops.TIBDExchangeMove_f32(
         N,
         ligand_idxs,
         water_idxs,
-        water_params,
+        np.array([water_params] * num_systems, dtype=precision),
         DEFAULT_TEMP,
         nb.potential.beta,
         cutoff,
@@ -558,23 +570,31 @@ def test_targeted_insertion_brd4_rbfe_with_context(
         batch_size=batch_size,
     )
 
+    for bp in bound_impls:
+        du_dx, _ = bp.execute(
+            np.array([conf] * num_systems, dtype=precision).squeeze(),
+            np.array([box] * num_systems, dtype=precision).squeeze(),
+            True,
+            False,
+        )
+        np.testing.assert_array_equal(du_dx[1], du_dx[0], err_msg=f"{bp.get_potential()} mismatch")
+
     assert initial_state.barostat is not None
     baro_impl = initial_state.barostat.impl(bound_impls)
     ctxt = custom_ops.Context_f32(
-        conf,
-        np.zeros_like(conf),
-        box,
-        initial_state.integrator.impl(),
+        np.array([conf] * num_systems, dtype=precision).squeeze(),
+        np.zeros((num_systems, *conf.shape), dtype=precision).squeeze(),
+        np.array([box] * num_systems, dtype=precision).squeeze(),
+        intg,
         bound_impls,
-        movers=[bdem, baro_impl],
+        movers=[baro_impl, bdem],
     )
     xs, boxes = ctxt.multiple_steps(steps)
-    assert all(x == (steps // interval) * proposals_per_move for x in bdem.n_proposed())
-    assert all(x > 0 for x in bdem.n_accepted())
-
     for bp in bound_impls:
         du_dx, _ = bp.execute(xs[-1], boxes[-1], True, False)
         check_force_norm(-du_dx)
+    assert all([x == (steps // interval) * proposals_per_move for x in bdem.n_proposed()])
+    assert all([x > 0 for x in bdem.n_accepted()])
 
 
 @pytest.mark.parametrize("radius", [1.0])

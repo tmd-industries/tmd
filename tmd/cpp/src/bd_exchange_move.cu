@@ -335,9 +335,9 @@ void BDExchangeMove<RealType>::compute_initial_log_weights_device(
 template <typename RealType>
 void BDExchangeMove<RealType>::compute_incremental_log_weights_device(
     const int N, const bool scale,
-    const RealType *d_box,          // [num_systems, 3, 3]
-    const RealType *d_coords,       // [num_systems, N, 3]
-    const RealType *d_params,       // [num_systems, N, 4]
+    const RealType *d_box,          // [3, 3]
+    const RealType *d_coords,       // [N, 3]
+    const RealType *d_params,       // [N, 4]
     const RealType *d_quaternions,  // [batch_size_, 4]
     const RealType *d_translations, // [batch_size_, 3]
     cudaStream_t stream) {
@@ -372,7 +372,7 @@ void BDExchangeMove<RealType>::compute_incremental_log_weights_device(
 
   k_atom_by_atom_energies<RealType><<<atom_by_atom_grid, tpb, 0, stream>>>(
       N, mol_size_ * batch_size_, d_target_mol_atoms_.data, nullptr, d_coords,
-      d_params_.data, d_box, nb_beta_, cutoff_squared_,
+      d_params, d_box, nb_beta_, cutoff_squared_,
       d_sample_per_atom_energy_buffer_.data);
   gpuErrchk(cudaPeekAtLastError());
 
@@ -390,7 +390,7 @@ void BDExchangeMove<RealType>::compute_incremental_log_weights_device(
 
   k_atom_by_atom_energies<RealType><<<atom_by_atom_grid, tpb, 0, stream>>>(
       N, mol_size_ * batch_size_, d_target_mol_atoms_.data,
-      d_intermediate_coords_.data, d_coords, d_params_.data, d_box, nb_beta_,
+      d_intermediate_coords_.data, d_coords, d_params, d_box, nb_beta_,
       cutoff_squared_, d_sample_per_atom_energy_buffer_.data);
   gpuErrchk(cudaPeekAtLastError());
 

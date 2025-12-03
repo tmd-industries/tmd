@@ -36,7 +36,8 @@ void __global__ k_chiral_atom_restraint(
     return;
   }
 
-  const int coord_offset = system_idxs[r_idx] * N;
+  const int system_idx = system_idxs[r_idx];
+  const int coord_offset = system_idx * N;
 
   const int xc_idx = idxs[r_idx * 4 + 0] + coord_offset;
   const int x1_idx = idxs[r_idx * 4 + 1] + coord_offset;

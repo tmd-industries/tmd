@@ -322,10 +322,11 @@ def test_sampling_single_water_in_bulk(
     assert all(x == total_num_proposals for x in bdem.n_proposed())
 
 
+@pytest.mark.parametrize("num_systems", [1, 2])
 @pytest.mark.parametrize("batch_size", [1, 200])
 @pytest.mark.parametrize("precision", [np.float32])
 @pytest.mark.parametrize("seed", [2023])
-def test_bias_deletion_bulk_water_with_context(precision, seed, batch_size):
+def test_bias_deletion_bulk_water_with_context(precision, seed, batch_size, num_systems):
     ff = Forcefield.load_default()
     host_config = builders.build_water_system(4.0, ff.water_ff, box_margin=0.1)
     nb = host_config.host_system.nonbonded_all_pairs
@@ -342,7 +343,10 @@ def test_bias_deletion_bulk_water_with_context(precision, seed, batch_size):
 
     bound_impls = []
     for potential in host_config.host_system.get_U_fns():
-        bound_impls.append(potential.to_gpu(precision=np.float32).bound_impl)
+        combined_bp = potential
+        for _ in range(num_systems - 1):
+            combined_bp = combined_bp.combine(potential)
+        bound_impls.append(combined_bp.to_gpu(precision=np.float32).bound_impl)
 
     klass = custom_ops.BDExchangeMove_f32
     if precision == np.float64:
@@ -354,7 +358,7 @@ def test_bias_deletion_bulk_water_with_context(precision, seed, batch_size):
     bdem = klass(
         conf.shape[0],
         water_idxs,
-        nb.params.astype(precision),
+        [nb.params.astype(precision)] * num_systems,
         DEFAULT_TEMP,
         nb.potential.beta,
         nb.potential.cutoff,
@@ -363,8 +367,9 @@ def test_bias_deletion_bulk_water_with_context(precision, seed, batch_size):
         interval,
         batch_size=batch_size,
     )
+    assert bdem.num_systems() == num_systems
 
-    intg = LangevinIntegrator(DEFAULT_TEMP, dt, 1.0, np.array(masses), seed).impl()
+    intg = LangevinIntegrator(DEFAULT_TEMP, dt, 1.0, [masses] * num_systems, seed).impl()
 
     barostat_interval = 5
     baro = MonteCarloBarostat(
@@ -378,9 +383,9 @@ def test_bias_deletion_bulk_water_with_context(precision, seed, batch_size):
     baro_impl = baro.impl(bound_impls)
 
     ctxt = custom_ops.Context_f32(
-        conf,
-        np.zeros_like(conf),
-        box,
+        np.array([conf] * num_systems, dtype=precision).squeeze(),
+        np.zeros((num_systems, *conf.shape), dtype=precision).squeeze(),
+        np.array([box] * num_systems, dtype=precision).squeeze(),
         intg,
         bound_impls,
         movers=[bdem, baro_impl],
