@@ -112,7 +112,8 @@ def test_multiple_steps_store_interval():
 
 
 @pytest.mark.memcheck
-def test_set_and_get():
+@pytest.mark.parametrize("num_systems", [1, 2])
+def test_set_and_get(num_systems):
     """
     This test the setters and getters in the context.
     """
@@ -127,7 +128,6 @@ def test_set_and_get():
     E = 2
 
     params, potential = prepare_nb_system(x0, E, p_scale=3.0, cutoff=1.0)
-    test_nrg = potential.to_gpu(precision=np.float32)
 
     masses = np.random.rand(N)
     v0 = np.random.rand(x0.shape[0], x0.shape[1])
@@ -137,14 +137,17 @@ def test_set_and_get():
     friction = 0.0
 
     box = np.eye(3) * 3.0
-    intg = LangevinIntegrator(temperature, dt, friction, masses, 1234).impl()
+    intg = LangevinIntegrator(temperature, dt, friction, [masses] * num_systems, 1234).impl()
 
-    bp = test_nrg.bind(params).bound_impl
-    bps = [bp]
+    bp = potential.bind(params)
+    for _ in range(num_systems - 1):
+        bp = bp.combine(potential.bind(params))
+    bps = [bp.to_gpu(np.float32).bound_impl]
+    assert bps[-1].num_systems() == num_systems
 
-    x0 = x0.astype(np.float32)
-    v0 = v0.astype(np.float32)
-    box = box.astype(np.float32)
+    x0 = np.array([x0] * num_systems, dtype=np.float32).squeeze()
+    v0 = np.array([v0] * num_systems, dtype=np.float32).squeeze()
+    box = np.array([box] * num_systems, dtype=np.float32).squeeze()
 
     ctxt = Context(x0, v0, box, intg, bps)
 
@@ -152,29 +155,33 @@ def test_set_and_get():
     np.testing.assert_equal(ctxt.get_v_t(), v0)
     np.testing.assert_equal(ctxt.get_box(), box)
 
-    new_x = np.random.rand(N, 3).astype(np.float32)
+    new_x = np.random.rand(num_systems, N, 3).astype(np.float32).squeeze()
     ctxt.set_x_t(new_x)
 
-    with pytest.raises(RuntimeError, match="number of new coords disagree with current coords"):
-        bad_x = np.random.rand(N + 1, 3).astype(np.float32)
+    with pytest.raises(RuntimeError, match="number of new coords disagree with number of atoms"):
+        bad_x = np.random.rand(num_systems, N + 1, 3).astype(np.float32).squeeze()
+        ctxt.set_x_t(bad_x)
+
+    with pytest.raises(RuntimeError, match="coords must have have final dimension of 3"):
+        bad_x = np.random.rand(num_systems, N, 4).astype(np.float32).squeeze()
         ctxt.set_x_t(bad_x)
 
     np.testing.assert_equal(ctxt.get_x_t(), new_x)
 
-    new_v = np.random.rand(N, 3).astype(np.float32)
+    new_v = np.random.rand(*new_x.shape).astype(np.float32)
     ctxt.set_v_t(new_v)
 
-    with pytest.raises(RuntimeError, match="number of new velocities disagree with current coords"):
-        bad_v = np.random.rand(N - 1, 3).astype(np.float32)
+    with pytest.raises(RuntimeError, match="number of new velocities disagree with number of atoms"):
+        bad_v = np.random.rand(num_systems, N + 1, 3).astype(np.float32).squeeze()
         ctxt.set_v_t(bad_v)
 
     np.testing.assert_equal(ctxt.get_v_t(), new_v)
 
-    new_box = np.eye(3, dtype=np.float32) * np.random.rand(3, 3).astype(np.float32)
+    new_box = np.array([np.eye(3, dtype=np.float32) * np.random.rand(3, 3)] * num_systems).astype(np.float32).squeeze()
     ctxt.set_box(new_box)
 
     with pytest.raises(RuntimeError, match="box must be 3x3"):
-        bad_box = np.random.rand(3, 4).astype(np.float32)
+        bad_box = np.random.rand(num_systems, 3, 4).astype(np.float32).squeeze()
         ctxt.set_box(bad_box)
 
     np.testing.assert_equal(ctxt.get_box(), new_box)
