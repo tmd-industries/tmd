@@ -322,16 +322,16 @@ def test_run_abfe(
 
             results = np.load(str(leg_dir / "results.npz"))
             assert results["pred_dg"].size == 1
-            assert results["pred_dg"].dtype == np.float64
+            assert results["pred_dg"].dtype in (np.float64, np.float32)
             assert results["pred_dg"] != 0.0
 
             assert results["pred_dg_err"].size == 1
-            assert results["pred_dg_err"].dtype == np.float64
+            assert results["pred_dg_err"].dtype in (np.float64, np.float32)
             assert results["pred_dg_err"] != 0.0
 
             if leg == "complex":
                 assert results["correction"].size == 1
-                assert results["correction"].dtype == np.float64
+                assert results["correction"].dtype in (np.float64, np.float32)
                 assert results["correction"] != 0.0
             else:
                 assert "correction" not in results

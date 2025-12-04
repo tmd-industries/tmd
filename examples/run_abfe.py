@@ -506,6 +506,7 @@ def run_abfe(
         writer.write(mol)
 
     np.random.seed(md_params.seed)
+    init_dir = os.getcwd()
     # Change the working directory, so any files written out go to the appropriate directory
     os.chdir(file_client.full_path(leg_path))
 
@@ -519,6 +520,7 @@ def run_abfe(
         mol, ff, leg, host_config, f"abfe_{leg}", md_params, n_windows, min_overlap, RestraintParams()
     )
     took = time.perf_counter() - start
+    os.chdir(init_dir)
 
     pred_dg = float(np.sum(res.final_result.dGs))
     pred_dg_err = float(np.linalg.norm(res.final_result.dG_errs))
