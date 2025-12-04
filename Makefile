@@ -56,7 +56,7 @@ fixed_output_tests:
 # Reduce the parallelism of the tests here, to reduce memory implications
 .PHONY: memcheck_tests
 memcheck_tests:
-	$(COMPUTE_SANITIZER_CMD) pytest -m '$(MEMCHECK_MARKER) and not $(NIGHTLY_MARKER)' $(PYTEST_CI_ARGS) --maxprocesses=1
+	$(COMPUTE_SANITIZER_CMD) pytest -m '$(MEMCHECK_MARKER) and not $(NIGHTLY_MARKER)' $(PYTEST_CI_ARGS)
 
 .PHONY: unit_tests
 unit_tests:
