@@ -81,6 +81,7 @@ from tmd.potentials import (
     PeriodicTorsion,
 )
 from tmd.potentials.bonded import kahan_angle, signed_torsion_angle
+from tmd.potentials.jax_utils import delta_r
 from tmd.potentials.potential import get_potential_by_type
 
 Snapshot = tuple[NDArray, NDArray]
@@ -151,7 +152,7 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
         """Get atom1, atom2, distance."""
         i0 = [self.rec_atoms[0], self.lig_atoms[0]]
         a0, b0 = self.cpx_coords[i0]
-        r0 = np.linalg.norm(a0 - b0)
+        r0 = np.linalg.norm(delta_r(a0, b0, self.box))
         return (i0, r0)
 
     def get_bond_restraint(self, scale: float) -> tuple[HarmonicBond, NDArray]:
@@ -709,7 +710,7 @@ def main():
                 mol,
                 leg,
                 ff,
-                args.pdb_path,
+                str(Path(args.pdb_path).resolve()),
                 md_params,
                 args.n_windows,
                 args.min_overlap,
