@@ -62,7 +62,7 @@ def test_bound_potential_empty_params():
     bond_idxs = np.empty((0, 2), dtype=np.int32)
     params = np.empty((0, 2))
     u_test = HarmonicBond(3, bond_idxs).bind(params).to_gpu(np.float32)
-    x = np.empty((0, 3), dtype=np.float32)
+    x = np.empty((3, 3), dtype=np.float32)
     box = np.eye(3, dtype=np.float32)
     assert u_test(x, box) == 0.0
 
