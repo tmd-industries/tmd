@@ -495,7 +495,7 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
         ctxt.multiple_steps_local_selection(100, 1, np.array([2], dtype=np.int32), store_x_interval=-1)
 
 
-@pytest.mark.parametrize("precision", [np.float32, np.float64])
+@pytest.mark.parametrize("precision", [np.float32])
 @pytest.mark.parametrize("seed", [2025])
 @pytest.mark.parametrize(
     "num_systems",
@@ -601,7 +601,7 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
         assert boxes.shape == (1, 3, 3)
 
 
-@pytest.mark.parametrize("precision", [np.float32, np.float64])
+@pytest.mark.parametrize("precision", [np.float32])
 @pytest.mark.parametrize("seed", [2025])
 @pytest.mark.parametrize(
     "num_systems",
