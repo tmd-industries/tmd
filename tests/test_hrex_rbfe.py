@@ -192,15 +192,13 @@ def test_hrex_rbfe_hif2a(
         # min_overlap is None here, will reach the max number of windows
         assert final_windows == max_bisection_windows
 
-    # When running the tests under x-dist, checking that the RSS isn't increasing is flaky
-    if worker_id == "master":
-        assert len(rss_traj) > final_windows * md_params.n_frames
-        # Check that memory usage is not increasing
-        rss_traj = rss_traj[10:]  # discard initial transients
-        assert len(rss_traj)
-        rss_diff_count = np.sum(np.diff(rss_traj) != 0)
-        rss_increase_count = np.sum(np.diff(rss_traj) > 0)
-        assert stats.binom.pmf(rss_increase_count, n=rss_diff_count, p=0.5) >= 0.001
+    assert len(rss_traj) > final_windows * md_params.n_frames
+    # Check that memory usage is not increasing
+    rss_traj = rss_traj[10:]  # discard initial transients
+    assert len(rss_traj)
+    rss_diff_count = np.sum(np.diff(rss_traj) != 0)
+    rss_increase_count = np.sum(np.diff(rss_traj) > 0)
+    assert stats.binom.pmf(rss_increase_count, n=rss_diff_count, p=0.5) >= 0.001, rss_traj
 
     if DEBUG:
         plot_hrex_rbfe_hif2a(result)
