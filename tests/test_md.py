@@ -499,7 +499,7 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
 @pytest.mark.parametrize("seed", [2025])
 @pytest.mark.parametrize(
     "num_systems",
-    [pytest.param(1, marks=pytest.mark.memcheck), pytest.param(2, marks=pytest.mark.memcheck), 16, 32, 48],
+    [1, 2, 16, 32, 48],
 )
 @pytest.mark.parametrize("integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator])
 def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass):
@@ -606,8 +606,8 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
 @pytest.mark.parametrize(
     "num_systems",
     [
-        pytest.param(1, marks=pytest.mark.memcheck),
-        pytest.param(2, marks=pytest.mark.memcheck),
+        1,
+        2,
         4,
         8,
         16,
