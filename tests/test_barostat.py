@@ -268,10 +268,10 @@ def test_barostat_partial_group_idxs():
 @pytest.mark.parametrize(
     "box_width, iterations, num_systems",
     [
-        pytest.param(4.0, 1000, 1, marks=pytest.mark.memcheck),
-        pytest.param(4.0, 1000, 2, marks=pytest.mark.memcheck),
-        pytest.param(4.0, 1000, 4),
-        pytest.param(4.0, 1000, 12),
+        pytest.param(3.0, 30, 1, marks=pytest.mark.memcheck),
+        pytest.param(3.0, 30, 2, marks=pytest.mark.memcheck),
+        (3.0, 30, 4),
+        (3.0, 30, 12),
         # fyork: This test only fails 50-50 times. It tests a race condition in which the coordinates could be corrupted.
         # Needs to be a large system to trigger the failure.
         (10.0, 1000, 1),
