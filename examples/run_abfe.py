@@ -67,16 +67,27 @@ from tmd.fe.plots import (
     plot_retrospective,
     plot_water_proposals_by_state,
 )
-from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS, HostConfig, estimate_relative_free_energy_bisection_hrex_impl
+from tmd.fe.rbfe import (
+    DEFAULT_NUM_WINDOWS,
+    HostConfig,
+    estimate_relative_free_energy_bisection_hrex_impl,
+    optimize_coordinates,
+    setup_optimized_host,
+)
 from tmd.fe.topology import BaseTopology
 from tmd.fe.utils import get_mol_experimental_value, get_mol_name, read_sdf_mols_by_name, set_romol_conf
 from tmd.ff import Forcefield
 from tmd.lib import LangevinIntegrator, MonteCarloBarostat
-from tmd.md import minimizer
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.builders import build_protein_system, build_water_system
 from tmd.md.exchange.utils import get_radius_of_mol_pair
-from tmd.parallel.client import AbstractFileClient, CUDAMPSPoolClient, FileClient, iterate_completed_futures
+from tmd.md.thermostat.utils import sample_velocities
+from tmd.parallel.client import (
+    AbstractFileClient,
+    CUDAMPSPoolClient,
+    FileClient,
+    iterate_completed_futures,
+)
 from tmd.parallel.utils import get_gpu_count
 from tmd.potentials import (
     HarmonicAngle,
@@ -424,10 +435,10 @@ def get_initial_state(afe, ff, host_config, host_conf, temperature, seed, lamb):
     baro = MonteCarloBarostat(len(hmr_masses), DEFAULT_PRESSURE, temperature, group_idxs, 25, seed)
     box0 = host_config.box
 
-    v0 = np.zeros_like(x0)  # tbd resample from Maxwell-boltzman?
+    v0 = sample_velocities(hmr_masses, temperature, seed)
     num_ligand_atoms = afe.mol.GetNumAtoms()
     num_total_atoms = len(x0)
-    ligand_idxs = np.arange(num_total_atoms - num_ligand_atoms, num_total_atoms)
+    ligand_idxs = np.arange(num_total_atoms - num_ligand_atoms, num_total_atoms, dtype=np.int32)
 
     dt = 2.5e-3
     friction = 1.0
@@ -447,11 +458,8 @@ def estimate_abfe_leg(
     min_overlap: float,
     rst_params: RestraintParams,
 ):
-    host_conf = minimizer.fire_minimize_host(
-        [mol],
-        host_config,
-        ff,
-    )
+    host_config = setup_optimized_host(host_config, [mol], ff)
+    host_conf = host_config.conf
     bt = BaseTopology(mol, ff)
     temperature = DEFAULT_TEMP
 
@@ -479,13 +487,22 @@ def estimate_abfe_leg(
     def create_abfe_initial_state(lamb):
         return get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, lamb)
 
+    def optimize_abfe_initial_state(state):
+        # Disable min_cutoff check
+        x_opted = optimize_coordinates([state], min_cutoff=None)
+        assert len(x_opted) == 1
+        return replace(state, x0=x_opted[0])
+
     if md_params.hrex_params is None:
         bisection_params = md_params
+
+        def create_minimized_abfe_initial_state(lamb):
+            return optimize_abfe_initial_state(create_abfe_initial_state(lamb))
 
         initial_lambdas = [0.0, 1.0]
         list_of_results, trjs = run_sims_bisection(
             initial_lambdas,
-            create_abfe_initial_state,
+            create_minimized_abfe_initial_state,
             bisection_params,
             n_bisections=n_windows - len(initial_lambdas),
             temperature=temperature,
@@ -503,7 +520,7 @@ def estimate_abfe_leg(
             md_params,
             n_windows,
             create_abfe_initial_state,
-            lambda x: x,  # No optimization done here
+            optimize_abfe_initial_state,
             combined_prefix=prefix,
             min_overlap=min_overlap,
         )
@@ -706,6 +723,7 @@ def main():
     parser.add_argument("--local_md_k", default=10_000.0, type=float, help="Local MD k parameter")
     parser.add_argument("--local_md_radius", default=1.2, type=float, help="Local MD radius")
     parser.add_argument("--local_md_free_reference", action="store_true")
+    parser.add_argument("--bisection_frames", type=int, default=100)
     parser.add_argument(
         "--local_md_steps",
         default=0,
@@ -773,6 +791,7 @@ def main():
             seed=args.seed,
             hrex_params=HREXParams(
                 optimize_target_overlap=args.target_overlap,
+                n_frames_bisection=args.bisection_frames,
             ),
             local_md_params=LocalMDParams(
                 args.local_md_steps,
