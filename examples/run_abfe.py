@@ -12,10 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import csv
 import os
 import pickle
 import time
 from argparse import ArgumentParser
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -39,7 +41,7 @@ from numpy.typing import NDArray
 from rbfe_common import COMPLEX_LEG, SOLVENT_LEG, compute_total_ns
 
 from tmd import potentials
-from tmd.constants import BOLTZ, DEFAULT_FF, DEFAULT_PRESSURE, DEFAULT_TEMP
+from tmd.constants import BOLTZ, DEFAULT_FF, DEFAULT_PRESSURE, DEFAULT_TEMP, KCAL_TO_KJ
 from tmd.fe import model_utils
 from tmd.fe.absolute.restraints import (
     select_ligand_atoms_baumann,
@@ -62,11 +64,12 @@ from tmd.fe.free_energy import (
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_forward_and_reverse_dg,
+    plot_retrospective,
     plot_water_proposals_by_state,
 )
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS, HostConfig, estimate_relative_free_energy_bisection_hrex_impl
 from tmd.fe.topology import BaseTopology
-from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name, set_romol_conf
+from tmd.fe.utils import get_mol_experimental_value, get_mol_name, read_sdf_mols_by_name, set_romol_conf
 from tmd.ff import Forcefield
 from tmd.lib import LangevinIntegrator, MonteCarloBarostat
 from tmd.md import minimizer
@@ -260,6 +263,85 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
         params = (*list(params), hbp, hap, drp)
 
         return ubps, params, masses
+
+
+def write_result_csvs(
+    file_client: AbstractFileClient,
+    mols_by_name: dict[str, Chem.Mol],
+    leg_results: dict[str, dict[str, Any]],
+    experimental_field: str,
+    experimental_units: str,
+):
+    # Write out the DG csv
+    csv_header = ["mol"]
+    legs = list(sorted(set(leg for legs in leg_results.values() for leg in legs.keys())))
+    for leg in legs:
+        csv_header.append(f"{leg}_pred_dg (kcal/mol)")
+        csv_header.append(f"{leg}_pred_dg_err (kcal/mol)")
+    compute_dg = SOLVENT_LEG in legs and COMPLEX_LEG in legs
+    if compute_dg:
+        csv_header.append("complex correction (kcal/mol)")
+        csv_header.append("pred_dg (kcal/mol)")
+        csv_header.append("pred_dg_err (kcal/mol)")
+        csv_header.append("exp_dg (kcal/mol)")
+    ddg_path = file_client.full_path("dg_results.csv")
+    with open(ddg_path, "w", newline="") as ofs:
+        writer = csv.writer(ofs)
+        writer.writerow(csv_header)
+        for (name), leg_summaries in leg_results.items():
+            row = [name]
+            for leg in legs:
+                leg_res = leg_summaries.get(leg)
+                if leg_res is None:
+                    # Add empty values, since the leg didn't run
+                    row.append("")
+                    row.append("")
+                else:
+                    leg_pred = leg_res["pred_dg"] / KCAL_TO_KJ
+                    leg_err = leg_res["pred_dg_err"] / KCAL_TO_KJ
+                    row.append(str(leg_pred))
+                    row.append(str(leg_err))
+            if compute_dg:
+                try:
+                    correction = leg_summaries[COMPLEX_LEG]["correction"]
+                    edge_dg = (
+                        -leg_summaries[COMPLEX_LEG]["pred_dg"] + correction + leg_summaries[SOLVENT_LEG]["pred_dg"]
+                    )
+                    edge_dg_err = np.linalg.norm(
+                        [leg_summaries[COMPLEX_LEG]["pred_dg_err"], leg_summaries[SOLVENT_LEG]["pred_dg_err"]]
+                    )
+                    row.append(str(correction / KCAL_TO_KJ))
+                    row.append(str(edge_dg / KCAL_TO_KJ))
+                    row.append(str(edge_dg_err / KCAL_TO_KJ))
+                except KeyError:
+                    row.extend(["", "", ""])
+
+                exp = None
+                try:
+                    exp = get_mol_experimental_value(mols_by_name[name], experimental_field, experimental_units)
+                except KeyError:
+                    pass
+                if exp is not None:
+                    row.append(str(exp / KCAL_TO_KJ))
+                else:
+                    row.append("")
+            writer.writerow(row)
+    x = []
+    y = []
+    y_err = []
+    for row in csv.DictReader(open(ddg_path)):  # type: ignore
+        assert isinstance(row, dict)
+        if len(row["exp_dg (kcal/mol)"]) > 0 and len(row["pred_dg (kcal/mol)"]) > 0:
+            x.append(float(row["exp_dg (kcal/mol)"]))
+            y.append(float(row["pred_dg (kcal/mol)"]))
+            y_err.append(float(row["pred_dg_err (kcal/mol)"]))
+    plot_retrospective(
+        np.array(y),  # type: ignore
+        np.array(x),  # type: ignore
+        "ABFE",
+        file_client.full_path("dg_plot.png"),
+        pred_kcal_errs=np.array(y_err),  # type: ignore
+    )
 
 
 def generate_restraint_plot(
@@ -680,6 +762,7 @@ def main():
     pool = CUDAMPSPoolClient(num_gpus, workers_per_gpu=args.mps_workers, max_tasks_per_child=1)
     pool.verify()
     futures = []
+    future_id_to_leg = {}
     for name, mol in mols_by_name.items():
         # TBD: Fix this
         mol_radius = get_radius_of_mol_pair(mol, mol)
@@ -717,9 +800,18 @@ def main():
                 args.store_trajectories,
                 args.force_overwrite,
             )
+            future_id_to_leg[fut.id] = (name, leg)
             futures.append(fut)
+    leg_results = defaultdict(dict)
     for fut in iterate_completed_futures(futures):
-        fut.result()
+        mol, leg = future_id_to_leg[fut.id]
+        try:
+            data = fut.result()
+        except Exception as e:
+            print(f"Leg {leg} {mol} failed: {e}")
+            continue
+        leg_results[mol][leg] = data
+    write_result_csvs(file_client, mols_by_name, leg_results, args.experimental_field, args.experimental_units)
 
 
 if __name__ == "__main__":
