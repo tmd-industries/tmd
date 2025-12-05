@@ -15,7 +15,7 @@
 
 import warnings
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
 from functools import cache, cached_property, partial
 from typing import Any, Optional
@@ -116,7 +116,7 @@ DUMMY_A_TORSION_MIN_MAX = _flip_min_max(DUMMY_B_TORSION_MIN_MAX)
 
 # Bi-phasic nonbonded interpolation protocol.
 # At lambda=0.5, both dummy groups are present.
-# Ideal case is when a replacement (i.e. insertion/deletion) is occuring
+# Ideal case is when a replacement (i.e. insertion/deletion) is occurring
 # off of the same core-anchor.
 
 #        |.                  /     ... dummy_b
@@ -895,7 +895,7 @@ def interpolate_harmonic_angle_params(src_params, dst_params, lamb, k_min, lambd
     phase = pad(interpolate.linear_interpolation, src_phase, dst_phase, lamb, lambda_min, lambda_max)
 
     # Use a stable functional form with small, finite `eps` for intermediate states only. The value of `eps` for
-    # intermedates was chosen to be sufficiently large that no numerical instabilities were observed in testing (even
+    # intermediates was chosen to be sufficiently large that no numerical instabilities were observed in testing (even
     # with bond force constants approximately zero), and sufficiently small to have negligible impact on the overlap of
     # the end states with neighboring intermediates.
     eps = jnp.where((lamb == 0.0) | (lamb == 1.0), 0.0, 1e-3)
@@ -2001,8 +2001,9 @@ class SingleTopology(AtomMapMixin):
         self, host_nonbonded: BoundPotential[Nonbonded], lamb: float = 0.0
     ) -> BoundPotential[Nonbonded]:
         """Parameterize host-host and host-guest nonbonded interactions"""
-        num_host_atoms = host_nonbonded.params.shape[0]
+        num_host_atoms = host_nonbonded.potential.num_atoms
         num_guest_atoms = self.get_num_atoms()
+        assert isinstance(host_nonbonded.params, (np.ndarray, jax.Array))
         host_params = host_nonbonded.params
         cutoff = host_nonbonded.potential.cutoff
         beta = host_nonbonded.potential.beta
@@ -2068,7 +2069,7 @@ class SingleTopology(AtomMapMixin):
         """
 
         guest_system = self.setup_intermediate_state(lamb=lamb)
-        num_host_atoms = host_system.nonbonded_all_pairs.params.shape[0]
+        num_host_atoms = host_system.nonbonded_all_pairs.potential.num_atoms
         N = num_host_atoms + self.get_num_atoms()
         guest_chiral_atom_idxs = np.array(guest_system.chiral_atom.potential.idxs, dtype=np.int32) + num_host_atoms
         guest_system.chiral_atom.potential.idxs = guest_chiral_atom_idxs
@@ -2079,25 +2080,49 @@ class SingleTopology(AtomMapMixin):
         )
         guest_system.nonbonded_pair_list.potential.idxs = guest_nonbonded_idxs
 
+        assert isinstance(host_system.bond.potential.idxs, (np.ndarray, jax.Array)) and isinstance(
+            guest_system.bond.potential.idxs, (np.ndarray, jax.Array)
+        )
         combined_bond_idxs = np.concatenate(
             [host_system.bond.potential.idxs, guest_system.bond.potential.idxs + num_host_atoms]
+        )
+        assert isinstance(host_system.bond.params, (np.ndarray, jax.Array)) and isinstance(
+            guest_system.bond.params, (np.ndarray, jax.Array)
         )
         combined_bond_params = jnp.concatenate([host_system.bond.params, guest_system.bond.params])
         combined_bond = HarmonicBond(N, combined_bond_idxs).bind(combined_bond_params)
 
+        assert isinstance(host_system.angle.potential.idxs, (np.ndarray, jax.Array)) and isinstance(
+            guest_system.angle.potential.idxs, (np.ndarray, jax.Array)
+        )
         combined_angle_idxs = np.concatenate(
             [host_system.angle.potential.idxs, guest_system.angle.potential.idxs + num_host_atoms]
         )
+        assert isinstance(host_system.angle.params, (np.ndarray, jax.Array)) and isinstance(
+            guest_system.angle.params, (np.ndarray, jax.Array)
+        )
         combined_angle_params = jnp.concatenate([host_system.angle.params, guest_system.angle.params])
         combined_angle = HarmonicAngle(N, combined_angle_idxs).bind(combined_angle_params)
+        assert isinstance(host_system.proper.potential.idxs, (np.ndarray, jax.Array)) and isinstance(
+            guest_system.proper.potential.idxs, (np.ndarray, jax.Array)
+        )
         combined_proper_idxs = np.concatenate(
             [host_system.proper.potential.idxs, guest_system.proper.potential.idxs + num_host_atoms]
+        )
+        assert isinstance(host_system.proper.params, (np.ndarray, jax.Array)) and isinstance(
+            guest_system.proper.params, (np.ndarray, jax.Array)
         )
         combined_proper_params = jnp.concatenate([host_system.proper.params, guest_system.proper.params])
         combined_proper = PeriodicTorsion(N, combined_proper_idxs).bind(combined_proper_params)
 
+        assert isinstance(host_system.improper.potential.idxs, (np.ndarray, jax.Array)) and isinstance(
+            guest_system.improper.potential.idxs, (np.ndarray, jax.Array)
+        )
         combined_improper_idxs = np.concatenate(
             [host_system.improper.potential.idxs, guest_system.improper.potential.idxs + num_host_atoms]
+        )
+        assert isinstance(host_system.improper.params, (np.ndarray, jax.Array)) and isinstance(
+            guest_system.improper.params, (np.ndarray, jax.Array)
         )
         combined_improper_params = jnp.concatenate([host_system.improper.params, guest_system.improper.params])
         combined_improper = PeriodicTorsion(N, combined_improper_idxs).bind(combined_improper_params)
@@ -2109,8 +2134,15 @@ class SingleTopology(AtomMapMixin):
             angle=combined_angle,
             proper=combined_proper,
             improper=combined_improper,
-            chiral_atom=guest_system.chiral_atom,
-            chiral_bond=guest_system.chiral_bond,
-            nonbonded_pair_list=guest_system.nonbonded_pair_list,
+            chiral_atom=replace(
+                guest_system.chiral_atom, potential=replace(guest_system.chiral_atom.potential, num_atoms=N)
+            ),
+            chiral_bond=replace(
+                guest_system.chiral_bond, potential=replace(guest_system.chiral_bond.potential, num_atoms=N)
+            ),
+            nonbonded_pair_list=replace(
+                guest_system.nonbonded_pair_list,
+                potential=replace(guest_system.nonbonded_pair_list.potential, num_atoms=N),
+            ),
             nonbonded_all_pairs=host_nonbonded_all_pairs,
         )

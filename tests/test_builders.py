@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +15,7 @@
 
 from tempfile import NamedTemporaryFile
 
+import jax
 import numpy as np
 import pytest
 from common import ligand_from_smiles
@@ -136,6 +138,7 @@ def validate_host_config_ions_and_charge(
     if mol is not None:
         mol_formal_charge = Chem.GetFormalCharge(mol)
 
+    assert isinstance(host_config.host_system.nonbonded_all_pairs.params, (np.ndarray, jax.Array))
     test_charges = np.sum(host_config.host_system.nonbonded_all_pairs.params[:, NBParamIdx.Q_IDX]) / np.sqrt(
         ONE_4PI_EPS0
     )

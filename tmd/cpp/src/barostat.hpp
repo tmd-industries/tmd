@@ -41,10 +41,10 @@ public:
   ~MonteCarloBarostat();
 
   // move() may modify d_x and d_box
-  virtual void move(const int N, RealType *d_x, RealType *d_box,
-                    cudaStream_t stream) override;
+  virtual void move(const int num_systems, const int N, RealType *d_x,
+                    RealType *d_box, cudaStream_t stream) override;
 
-  RealType get_volume_scale_factor();
+  std::vector<RealType> get_volume_scale_factor() const;
 
   void set_volume_scale_factor(const RealType volume_scale_factor);
 
@@ -95,6 +95,8 @@ protected:
 
   RealType *d_x_proposed_;
   RealType *d_box_proposed_;
+
+  int *d_system_idxs_;
 
   int *d_atom_idxs_;   // grouped index to atom coords
   int *d_mol_idxs_;    // grouped index to molecule index

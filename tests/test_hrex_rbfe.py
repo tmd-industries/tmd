@@ -124,7 +124,13 @@ def test_hrex_rbfe_hif2a_water_sampling_warning(hif2a_single_topology_leg, seed)
 @pytest.mark.parametrize("enable_rest", [False, True])
 @pytest.mark.parametrize("seed", [2024])
 def test_hrex_rbfe_hif2a(
-    hif2a_single_topology_leg, seed, max_bisection_windows, target_overlap, enable_rest, local_steps_percentage
+    hif2a_single_topology_leg,
+    seed,
+    max_bisection_windows,
+    target_overlap,
+    enable_rest,
+    local_steps_percentage,
+    worker_id,
 ):
     host_name, (mol_a, mol_b, core, forcefield, host_config) = hif2a_single_topology_leg
 
@@ -192,7 +198,7 @@ def test_hrex_rbfe_hif2a(
     assert len(rss_traj)
     rss_diff_count = np.sum(np.diff(rss_traj) != 0)
     rss_increase_count = np.sum(np.diff(rss_traj) > 0)
-    assert stats.binom.pmf(rss_increase_count, n=rss_diff_count, p=0.5) >= 0.001
+    assert stats.binom.pmf(rss_increase_count, n=rss_diff_count, p=0.5) >= 0.001, rss_traj
 
     if DEBUG:
         plot_hrex_rbfe_hif2a(result)

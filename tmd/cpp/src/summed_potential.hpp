@@ -39,8 +39,8 @@ private:
 
 public:
   SummedPotential(
-      const std::vector<std::shared_ptr<Potential<RealType>>> potentials,
-      const std::vector<int> params_sizes, const bool parallel);
+      const std::vector<std::shared_ptr<Potential<RealType>>> &potentials,
+      const std::vector<int> &params_sizes, const bool parallel);
 
   ~SummedPotential();
 

@@ -758,7 +758,9 @@ def sample_with_context(
 
     assert np.all(np.isfinite(all_coords[-1])), "Production resulted in a nan"
 
-    final_barostat_volume_scale_factor = ctxt.get_barostat().get_volume_scale_factor() if ctxt.get_barostat() else None
+    final_barostat_volume_scale_factor = (
+        float(np.mean(ctxt.get_barostat().get_volume_scale_factor())) if ctxt.get_barostat() else None
+    )
 
     return Trajectory(all_coords, all_boxes, final_velocities, final_barostat_volume_scale_factor)
 
@@ -1550,8 +1552,9 @@ def run_sims_hrex(
                 assert water_params_by_state is not None
                 water_sampler.set_params(water_params_by_state[state_idx])
                 water_sampler.set_step(current_mover_step)
-                starting_water_proposals = water_sampler.n_proposed()
-                starting_water_acceptances = water_sampler.n_accepted()
+                assert water_sampler.num_systems() == 1
+                starting_water_proposals = water_sampler.n_proposed()[0]
+                starting_water_acceptances = water_sampler.n_accepted()[0]
             if barostat is not None:
                 barostat.set_step(current_mover_step)
 
@@ -1571,14 +1574,16 @@ def run_sims_hrex(
             assert frame.shape[0] == 1
 
             if water_sampler is not None:
-                final_water_proposals = water_sampler.n_proposed() - starting_water_proposals
-                final_water_acceptances = water_sampler.n_accepted() - starting_water_acceptances
+                final_water_proposals = water_sampler.n_proposed()[0] - starting_water_proposals
+                final_water_acceptances = water_sampler.n_accepted()[0] - starting_water_acceptances
                 water_sampling_acceptance_proposal_counts_by_state[state_idx] = (
                     final_water_acceptances,
                     final_water_proposals,
                 )
 
-            final_barostat_volume_scale_factor = barostat.get_volume_scale_factor() if barostat is not None else None
+            final_barostat_volume_scale_factor = (
+                float(np.mean(barostat.get_volume_scale_factor())) if barostat is not None else None
+            )
 
             return frame[-1], box[-1], final_velos, final_barostat_volume_scale_factor
 

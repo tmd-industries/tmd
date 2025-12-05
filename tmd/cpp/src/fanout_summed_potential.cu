@@ -18,26 +18,22 @@
 #include "gpu_utils.cuh"
 #include "kernels/k_indices.cuh"
 #include "nonbonded_common.hpp"
+#include "potential_utils.hpp"
 #include <memory>
 
 namespace tmd {
 
 template <typename RealType>
 FanoutSummedPotential<RealType>::FanoutSummedPotential(
-    const std::vector<std::shared_ptr<Potential<RealType>>> potentials,
+    const std::vector<std::shared_ptr<Potential<RealType>>> &potentials,
     const bool parallel)
     : potentials_(potentials), parallel_(parallel),
       num_systems_(potentials.size() > 0 ? potentials[0]->num_systems() : 1),
       d_u_buffer_(num_systems_ * potentials_.size()),
       d_system_idxs_(num_systems_ * potentials_.size()),
       nrg_accum_(num_systems_, potentials_.size()) {
-  for (auto pot : potentials_) {
-    if (pot->num_systems() != num_systems_) {
-      throw std::runtime_error("Potentials must all have the same system size" +
-                               std::to_string(pot->num_systems()) + ", " +
-                               std::to_string(num_systems_));
-    }
-  }
+
+  verify_potentials_are_compatible(potentials_);
   k_segment_arange<<<dim3(ceil_divide(num_systems_, DEFAULT_THREADS_PER_BLOCK),
                           potentials_.size()),
                      DEFAULT_THREADS_PER_BLOCK>>>(

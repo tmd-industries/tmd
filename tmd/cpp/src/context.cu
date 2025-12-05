@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,6 +28,7 @@
 #include "math_utils.cuh"
 #include "nonbonded_common.hpp"
 #include "pinned_host_buffer.hpp"
+#include "potential_utils.hpp"
 #include "set_utils.hpp"
 
 namespace tmd {
@@ -50,15 +52,16 @@ Context<RealType>::Context(
     std::vector<std::shared_ptr<Mover<RealType>>> &movers)
     : num_systems_(num_systems), N_(N), movers_(movers), step_(0), intg_(intg),
       bps_(bps), nonbonded_pots_(0) {
-
+  verify_potentials_are_compatible(bps);
+  for (auto mover : movers) {
+    if (mover->num_systems() != num_systems_) {
+      throw std::runtime_error("Movers must have same number of systems, got " +
+                               std::to_string(mover->num_systems()) +
+                               ", expected " + std::to_string(num_systems_));
+    }
+  }
   std::vector<std::shared_ptr<Potential<RealType>>> pots;
   for (auto bp : bps_) {
-    if (bp->potential->num_systems() != num_systems_) {
-      throw std::runtime_error(
-          "number of systems of all potentials must all be " +
-          std::to_string(num_systems_) + ", got " +
-          std::to_string(bp->potential->num_systems()));
-    }
     pots.push_back(bp->potential);
   }
   // A no-op if running in vacuum or there are no NonbondedInteractionGroup
@@ -101,14 +104,14 @@ void Context<RealType>::_verify_coords_and_box(const RealType *coords_buffer,
         throw std::runtime_error(
             "cutoff with padding is more than half of the box width, "
             "neighborlist is no longer reliable. Batch " +
-            std::to_string(i + 1));
+            std::to_string(i));
       }
     }
     const RealType max_box_dim =
         max(box_buffer[9 * i + 0 * 3 + 0],
             max(box_buffer[9 * i + 1 * 3 + 1], box_buffer[9 * i + 2 * 3 + 2]));
     const auto [min_coord, max_coord] = std::minmax_element(
-        coords_buffer + i * N_ * 3, coords_buffer + i * N_ * 3 + N_ * 3);
+        coords_buffer + i * N_ * 3, coords_buffer + (i + 1) * N_ * 3);
     // Look at the largest difference in all dimensions, since coordinates are
     // not imaged into the home box per se, rather into the nearest periodic box
     const RealType max_coord_delta = *max_coord - *min_coord;
@@ -116,7 +119,7 @@ void Context<RealType>::_verify_coords_and_box(const RealType *coords_buffer,
       throw std::runtime_error(
           "simulation unstable: dimensions of coordinates two orders of "
           "magnitude larger than max box dimension. Batch " +
-          std::to_string(i + 1));
+          std::to_string(i));
     }
   }
 }
@@ -356,7 +359,7 @@ void Context<RealType>::_step(
   if (d_atom_idxs == nullptr) {
     for (auto mover : movers_) {
       // May modify coords and box size
-      mover->move(N_, d_x_t_, d_box_t_, stream);
+      mover->move(this->num_systems_, N_, d_x_t_, d_box_t_, stream);
     }
   }
 

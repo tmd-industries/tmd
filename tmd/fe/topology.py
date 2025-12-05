@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +17,7 @@ from typing import Any, Optional
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from numpy.typing import NDArray
 
 from tmd import potentials
@@ -28,7 +30,6 @@ from tmd.ff.handlers import nonbonded
 from tmd.potentials import ChiralAtomRestraint, ChiralBondRestraint
 from tmd.potentials.jax_utils import get_all_pairs_indices
 from tmd.potentials.nonbonded import combining_rule_epsilon, combining_rule_sigma
-from tmd.potentials.types import Params
 
 OpenMMTopology = Any
 
@@ -709,11 +710,11 @@ def exclude_all_ligand_ligand_ixns(num_host_atoms: int, num_guest_atoms: int) ->
 def get_ligand_ixn_pots_params(
     lig_idxs: NDArray,
     env_idxs: Optional[NDArray],
-    host_nb_params: Params,
-    guest_params_ixn_env: Params,
+    host_nb_params: Array | NDArray,
+    guest_params_ixn_env: Array | NDArray,
     beta=2.0,
     cutoff=1.2,
-) -> tuple[potentials.NonbondedInteractionGroup, Params]:
+) -> tuple[potentials.NonbondedInteractionGroup, Array | NDArray]:
     """
     Return the interaction group potentials and corresponding parameters
     for the ligand-water and ligand-protein interaction terms.

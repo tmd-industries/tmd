@@ -445,16 +445,6 @@ void declare_context(py::module &m, const char *typestr) {
                    throw std::runtime_error(
                        "batch size of potentials must be at least 1");
                  }
-                 for (auto bp : bps) {
-                   int bp_num_systems = bp->potential->num_systems();
-                   if (bp_num_systems != num_systems) {
-                     throw std::runtime_error(
-                         "all bound potentials must have potentials with the "
-                         "same batch size: Expected " +
-                         std::to_string(num_systems) + ", got " +
-                         std::to_string(bp_num_systems));
-                   }
-                 }
                  if (intg->num_systems() != num_systems) {
                    throw std::runtime_error(
                        "integrator batch size (" +
@@ -885,9 +875,31 @@ void declare_context(py::module &m, const char *typestr) {
           "set_x_t",
           [](Context<RealType> &ctxt,
              const py::array_t<RealType, py::array::c_style> &new_x_t) {
-            if (new_x_t.shape()[0] != ctxt.num_atoms()) {
+            const int num_systems = ctxt.num_systems();
+            const int num_atoms = ctxt.num_atoms();
+            const int input_dims = new_x_t.ndim();
+            if (input_dims == 2) {
+              if (num_systems != 1) {
+                throw std::runtime_error("expect coords for each system");
+              }
+              if (new_x_t.shape()[0] != num_atoms) {
+                throw std::runtime_error(
+                    "number of new coords disagree with number of atoms");
+              }
+            } else if (input_dims == 3) {
+              if (new_x_t.shape(0) != num_systems) {
+                throw std::runtime_error("expect coords for each system");
+              }
+              if (new_x_t.shape()[1] != num_atoms) {
+                throw std::runtime_error(
+                    "number of new coords disagree with number of atoms");
+              }
+            } else {
+              throw std::runtime_error("coords expects 2 or 3 dimensions");
+            }
+            if (new_x_t.shape(input_dims - 1) != 3) {
               throw std::runtime_error(
-                  "number of new coords disagree with current coords");
+                  "coords must have have final dimension of 3");
             }
             ctxt.set_x_t(new_x_t.data());
           },
@@ -896,10 +908,34 @@ void declare_context(py::module &m, const char *typestr) {
           "set_v_t",
           [](Context<RealType> &ctxt,
              const py::array_t<RealType, py::array::c_style> &new_v_t) {
-            if (new_v_t.shape()[0] != ctxt.num_atoms()) {
-              throw std::runtime_error(
-                  "number of new velocities disagree with current coords");
+            const int num_systems = ctxt.num_systems();
+            const int num_atoms = ctxt.num_atoms();
+            const int input_dims = new_v_t.ndim();
+            if (input_dims == 2) {
+              if (num_systems != 1) {
+                throw std::runtime_error("expect velocities for each system");
+              }
+              if (new_v_t.shape()[0] != num_atoms) {
+                throw std::runtime_error(
+                    "number of new velocities disagree with number of atoms");
+              }
+            } else if (input_dims == 3) {
+              if (new_v_t.shape(0) != num_systems) {
+                throw std::runtime_error(
+                    "number boxes must match number of systems");
+              }
+              if (new_v_t.shape()[1] != num_atoms) {
+                throw std::runtime_error(
+                    "number of new velocities disagree with number of atoms");
+              }
+            } else {
+              throw std::runtime_error("velocities expects 2 or 3 dimensions");
             }
+            if (new_v_t.shape(input_dims - 1) != 3) {
+              throw std::runtime_error(
+                  "velocities must have have final dimension of 3");
+            }
+
             ctxt.set_v_t(new_v_t.data());
           },
           py::arg("velocities"))
@@ -907,7 +943,23 @@ void declare_context(py::module &m, const char *typestr) {
           "set_box",
           [](Context<RealType> &ctxt,
              const py::array_t<RealType, py::array::c_style> &new_box_t) {
-            if (new_box_t.size() != 9 || new_box_t.shape()[0] != 3) {
+            const int num_systems = ctxt.num_systems();
+            if (new_box_t.ndim() == 2) {
+              if (num_systems != 1) {
+                throw std::runtime_error("expected one box per system");
+              }
+              if (new_box_t.size() != 9 || new_box_t.shape()[0] != 3) {
+                throw std::runtime_error("box must be 3x3");
+              }
+            } else if (new_box_t.ndim() == 3) {
+              if (new_box_t.shape(0) != num_systems) {
+                throw std::runtime_error(
+                    "number boxes must match number of systems");
+              }
+              if (new_box_t.shape()[1] != 3 || new_box_t.shape()[2] != 3) {
+                throw std::runtime_error("box must be 3x3 for each system");
+              }
+            } else {
               throw std::runtime_error("box must be 3x3");
             }
             ctxt.set_box(new_box_t.data());
@@ -916,26 +968,38 @@ void declare_context(py::module &m, const char *typestr) {
       .def("get_x_t",
            [](Context<RealType> &ctxt)
                -> py::array_t<RealType, py::array::c_style> {
-             unsigned int N = ctxt.num_atoms();
-             unsigned int D = 3;
-             py::array_t<RealType, py::array::c_style> buffer({N, D});
+             const int N = ctxt.num_atoms();
+             const int D = 3;
+             py::array_t<RealType, py::array::c_style> buffer(
+                 {ctxt.num_systems(), N, D});
+             if (ctxt.num_systems() == 1) {
+               buffer.resize({N, D});
+             }
              ctxt.get_x_t(buffer.mutable_data());
              return buffer;
            })
       .def("get_v_t",
            [](Context<RealType> &ctxt)
                -> py::array_t<RealType, py::array::c_style> {
-             unsigned int N = ctxt.num_atoms();
-             unsigned int D = 3;
-             py::array_t<RealType, py::array::c_style> buffer({N, D});
+             const int N = ctxt.num_atoms();
+             const int D = 3;
+             py::array_t<RealType, py::array::c_style> buffer(
+                 {ctxt.num_systems(), N, D});
+             if (ctxt.num_systems() == 1) {
+               buffer.resize({N, D});
+             }
              ctxt.get_v_t(buffer.mutable_data());
              return buffer;
            })
       .def("get_box",
            [](Context<RealType> &ctxt)
                -> py::array_t<RealType, py::array::c_style> {
-             unsigned int D = 3;
-             py::array_t<RealType, py::array::c_style> buffer({D, D});
+             constexpr int D = 3;
+             py::array_t<RealType, py::array::c_style> buffer(
+                 {ctxt.num_systems(), D, D});
+             if (ctxt.num_systems() == 1) {
+               buffer.resize({D, D});
+             }
              ctxt.get_box(buffer.mutable_data());
              return buffer;
            })
@@ -3017,6 +3081,7 @@ void declare_mover(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def("set_interval", &Class::set_interval, py::arg("interval"))
       .def("get_interval", &Class::get_interval)
+      .def("num_systems", &Class::num_systems)
       .def("set_step", &Class::set_step, py::arg("step"))
       .def(
           "move",
@@ -3192,16 +3257,26 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
                        const RealType cutoff, const int seed,
                        const int num_proposals_per_move, const int interval,
                        const int batch_size) {
-             size_t params_dim = params.ndim();
+             const size_t params_dim = params.ndim();
              if (num_proposals_per_move <= 0) {
                throw std::runtime_error(
                    "proposals per move must be greater than 0");
              }
-             if (params_dim != 2) {
-               throw std::runtime_error("parameters dimensions must be 2");
-             }
-             if (params.shape(0) != N) {
-               throw std::runtime_error("Number of parameters must match N");
+             int num_systems = 1;
+             if (params_dim == 3) {
+               if (params.shape(1) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+               num_systems = params.shape(0);
+
+             } else if (params_dim == 2) {
+               if (params.shape(0) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+             } else {
+               throw std::runtime_error(
+                   "parameters dimensions must be 2 or 3, got " +
+                   std::to_string(params_dim));
              }
              if (target_mols.size() == 0) {
                throw std::runtime_error("must provide at least one molecule");
@@ -3218,9 +3293,9 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
                                         "greater than batch size");
              }
              std::vector<RealType> v_params = py_array_to_vector(params);
-             return new Class(N, target_mols, v_params, temperature, nb_beta,
-                              cutoff, seed, num_proposals_per_move, interval,
-                              batch_size);
+             return new Class(num_systems, N, target_mols, v_params,
+                              temperature, nb_beta, cutoff, seed,
+                              num_proposals_per_move, interval, batch_size);
            }),
            py::arg("N"), py::arg("target_mols"), py::arg("params"),
            py::arg("temperature"), py::arg("nb_beta"), py::arg("cutoff"),
@@ -3260,13 +3335,13 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
             verify_coords_and_box(coords, box);
             const int N = coords.shape()[0];
 
-            if (mol_idxs.size() != static_cast<ssize_t>(mover.num_systems())) {
+            if (mol_idxs.size() != static_cast<ssize_t>(mover.batch_size())) {
               throw std::runtime_error(
                   "number of mol idxs must match batch size");
             }
 
             if (quaternions.shape()[0] !=
-                static_cast<ssize_t>(mover.num_systems())) {
+                static_cast<ssize_t>(mover.batch_size())) {
               throw std::runtime_error(
                   "number of quaternions must match batch size");
             }
@@ -3275,7 +3350,7 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
             }
 
             if (translations.shape()[0] !=
-                static_cast<ssize_t>(mover.num_systems())) {
+                static_cast<ssize_t>(mover.batch_size())) {
               throw std::runtime_error(
                   "number of translations must match batch size");
             }
@@ -3366,11 +3441,21 @@ void declare_targeted_insertion_biased_deletion_exchange_move(
                throw std::runtime_error(
                    "proposals per move must be greater than 0");
              }
-             if (params_dim != 2) {
-               throw std::runtime_error("parameters dimensions must be 2");
-             }
-             if (params.shape(0) != N) {
-               throw std::runtime_error("Number of parameters must match N");
+             int num_systems = 1;
+             if (params_dim == 3) {
+               if (params.shape(1) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+               num_systems = params.shape(0);
+
+             } else if (params_dim == 2) {
+               if (params.shape(0) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+             } else {
+               throw std::runtime_error(
+                   "parameters dimensions must be 2 or 3, got " +
+                   std::to_string(params_dim));
              }
              if (ligand_idxs.size() == 0) {
                throw std::runtime_error(
@@ -3391,9 +3476,10 @@ void declare_targeted_insertion_biased_deletion_exchange_move(
                                         "greater than batch size");
              }
              std::vector<RealType> v_params = py_array_to_vector(params);
-             return new Class(N, ligand_idxs, target_mols, v_params,
-                              temperature, nb_beta, cutoff, radius, seed,
-                              num_proposals_per_move, interval, batch_size);
+             return new Class(num_systems, N, ligand_idxs, target_mols,
+                              v_params, temperature, nb_beta, cutoff, radius,
+                              seed, num_proposals_per_move, interval,
+                              batch_size);
            }),
            py::arg("N"), py::arg("ligand_idxs"), py::arg("target_mols"),
            py::arg("params"), py::arg("temperature"), py::arg("nb_beta"),

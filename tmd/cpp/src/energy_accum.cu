@@ -79,6 +79,8 @@ EnergyAccumulator::~EnergyAccumulator() {
     gpuErrchk(cudaFree(d_reductions_out_));
     gpuErrchk(cudaFree(d_idxs_unique_));
     gpuErrchk(cudaFree(d_u_intermediate_));
+    gpuErrchk(cudaFree(d_sorted_nrgs_));
+    gpuErrchk(cudaFree(d_sorted_idxs_));
   }
 };
 

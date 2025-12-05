@@ -72,6 +72,10 @@ template void __global__ k_fill<int>(const size_t, int *__restrict__ arr,
 template void __global__ k_fill<unsigned int>(const size_t,
                                               unsigned int *__restrict__ arr,
                                               const unsigned int);
+template void __global__ k_fill<float>(const size_t, float *__restrict__ arr,
+                                       const float);
+template void __global__ k_fill<double>(const size_t, double *__restrict__ arr,
+                                        const double);
 
 template <typename T>
 void __global__ k_segment_arange(const size_t num_segments,

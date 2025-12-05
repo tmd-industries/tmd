@@ -86,6 +86,9 @@ void ChiralBondRestraint<RealType>::execute_device(
     const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
+  if (N != num_atoms_) {
+    throw std::runtime_error("N != num_atoms_");
+  }
   if (P != R_) {
     throw std::runtime_error(
         "ChiralBondRestraint::execute_device(): expected P == R, got P=" +
