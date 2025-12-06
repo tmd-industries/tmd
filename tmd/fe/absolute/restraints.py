@@ -327,7 +327,7 @@ def _is_valid_r2(trj: mdtraj.Trajectory, r1: int, r2: int, l1: int, l2: int) -> 
 
     Uses the following criteria:
 
-    * R1,R2 are further apart than 5 Angstroms
+    * R1,R2 are further apart than 5 Angstroms, but less than half the box size
     * R2,R1,L1,L2 are not collinear
     * R2,R1,L1 angle not 'close' to 0 or 180 degrees
     * R2,R1,L1,L2 dihedral between -150 and 150 degrees
@@ -338,6 +338,11 @@ def _is_valid_r2(trj: mdtraj.Trajectory, r1: int, r2: int, l1: int, l2: int) -> 
         return False
 
     if np.linalg.norm(coords[:, r1, :] - coords[:, r2, :], axis=-1).mean() < 0.5:
+        return False
+
+    # TBD: Determine if box size means any dimension
+    box_dimensions = trj.unitcell_lengths.mean(axis=0)
+    if np.linalg.norm(coords[:, r1, :] - coords[:, r2, :], axis=-1).mean() >= 0.5 * box_dimensions.min(axis=-1):
         return False
 
     if _are_collinear(coords, (r2, r1, l1, l2)):
