@@ -425,38 +425,38 @@ def select_receptor_atoms_baumann(
 
     valid_r1_idxs = [r1 for r1 in receptor_idxs if _is_valid_r1(trj, r1, l1, l2, l3)]
 
-    found_r1, found_r2 = next(
-        ((r1, r2) for r1 in valid_r1_idxs for r2 in receptor_idxs if _is_valid_r2(trj, r1, r2, l1, l2)),
-        (None, None),
-    )
-
-    if found_r1 is None or found_r2 is None:
+    valid_r2_pairs = [(r1, r2) for r1 in valid_r1_idxs for r2 in receptor_idxs if _is_valid_r2(trj, r1, r2, l1, l2)]
+    if len(valid_r2_pairs) == 0:
         raise ValueError("could not find valid R1 / R2 atoms")
-
-    valid_r3_idxs = [r3 for r3 in receptor_idxs if _is_valid_r3(trj, found_r1, found_r2, r3, l1)]
-
-    if len(valid_r3_idxs) == 0:
-        raise ValueError("could not find a valid R3 atom")
-
-    r3_distances_per_frame = []
-
-    for frame in trj.xyz:
-        r3_r_distances = scipy.spatial.distance.cdist(frame[valid_r3_idxs, :], frame[[found_r1, found_r2], :])
-        r3_l_distances = scipy.spatial.distance.cdist(frame[valid_r3_idxs, :], frame[[ligand_ref_idxs[0]], :])
-
-        r3_distances_per_frame.append(np.hstack([r3_r_distances, r3_l_distances]))
-
     # chosen to match the SepTop reference implementation at commit 3705ba5
     max_distance = 0.8 * (trj.unitcell_lengths.mean(axis=0).min(axis=-1) / 2)
+    for found_r1, found_r2 in valid_r2_pairs:
+        valid_r3_idxs = [r3 for r3 in receptor_idxs if _is_valid_r3(trj, found_r1, found_r2, r3, l1)]
 
-    r3_distances_avg = np.stack(r3_distances_per_frame).mean(axis=0)
+        if len(valid_r3_idxs) == 0:
+            raise ValueError("could not find a valid R3 atom")
 
-    max_distance_mask = r3_distances_avg.max(axis=-1) < max_distance
-    r3_distances_avg = r3_distances_avg[max_distance_mask]
+        # TBD: Determine if it matters that this is different from Fig 3 of https://chemrxiv.org/engage/chemrxiv/article-details/6408d4f9cc600523a3df8c87
+        # This checks that all protein atoms are within max distance from L1, P1, P2, but paper only says has to be from P1/P2
+        r3_distances_per_frame = []
+        for frame in trj.xyz:
+            r3_r_distances = scipy.spatial.distance.cdist(frame[valid_r3_idxs, :], frame[[found_r1, found_r2], :])
+            r3_l_distances = scipy.spatial.distance.cdist(frame[valid_r3_idxs, :], frame[[ligand_ref_idxs[0]], :])
 
-    valid_r3_idxs = np.array(valid_r3_idxs)[max_distance_mask].tolist()
+            r3_distances_per_frame.append(np.hstack([r3_r_distances, r3_l_distances]))
 
-    r3_distances_prod = r3_distances_avg[:, 0] * r3_distances_avg[:, 1]
-    found_r3 = valid_r3_idxs[r3_distances_prod.argmax()]
+        r3_distances_avg = np.stack(r3_distances_per_frame).mean(axis=0)
 
-    return [found_r1, found_r2, found_r3]
+        max_distance_mask = r3_distances_avg.max(axis=-1) < max_distance
+        r3_distances_avg = r3_distances_avg[max_distance_mask]
+        if len(r3_distances_avg) == 0:
+            continue
+
+        valid_r3_idxs = np.array(valid_r3_idxs)[max_distance_mask].tolist()
+
+        r3_distances_prod = r3_distances_avg[:, 0] * r3_distances_avg[:, 1]
+        found_r3 = valid_r3_idxs[r3_distances_prod.argmax()]
+
+        return [found_r1, found_r2, found_r3]
+
+    raise ValueError("could not find a valid R3 atom within max distance")
