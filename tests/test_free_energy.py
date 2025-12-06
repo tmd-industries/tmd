@@ -212,13 +212,13 @@ def test_absolute_complex_with_water_sampling():
     seed = 2024
     lamb = 0.0
 
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = utils.read_sdf(path_to_ligand)
     mol = mols[0]
 
     ff = Forcefield.load_default()
 
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as protein_path:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as protein_path:
         host_config = builders.build_protein_system(
             str(protein_path), ff.protein_ff, ff.water_ff, mols=[mol], box_margin=0.1
         )
@@ -251,7 +251,7 @@ def test_absolute_complex_with_water_sampling():
 
 @pytest.mark.nocuda
 def test_absolute_vacuum():
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = utils.read_sdf(path_to_ligand)
     mol = mols[0]
 
@@ -274,7 +274,7 @@ def test_absolute_vacuum():
 @pytest.mark.nocuda
 def test_vacuum_and_solvent_edge_types():
     """Ensure that the values returned by the vacuum and solvent edges are all of the same type."""
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = utils.read_sdf(path_to_ligand)
     mol = mols[0]
 
@@ -376,7 +376,7 @@ def test_initial_state_interacting_ligand_atoms(host_name, seed):
 
     mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
     if host_name == "complex":
-        with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as protein_path:
+        with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as protein_path:
             host_config = builders.build_protein_system(
                 str(protein_path), forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
             )
@@ -491,7 +491,7 @@ def test_get_water_sampler_params_complex():
     forcefield = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     st = SingleTopology(mol_a, mol_b, core, forcefield)
 
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as protein_path:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as protein_path:
         host_config = builders.build_protein_system(
             str(protein_path), forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
         )

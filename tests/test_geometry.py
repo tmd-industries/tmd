@@ -149,7 +149,7 @@ def test_assign_truncated_sildenafil():
 
 def test_hif2a_set():
     # test that we can successfully assign all of the hif2a set without assertions
-    mols = utils.read_sdf("tmd/testsystems/data/ligands_40.sdf")
+    mols = utils.read_sdf("tmd/testsystems/data/ligands.sdf")
     for mol in mols:
         geometry.classify_geometry(mol)
 

@@ -42,8 +42,11 @@ def test_get_query_mol():
 @pytest.fixture()
 def residue_mol_inputs():
     properties_by_res_name = {}
-    for protein_path in ["5dfr_solv_equil.pdb", "hif2a_nowater_min.pdb"]:
-        with path_to_internal_file("tmd.testsystems.data", protein_path) as path_to_pdb:
+    for module, protein_path in [
+        ("tmd.testsystems.data", "5dfr_solv_equil.pdb"),
+        ("tmd.testsystems.fep_benchmark.hif2a", "hif2a_prepared.pdb"),
+    ]:
+        with path_to_internal_file(module, protein_path) as path_to_pdb:
             host_pdb = app.PDBFile(str(path_to_pdb))
             host_config = builders.build_protein_system(host_pdb, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
         ff = OMMForceField(f"{DEFAULT_PROTEIN_FF}.xml", f"{DEFAULT_WATER_FF}.xml")
