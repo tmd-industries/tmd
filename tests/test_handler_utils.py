@@ -44,7 +44,7 @@ def residue_mol_inputs():
     properties_by_res_name = {}
     for module, protein_path in [
         ("tmd.testsystems.data", "5dfr_solv_equil.pdb"),
-        ("tmd.testsystems.fep_benchmark.hif2a", "hif2a_prepared.pdb"),
+        ("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb"),
     ]:
         with path_to_internal_file(module, protein_path) as path_to_pdb:
             host_pdb = app.PDBFile(str(path_to_pdb))

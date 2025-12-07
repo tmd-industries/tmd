@@ -207,7 +207,7 @@ def test_openmm_deserialize_system_handles_duplicate_bonded_forces():
 
     Note that we do not handle duplicate Nonbonded potentials, mostly to avoid nuances of merging them.
     """
-    ff = app.ForceField(f"{constants.DEFAULT_PROTEIN_FF}.xml")
+    ff = app.ForceField(f"{constants.DEFAULT_PROTEIN_FF}.xml", f"{constants.DEFAULT_WATER_FF}.xml")
 
     with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as path_to_pdb:
         host_pdb = app.PDBFile(str(path_to_pdb))
