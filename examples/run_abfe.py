@@ -451,6 +451,13 @@ def get_initial_state(afe, ff, host_config, host_conf, temperature, seed, lamb):
     return InitialState(bps, intg, baro, x0, v0, box0, lamb, ligand_idxs, np.array([], dtype=np.int32))
 
 
+def optimize_abfe_initial_state(state):
+    # Disable min_cutoff check
+    x_opted = optimize_coordinates([state], min_cutoff=None)
+    assert len(x_opted) == 1
+    return replace(state, x0=x_opted[0])
+
+
 def estimate_abfe_leg(
     mol,
     ff: Forcefield,
@@ -471,9 +478,10 @@ def estimate_abfe_leg(
     if leg == COMPLEX_LEG:
         # Run short equilibration to obtain trajectory used to pick restraint atoms
         initial_state = get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, 0.0)
+        minimized_state = optimize_abfe_initial_state(initial_state)
         # TBD: How many frames do you want from here?
         sample_md_params = replace(md_params, n_eq_steps=200000)
-        trj = sample(initial_state, sample_md_params, 100)
+        trj = sample(minimized_state, sample_md_params, 100)
 
         afe = AbsoluteBindingFreeEnergy.create(bt, host_config, trj, rst_params)
 
@@ -490,12 +498,6 @@ def estimate_abfe_leg(
 
     def create_abfe_initial_state(lamb):
         return get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, lamb)
-
-    def optimize_abfe_initial_state(state):
-        # Disable min_cutoff check
-        x_opted = optimize_coordinates([state], min_cutoff=None)
-        assert len(x_opted) == 1
-        return replace(state, x0=x_opted[0])
 
     if md_params.hrex_params is None:
         bisection_params = md_params
