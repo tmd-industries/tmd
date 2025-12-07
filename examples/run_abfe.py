@@ -276,7 +276,7 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
         return ubps, params, masses
 
 
-def write_result_csvs(
+def write_result_csv(
     file_client: AbstractFileClient,
     mols_by_name: dict[str, Chem.Mol],
     leg_results: dict[str, dict[str, Any]],
@@ -337,22 +337,26 @@ def write_result_csvs(
                 else:
                     row.append("")
             writer.writerow(row)
-    x = []
-    y = []
-    y_err = []
-    for row in csv.DictReader(open(ddg_path)):  # type: ignore
-        assert isinstance(row, dict)
-        if len(row["exp_dg (kcal/mol)"]) > 0 and len(row["pred_dg (kcal/mol)"]) > 0:
-            x.append(float(row["exp_dg (kcal/mol)"]))
-            y.append(float(row["pred_dg (kcal/mol)"]))
-            y_err.append(float(row["pred_dg_err (kcal/mol)"]))
-    plot_retrospective(
-        np.array(y),  # type: ignore
-        np.array(x),  # type: ignore
-        "ABFE",
-        file_client.full_path("dg_plot.png"),
-        pred_kcal_errs=np.array(y_err),  # type: ignore
-    )
+    if compute_dg:
+        x = []
+        y = []
+        y_err = []
+        for row in csv.DictReader(open(ddg_path)):  # type: ignore
+            assert isinstance(row, dict)
+            if len(row["exp_dg (kcal/mol)"]) > 0 and len(row["pred_dg (kcal/mol)"]) > 0:
+                x.append(float(row["exp_dg (kcal/mol)"]))
+                y.append(float(row["pred_dg (kcal/mol)"]))
+                y_err.append(float(row["pred_dg_err (kcal/mol)"]))
+        if len(x) > 0:
+            plot_retrospective(
+                np.array(y),  # type: ignore
+                np.array(x),  # type: ignore
+                "ABFE",
+                file_client.full_path("dg_plot.png"),
+                pred_kcal_errs=np.array(y_err),  # type: ignore
+            )
+        else:
+            print("No experimental labels, skipping plot")
 
 
 def generate_restraint_plot(
@@ -761,6 +765,12 @@ def main():
     dest_dir = Path(output_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
+    pdb_path = ""
+    if COMPLEX_LEG in args.legs:
+        if args.pdb_path is None:
+            raise ValueError("Must provide pdb path to run the complex leg")
+        pdb_path = str(Path(args.pdb_path).resolve())
+
     with Chem.SDWriter(dest_dir / "mols.sdf") as writer:
         for mol in mols_by_name.values():
             writer.write(mol)
@@ -812,7 +822,7 @@ def main():
                 mol,
                 leg,
                 ff,
-                str(Path(args.pdb_path).resolve()),
+                pdb_path,
                 md_params,
                 args.n_windows,
                 args.min_overlap,
@@ -830,7 +840,7 @@ def main():
             print(f"Leg {leg} {mol} failed: {e}")
             continue
         leg_results[mol][leg] = data
-    write_result_csvs(file_client, mols_by_name, leg_results, args.experimental_field, args.experimental_units)
+    write_result_csv(file_client, mols_by_name, leg_results, args.experimental_field, args.experimental_units)
 
 
 if __name__ == "__main__":
