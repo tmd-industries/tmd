@@ -384,6 +384,30 @@ def trajectories_by_replica_to_by_state(
     return trajectory_by_iter_by_state
 
 
+def compute_total_ns(res: SimulationResult | HREXSimulationResult, md_params: MDParams) -> float:
+    total_steps = 0
+    n_windows = len(res.final_result.initial_states)
+    if n_windows == 0:
+        raise ValueError("Number of initial states must be at least one")
+    # Equilibration steps have to be handled differently for HREX with bisection mixed in
+    if md_params.hrex_params is not None and len(res.intermediate_results) > 0:
+        steps_per_intermediate_window = (
+            md_params.n_eq_steps + md_params.hrex_params.n_frames_bisection * md_params.steps_per_frame
+        )
+        n_bisection_windows = len(res.intermediate_results[-1].initial_states)
+        total_steps += steps_per_intermediate_window * n_bisection_windows
+    else:
+        total_steps += md_params.n_eq_steps * n_windows
+
+    total_steps += md_params.steps_per_frame * md_params.n_frames * n_windows
+
+    dt = res.final_result.initial_states[0].integrator.dt
+    dt_in_fs = 1000 * dt
+    steps_per_picosecond = 1000 / dt_in_fs
+    ps = total_steps / steps_per_picosecond
+    return ps / 1000
+
+
 def image_frames(initial_state: InitialState, frames: np.ndarray, boxes: np.ndarray) -> np.ndarray:
     """Images a sequence of frames within the periodic box given an Initial state. Recenters the simulation around the
     centroid of the coordinates specified by initial_state.ligand_idxs prior to imaging.
