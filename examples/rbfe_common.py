@@ -11,12 +11,11 @@ from rdkit import Chem
 
 from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, KCAL_TO_KJ
 from tmd.fe import atom_mapping
-from tmd.fe.free_energy import MDParams
+from tmd.fe.free_energy import MDParams, compute_total_ns
 from tmd.fe.mle import infer_node_vals_and_errs_networkx
 from tmd.fe.plots import plot_as_png_fxn, plot_forward_and_reverse_dg, plot_water_proposals_by_state
 from tmd.fe.rbfe import (
     HREXSimulationResult,
-    SimulationResult,
     run_complex,
     run_solvent,
     run_vacuum,
@@ -28,24 +27,6 @@ from tmd.parallel.client import AbstractFileClient
 VACUUM_LEG = "vacuum"
 SOLVENT_LEG = "solvent"
 COMPLEX_LEG = "complex"
-
-
-def compute_total_ns(res: SimulationResult | HREXSimulationResult, md_params: MDParams):
-    total_steps = 0
-    n_windows = len(res.final_result.initial_states)
-    # Equilibration steps have to be handled differently for Bisection vs serial
-    if len(res.intermediate_results) == 0:
-        total_steps += md_params.n_eq_steps * n_windows
-    else:
-        n_bisection_windows = len(res.intermediate_results[-1].initial_states)
-        total_steps += md_params.n_eq_steps * n_bisection_windows
-    total_steps += md_params.steps_per_frame * md_params.n_frames * n_windows
-
-    dt = res.final_result.initial_states[0].integrator.dt
-    dt_in_fs = 1000 * dt
-    steps_per_picosecond = 1000 / dt_in_fs
-    ps = total_steps / steps_per_picosecond
-    return ps / 1000
 
 
 def write_result_csvs(
