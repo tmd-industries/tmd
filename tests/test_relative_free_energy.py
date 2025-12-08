@@ -163,7 +163,7 @@ def test_run_hif2a_test_system(estimate_relative_free_energy_fn):
         hrex_params=HREXParams(),
     )
 
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as protein_path:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as protein_path:
         run_triple(
             mol_a,
             mol_b,

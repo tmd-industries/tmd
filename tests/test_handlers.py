@@ -774,7 +774,7 @@ def test_am1_differences():
 
 @pytest.mark.skip(reason="No OE")
 def test_am1elf10_conformer_independence():
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = utils.read_sdf(path_to_ligand)
 
     # Pick a subset of molecules with chiral centers
@@ -832,7 +832,7 @@ def test_compute_or_load_oe_charges():
 
     # get some molecules
     cache_key = nonbonded.AM1ELF10_CHARGE_CACHE
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = utils.read_sdf(path_to_ligand)
 
     mols = mols[:5]  # truncate so that whole test is ~ 10 seconds
@@ -1022,7 +1022,7 @@ def test_compute_or_load_bond_smirks_matches():
     # get some molecules
     match_cache_key = nonbonded.BOND_SMIRK_MATCH_CACHE
 
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         all_mols = utils.read_sdf(path_to_ligand)
 
     # get some bond smirks
@@ -1184,7 +1184,7 @@ def test_symmetric_am1ccc():
 
 @pytest.mark.skip("No OE")
 def test_nn_handler():
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         all_mols = utils.read_sdf(path_to_ligand)
 
     mol = all_mols[0]
@@ -1335,12 +1335,12 @@ def test_env_bcc_peptide_symmetries(protein_path_and_symmetries, is_nn, env_nn_a
 @pytest.mark.skip("No OE")
 @pytest.mark.nightly(reason="Slow")
 @pytest.mark.parametrize("is_nn", [True, False])
-@pytest.mark.parametrize("protein_path", ["5dfr_solv_equil.pdb", "hif2a_nowater_min.pdb"])
+@pytest.mark.parametrize("protein_path", [path_to_internal_file("tmd.testsystems.data", "5dfr_solv_equil.pdb")])
 def test_environment_bcc_full_protein(protein_path, is_nn, env_nn_args):
     """
     Test that we can compute BCCs to generate per atom charge offsets and that they can be differentiated
     """
-    with path_to_internal_file("tmd.testsystems.data", protein_path) as path_to_pdb:
+    with protein_path as path_to_pdb:
         host_pdb = app.PDBFile(str(path_to_pdb))
         host_config = builders.build_protein_system(host_pdb, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
 

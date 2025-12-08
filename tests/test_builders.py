@@ -252,7 +252,7 @@ def test_protein_system_ion_concentration_and_neutralization(ionic_concentration
     negative_mol = ligand_from_smiles("[N+](=O)([O-])[O-]")
     neutral_mol = ligand_from_smiles("c1ccccc1")
 
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as pdb_path:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = str(pdb_path)
 
     host_config_no_ions = build_protein_system(
@@ -328,7 +328,7 @@ def test_protein_system_ion_concentration_and_neutralization(ionic_concentration
 
 @pytest.mark.nocuda
 def test_deserialize_protein_system_1_4_exclusions():
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as pdb_path:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = str(pdb_path)
     host_config = build_protein_system(host_pdbfile, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
 
@@ -360,7 +360,7 @@ def test_deserialize_protein_system_1_4_exclusions():
 def test_build_protein_system_waters_before_protein():
     num_waters = 100
     # Construct a PDB file with the waters before the protein, should raise an exception
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as pdb_path:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = app.PDBFile(str(pdb_path))
 
     host_ff = app.ForceField(f"{DEFAULT_PROTEIN_FF}.xml", f"{DEFAULT_WATER_FF}.xml")
@@ -385,7 +385,7 @@ def test_build_protein_system():
     rng = np.random.default_rng(2024)
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
 
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as pdb_path:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = str(pdb_path)
     host_config = build_protein_system(host_pdbfile, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, box_margin=0.1)
     num_host_atoms = host_config.conf.shape[0] - host_config.num_water_atoms
@@ -396,9 +396,9 @@ def test_build_protein_system():
     num_host_atoms_with_mol = host_with_mols_config.conf.shape[0] - host_with_mols_config.num_water_atoms
 
     assert num_host_atoms == num_host_atoms_with_mol
-    # Waters won't be deleted since the pocket has no waters
     assert host_config.num_water_atoms == host_with_mols_config.num_water_atoms
-    np.testing.assert_equal(compute_box_volume(host_config.box), compute_box_volume(host_with_mols_config.box))
+    # Water in the pocket will be deleted if mol provided
+    assert compute_box_volume(host_config.box) != compute_box_volume(host_with_mols_config.box)
 
     for bp in host_config.host_system.get_U_fns():
         (
