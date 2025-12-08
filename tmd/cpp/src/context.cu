@@ -137,9 +137,9 @@ void Context<RealType>::setup_local_md(RealType temperature,
     }
     return;
   }
-  this->local_md_pots_.reset(
-      new LocalMDPotentials(N_, bps_, nonbonded_pots_, freeze_reference,
-                            temperature, nblist_padding));
+  this->local_md_pots_.reset(new LocalMDPotentials<RealType>(
+      N_, bps_, nonbonded_pots_, freeze_reference, temperature,
+      nblist_padding));
 }
 
 template <typename RealType>
