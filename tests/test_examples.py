@@ -368,17 +368,17 @@ def test_run_rbfe_legs(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         "vacuum": (
-            "fa3fafbda47b2e21ba3d80d07d2aff41d59ade3a3b30cbaa153364777185283b",
+            "685a2dc7535b6de06931be3151336186766350c10fe86bb13c56d09f4151183f",
             "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
             "7f84f079fd7829941989dfe757df77bc28bb0f634147879720dc556881dd4195",
         ),
         "solvent": (
-            "009ca0fb958b522cc2c944d2a39cf77973a4bfa8bcfa9358b9d4d1c8bee02806",
+            "102a9cb62df09104e7ad18818af999a414121f02ceb87d5c1a39225480e60b33",
             "a839526092dce8883e246ba43bde84d644d12c04dddbde935e90c3c6cd906563",
             "e0ed87de3b6f4040999bbe2a19313b35e0afffc4a1addfba72ab61bdce80546c",
         ),
         "complex": (
-            "5ad91b50eca1048fdaac537bae4576564106c1b2e5d7a6d37727677a1fcfda39",
+            "e9a4de4eaaa48eaf7aa49b8eb41378df27ac91157747c9f6c4888cdeae263f6d",
             "b6634c8f3bb6f6b07bc8b3b69f7862138979619e340b2d2903298e230643081a",
             "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
         ),
@@ -553,22 +553,22 @@ def test_run_rbfe_legs_local(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         ("solvent", 400): (
-            "e9850fe856beb174c3645ed7f3a92ac3658e9db1a41e7af8570fb06a2d036bd5",
+            "e99f12af5c0a678cad659efafa75d0e89e9fecb4ec69f2d12a07f895daef32a4",
             "041c105260026bf390c184eb8bb974aab76703a6f6e1891ddc1ffbc66c758053",
             "d48741d0423055736f60e228debc3e6cfee1b9da5d67b9dde272dc3d8dd2447d",
         ),
         ("complex", 400): (
-            "eaa694622390618e562021b15720103b583bd30a60722fbc26c0ee6a699bc623",
+            "4c021e76ff69fbd1131dc90109aa289886932cccd4d8a9e5bc432c6981679aa9",
             "a07bccd5d85e44aaf694437674966c590480b7eeb010d19201bfcb3ca9b76173",
             "ccf5b9d8ed5ec7b5ff34d71074f631ee42250d713c91e0fe8c9e526eddec86f2",
         ),
         ("solvent", 390): (
-            "0df396aac058bdc2b7313bef9cc6a6d3b8075dba4779176360ca75ec2092f90f",
+            "13416594c844156eaff35b49b93d7ca78ce2a8b6cca86ea93108303977c9552d",
             "072b72fb884d0f00de3085ecc628df6d42916fb62d42b679bcd9683411a1779b",
             "6b3e0281f4d5ebe4abe7d69eddc27d7f64dcd97f0c2c3282f8e77f2b952515a8",
         ),
         ("complex", 390): (
-            "35f1c8e44fb80b96964561f3baf92a53768c02c19afde6a8f1de2694bdcbf23a",
+            "6f5f2ef0d996e6195a45574b1b45bf52c6421896522515fade1cd4af2f9d5918",
             "9e1185b1111d125394fbcd32ee6a16a9da18542191fa7681ae9b615ffd5c90c4",
             "f7709fa4c691ca730a1200e5cfced5db2e275954ed97858928b6918affaf7d6a",
         ),
