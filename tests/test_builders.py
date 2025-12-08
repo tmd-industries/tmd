@@ -25,7 +25,7 @@ from rdkit import Chem
 from tmd.constants import DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, ONE_4PI_EPS0, NBParamIdx
 from tmd.fe.free_energy import HostConfig
 from tmd.fe.utils import get_romol_conf, read_sdf, read_sdf_mols_by_name, set_romol_conf
-from tmd.ff import sanitize_water_ff
+from tmd.ff import get_water_ff_model
 from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
 from tmd.md.builders import (
     WATER_RESIDUE_NAME,
@@ -83,7 +83,15 @@ def test_build_water_system():
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/tip4pfb", "amber14/spce"])
+@pytest.mark.parametrize("water_ff", ["amber14/tip4pfb", "tip5p", "swm4ndp"])
+def test_build_water_system_raises_on_water_ff_with_virtual_sites(water_ff):
+    mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
+    with pytest.raises(ValueError, match="TMD does not support water models that use virtual sites"):
+        build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
+
+
+@pytest.mark.nocuda
+@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/spce", "amber14/opc3"])
 def test_build_water_system_different_water_ffs(water_ff):
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
     host_config = build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
@@ -362,7 +370,7 @@ def test_build_protein_system_waters_before_protein():
     top = app.Topology()
     pos = unit.Quantity((), unit.angstroms)
     modeller = app.Modeller(top, pos)
-    modeller.addSolvent(host_ff, numAdded=num_waters, neutralize=False, model=sanitize_water_ff(DEFAULT_WATER_FF))
+    modeller.addSolvent(host_ff, numAdded=num_waters, neutralize=False, model=get_water_ff_model(DEFAULT_WATER_FF))
     assert modeller.getTopology().getNumAtoms() == num_waters * 3
 
     modeller.add(host_pdbfile.topology, host_pdbfile.positions)
