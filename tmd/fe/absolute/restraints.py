@@ -193,7 +193,7 @@ def select_ligand_atoms_baumann(mol: Mol, rmsf: list[float]) -> list[int]:
     if len(cycles) >= 1:
         open_list = [atom_idx for cycle in cycles for atom_idx in cycle]
     else:
-        open_list = graph.nodes
+        open_list = list(graph.nodes)
 
     distances = [path_lengths[(center_idx, atom_idx)] for atom_idx in open_list]
     closest_idx = open_list[np.argmin(distances)]
