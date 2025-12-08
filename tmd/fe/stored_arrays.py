@@ -45,7 +45,7 @@ class StoredArrays(Sequence[NDArray]):
 
     def __init__(self) -> None:
         self._chunk_sizes: list[int] = []
-        self._dir = tempfile.TemporaryDirectory()
+        self._dir = tempfile.TemporaryDirectory(prefix="tmd_arr_")
 
     @classmethod
     def from_chunks(cls, chunks: Iterable[Collection[NDArray]]) -> Self:
