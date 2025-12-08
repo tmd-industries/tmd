@@ -484,7 +484,7 @@ def test_run_rbfe_legs(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         "vacuum": (
-            "fa3fafbda47b2e21ba3d80d07d2aff41d59ade3a3b30cbaa153364777185283b",
+            "685a2dc7535b6de06931be3151336186766350c10fe86bb13c56d09f4151183f",
             "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
             "7f84f079fd7829941989dfe757df77bc28bb0f634147879720dc556881dd4195",
         ),
@@ -669,7 +669,7 @@ def test_run_rbfe_legs_local(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         ("solvent", 400): (
-            "e9850fe856beb174c3645ed7f3a92ac3658e9db1a41e7af8570fb06a2d036bd5",
+            "e99f12af5c0a678cad659efafa75d0e89e9fecb4ec69f2d12a07f895daef32a4",
             "041c105260026bf390c184eb8bb974aab76703a6f6e1891ddc1ffbc66c758053",
             "d48741d0423055736f60e228debc3e6cfee1b9da5d67b9dde272dc3d8dd2447d",
         ),

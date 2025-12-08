@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,6 +33,7 @@ from tmd.fe import free_energy, topology, utils
 from tmd.fe.bar import DEFAULT_SOLVER_PROTOCOL, IndeterminateEnergyWarning, ukln_to_ukn
 from tmd.fe.free_energy import (
     BarResult,
+    HREXParams,
     HREXSimulationResult,
     InitialState,
     LocalMDParams,
@@ -722,6 +724,66 @@ def test_trajectories_by_replica_to_by_state(seed, n_states, n_iters, n_atoms):
     traj_by_replica = sim_res.extract_trajectories_by_replica(atom_idxs)
     traj_by_state = trajectories_by_replica_to_by_state(traj_by_replica, replica_idx_by_state_by_iter)
     np.testing.assert_array_equal(traj_by_state, frames[:, :, atom_idxs])
+
+
+@pytest.mark.nogpu
+def test_compute_total_ns(hif2a_ligand_pair_single_topology_lam0_state):
+    state = hif2a_ligand_pair_single_topology_lam0_state
+
+    n_intermediate_windows = 24
+    n_final_windows = 12
+    n_frames = 100
+    frames = np.zeros((n_final_windows, n_frames, *state.x0.shape))
+
+    dummy_box = np.eye(3) * 100.0
+    trajs = []
+    for state_frames in frames:
+        stored_frames = StoredArrays.from_chunks([state_frames])
+        traj = Trajectory(
+            frames=stored_frames,
+            boxes=[dummy_box] * len(stored_frames),
+            final_velocities=None,
+            final_barostat_volume_scale_factor=None,
+        )
+        trajs.append(traj)
+
+    sim_res = HREXSimulationResult(
+        final_result=PairBarResult(
+            initial_states=[state] * n_final_windows, bar_results=[Mock()] * (n_final_windows - 1)
+        ),
+        plots=Mock(),
+        hrex_plots=Mock(),
+        trajectories=trajs,
+        md_params=Mock(),
+        intermediate_results=[],
+        hrex_diagnostics=HREXDiagnostics([], []),
+    )
+
+    md_params = MDParams(
+        100,  # 100 frames
+        400 * 1000,  # 1 nanosecond
+        400,  # 1 picosecond
+        2023,
+    )
+
+    total_ns = free_energy.compute_total_ns(sim_res, md_params)
+
+    assert total_ns == n_final_windows * 1.0 + 0.1 * n_final_windows
+
+    hrex_md_params = replace(md_params, hrex_params=HREXParams())
+
+    # Add intermediate states
+    sim_res.intermediate_results = [
+        PairBarResult(
+            initial_states=[state] * n_intermediate_windows, bar_results=[Mock()] * (n_intermediate_windows - 1)
+        )
+    ]
+
+    total_ns_with_intermediate = free_energy.compute_total_ns(sim_res, hrex_md_params)
+
+    assert total_ns_with_intermediate > total_ns
+
+    assert total_ns_with_intermediate == (n_intermediate_windows * 1.1) + n_final_windows * 0.1
 
 
 @pytest.mark.nogpu
