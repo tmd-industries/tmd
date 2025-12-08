@@ -466,7 +466,7 @@ def check_split_ixns(
 ):
     ffs = load_split_forcefields()
 
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as path_to_pdb:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as path_to_pdb:
         host_config = build_protein_system(str(path_to_pdb), ffs.ref.protein_ff, ffs.ref.water_ff, box_margin=0.1)
 
     host_conf = host_config.conf

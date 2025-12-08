@@ -40,8 +40,8 @@ from tmd.utils import path_to_internal_file
     "pdb_path, sdf_path, mol_a_name, mol_b_name",
     [
         pytest.param(
-            path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb"),
-            path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf"),
+            path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb"),
+            path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf"),
             "43",
             "234",
             marks=pytest.mark.nightly(reason="slow"),
@@ -75,8 +75,8 @@ from tmd.utils import path_to_internal_file
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
-            path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb"),
-            path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf"),
+            path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb"),
+            path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf"),
             "43",
             "234",
         ),
@@ -106,7 +106,7 @@ def test_fire_minimize_host_protein(pdb_path, sdf_path, mol_a_name, mol_b_name):
 def test_local_equilibrate_vacuum():
     """Verify that we can run MD on a subset of the system. Useful for generating sane distributions of dummy atoms"""
     ff = Forcefield.load_default()
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         all_mols = read_sdf(path_to_ligand)
     mol_a = all_mols[1]
     mol_b = all_mols[4]
@@ -135,7 +135,7 @@ def test_local_equilibrate_vacuum():
 
 def test_fire_minimize_host_solvent():
     ff = Forcefield.load_default()
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         all_mols = read_sdf(path_to_ligand)
     mol_a = all_mols[1]
     mol_b = all_mols[4]
@@ -216,12 +216,12 @@ def test_fire_minimize_host_adamantane():
 @pytest.mark.nightly(reason="Currently not used in practice")
 def test_equilibrate_host_barker():
     ff = Forcefield.load_default()
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         all_mols = read_sdf(path_to_ligand)
     mol_a = all_mols[1]
     mol_b = all_mols[4]
 
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as path_to_pdb:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as path_to_pdb:
         host_config = builders.build_protein_system(str(path_to_pdb), ff.protein_ff, ff.water_ff, mols=[mol_a, mol_b])
 
     # TODO[requirements-gathering]:

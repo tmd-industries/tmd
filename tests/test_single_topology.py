@@ -62,7 +62,7 @@ setup_chiral_dummy_interactions_from_ff = functools.partial(
 
 
 def _get_hif2a_mol_pairs(shuffle: bool = False, seed: int = 2029) -> list[Chem.Mol]:
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = read_sdf(path_to_ligand)
 
     pairs = [(mol_a, mol_b) for mol_a in mols for mol_b in mols]
@@ -634,7 +634,7 @@ def test_combine_masses_hmr():
 def arbitrary_transformation():
     # NOTE: test system can probably be simplified; we just need
     # any SingleTopology and conformation
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = read_sdf_mols_by_name(path_to_ligand)
 
     mol_a = mols["206"]
@@ -1360,7 +1360,7 @@ def assert_symmetric_interpolation(mol_a, mol_b, core):
 
 @pytest.mark.nocuda
 def test_hif2a_end_state_symmetry_unit_test():
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = read_sdf(path_to_ligand)
 
     mol_a = mols[0]
