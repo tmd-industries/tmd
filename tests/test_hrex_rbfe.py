@@ -458,7 +458,9 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
     # Overlaps should be within 5% of the target overlap or higher than the target overlap (because final neighboring windows can have significantly higher overlap)
     assert np.all(ref_overlaps >= target_overlap - tolerance)
     # Should have a smaller difference than the overlap difference of min_overlap and target_overlap
-    assert np.all(np.abs(comp_overlaps - target_overlap) <= overlap_diff + tolerance)
+    assert np.all(np.abs(comp_overlaps - target_overlap)[:-1] <= overlap_diff + tolerance)
+    # The final lambda may have a higher overlap, verify that it is is over the target overlap within tolerance
+    assert comp_overlaps[-1] >= target_overlap - tolerance
 
 
 @pytest.mark.parametrize("seed", [2023])
