@@ -423,11 +423,9 @@ def select_receptor_atoms_baumann(
 
     l1, l2, l3 = ligand_ref_idxs
 
-    valid_r1_idxs = [r1 for r1 in receptor_idxs if _is_valid_r1(trj, r1, l1, l2, l3)]
+    valid_r1_idxs = (r1 for r1 in receptor_idxs if _is_valid_r1(trj, r1, l1, l2, l3))
 
-    valid_r2_pairs = [(r1, r2) for r1 in valid_r1_idxs for r2 in receptor_idxs if _is_valid_r2(trj, r1, r2, l1, l2)]
-    if len(valid_r2_pairs) == 0:
-        raise ValueError("could not find valid R1 / R2 atoms")
+    valid_r2_pairs = ((r1, r2) for r1 in valid_r1_idxs for r2 in receptor_idxs if _is_valid_r2(trj, r1, r2, l1, l2))
     # chosen to match the SepTop reference implementation at commit 3705ba5
     max_distance = 0.8 * (trj.unitcell_lengths.mean(axis=0).min(axis=-1) / 2)
     for found_r1, found_r2 in valid_r2_pairs:
