@@ -20,7 +20,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 project(tmd LANGUAGES CXX CUDA)
 
-find_package(Python 3.12...<4 COMPONENTS Interpreter Development REQUIRED)
+find_package(Python 3.11...<4 COMPONENTS Interpreter Development REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 
 set(PYBIND11_PYTHON_VERSION ${Python_VERSION} CACHE STRING "Which version of python we're building wrappers against")
