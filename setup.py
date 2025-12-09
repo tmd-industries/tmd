@@ -106,7 +106,7 @@ setup(
     keywords="molecular dynamics",
     ext_modules=ext_modules,
     packages=find_packages(),
-    python_requires=">=3.12",
+    python_requires=">=3.11",
     install_requires=[
         "jax",
         "jaxlib>0.4.1",
