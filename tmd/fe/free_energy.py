@@ -1412,11 +1412,11 @@ def compute_u_kln(trajs: Sequence[Trajectory], initial_states: Sequence[InitialS
 
 
 def compute_u_kn(trajs: Sequence[Trajectory], initial_states: Sequence[InitialState]) -> tuple[NDArray, NDArray]:
-    """Compute the U kn matrix given trajectopries and the associated states.
+    """Compute the U kn matrix given trajectories and the associated states.
 
     See compute_u_kln for more details
     """
-    u_kln, N_k = compute_u_kln
+    u_kln, N_k = compute_u_kln(trajs, initial_states)
     u_kn = kln_to_kn(u_kln, N_k)
     return u_kn, N_k
 
