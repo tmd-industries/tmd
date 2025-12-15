@@ -32,7 +32,7 @@ from rdkit import Chem
 
 from tmd.constants import DEFAULT_FF
 from tmd.fe.free_energy import assert_deep_eq
-from tmd.fe.utils import read_sdf, read_sdf_mols_by_name
+from tmd.fe.utils import get_mol_name, read_sdf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
@@ -228,6 +228,122 @@ def test_run_rbfe_graph_local(
             proc = run_example("run_rbfe_graph.py", get_cli_args(config))
             assert proc.returncode == 0
             verify_run(edges, Path(config["output_dir"]))
+
+
+@pytest.mark.fixed_output
+@pytest.mark.parametrize(
+    "leg, n_steps, n_windows, n_frames, n_eq_steps, mps_workers",
+    [("solvent", 100, 4, 50, 0, 2), ("complex", 100, 4, 50, 0, 2)],
+)
+@pytest.mark.parametrize("seed", [2025])
+def test_run_abfe(
+    leg,
+    n_steps,
+    n_windows,
+    n_frames,
+    n_eq_steps,
+    mps_workers,
+    seed,
+):
+    leg_results_hashes = {
+        "solvent": (
+            "102a9cb62df09104e7ad18818af999a414121f02ceb87d5c1a39225480e60b33",
+            "a839526092dce8883e246ba43bde84d644d12c04dddbde935e90c3c6cd906563",
+            "e0ed87de3b6f4040999bbe2a19313b35e0afffc4a1addfba72ab61bdce80546c",
+        ),
+        "complex": (
+            "e99f12af5c0a678cad659efafa75d0e89e9fecb4ec69f2d12a07f895daef32a4",
+            "b6634c8f3bb6f6b07bc8b3b69f7862138979619e340b2d2903298e230643081a",
+            "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
+        ),
+    }
+    with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
+        mols = read_sdf(hif2a_dir / "ligands.sdf")
+
+        config = dict(
+            seed=seed,
+            n_eq_steps=n_eq_steps,
+            n_frames=n_frames,
+            n_windows=n_windows,
+            steps_per_frame=n_steps,
+            local_md_steps=n_steps,
+            forcefield=DEFAULT_FF,
+            mps_workers=mps_workers,
+            output_dir=f"{ARTIFACT_DIR_NAME}/abfe_graph_local_{seed}",
+            experimental_field="IC50[uM](SPA)",
+            experimental_units="uM",
+            legs=leg,
+            force_overwrite=None,
+            store_trajectories=None,
+            target_overlap=0.1,
+            min_overlap=0.1,
+        )
+
+        if leg == "complex":
+            config["pdb_path"] = hif2a_dir / "5tbm_prepared.pdb"
+
+        rng = np.random.default_rng(seed)
+        mols_to_run = rng.choice(mols, replace=False, size=1)
+        with NamedTemporaryFile(suffix=".sdf") as temp_mols:
+            with Chem.SDWriter(temp_mols.name) as writer:
+                for mol in mols_to_run:
+                    writer.write(mol)
+
+            config["sdf_path"] = temp_mols.name
+            proc = run_example("run_abfe.py", get_cli_args(config))
+            assert proc.returncode == 0
+
+        output_dir = Path(config["output_dir"])
+        assert Forcefield.load_from_file(output_dir / "ff.py") is not None
+        assert output_dir.is_dir()
+        assert len(mols_to_run) == 1
+        for mol in mols_to_run:
+            mol_dir = output_dir / get_mol_name(mol)
+            mols_by_name = read_sdf_mols_by_name(mol_dir / "mol.sdf")
+            assert len(mols_by_name) == 1
+            assert (mol_dir / "md_params.pkl").is_file()
+            leg_dir = mol_dir / leg
+
+            assert (leg_dir / "results.npz").is_file()
+            if "force_overwrite" in config:
+                assert (leg_dir / "lambda0_traj.npz").is_file()
+                assert (leg_dir / "lambda1_traj.npz").is_file()
+            else:
+                assert not (leg_dir / "lambda0_traj.npz").is_file()
+                assert not (leg_dir / "lambda1_traj.npz").is_file()
+
+            assert (leg_dir / "final_pairbar_result.pkl").is_file()
+            assert (leg_dir / "host_config.pkl").is_file()
+            assert (leg_dir / "hrex_transition_matrix.png").is_file()
+            assert (leg_dir / "hrex_replica_state_distribution_heatmap.png").is_file()
+            assert (leg_dir / "dg_errors.png").is_file()
+            assert (leg_dir / "overlap_summary.png").is_file()
+            assert (leg_dir / "forward_and_reverse_dg.png").is_file()
+            if leg == "complex":
+                assert (leg_dir / "water_sampling_acceptances.png").is_file()
+
+            results = np.load(str(leg_dir / "results.npz"))
+            assert results["pred_dg"].size == 1
+            assert results["pred_dg"].dtype in (np.float64, np.float32)
+            assert results["pred_dg"] != 0.0
+
+            assert results["pred_dg_err"].size == 1
+            assert results["pred_dg_err"].dtype in (np.float64, np.float32)
+            assert results["pred_dg_err"] != 0.0
+
+            if leg == "complex":
+                assert results["correction"].size == 1
+                assert results["correction"].dtype in (np.float64, np.float32)
+                assert results["correction"] != 0.0
+            else:
+                assert "correction" not in results
+
+            assert results["n_windows"].size == 1
+            assert results["n_windows"].dtype == np.intp
+            assert 2 <= results["n_windows"] <= config["n_windows"]
+            assert isinstance(results["overlaps"], np.ndarray)
+            assert all(isinstance(overlap, float) for overlap in results["overlaps"])
+            verify_leg_results_hashes(leg_dir, leg_results_hashes[leg])
 
 
 @pytest.mark.nocuda
