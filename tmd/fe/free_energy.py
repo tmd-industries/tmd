@@ -319,8 +319,49 @@ class SimulationResult:
 
     def compute_u_kn(self) -> tuple[NDArray, NDArray]:
         """get MBAR input matrices u_kn and N_k"""
+        u_kln, N_k = self.compute_u_kln()
+        u_kn = kln_to_kn(u_kln, N_k)
+        return u_kn, N_k
 
-        return compute_u_kn(self.trajectories, self.final_result.initial_states)
+    def compute_u_kln(self) -> tuple[NDArray, NDArray]:
+        """get MBAR input matrices u_kln and N_k"""
+        return compute_u_kln(self.trajectories, self.final_result.initial_states)
+
+    def reconstruct_ukln(self) -> tuple[NDArray, NDArray]:
+        """Compute the u_kln matrix implied by the intermediate results"""
+        return reconstruct_ukln(self.intermediate_results)
+
+
+def reconstruct_ukln(results: list[PairBarResult]) -> tuple[NDArray, NDArray]:
+    """Generate the U_kln matrix implied by a series of pair bar results."""
+    assert len(results) > 0
+    current_lambda_schedule = [state.lamb for state in results[-1].initial_states]
+    N_k = np.array([results[-1].u_kln_by_component_by_lambda.shape[-1]] * len(current_lambda_schedule))
+    u_kln = np.full(
+        (len(current_lambda_schedule), len(current_lambda_schedule), np.max(N_k)),
+        np.inf,
+        dtype=results[-1].u_kln_by_component_by_lambda.dtype,
+    )
+    seen_pairs = set()
+    for result in results:
+        for bar_res_idx, (state_a, state_b) in enumerate(zip(result.initial_states, result.initial_states[1:])):
+            pair = (state_a.lamb, state_b.lamb)
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            bar_res = result.bar_results[bar_res_idx]
+            idx_a = current_lambda_schedule.index(state_a.lamb)
+            idx_b = current_lambda_schedule.index(state_b.lamb)
+            pairbar_ukln = bar_res.u_kln_by_component.sum(0)
+
+            for i in range(pairbar_ukln.shape[0]):
+                for j in range(pairbar_ukln.shape[1]):
+                    state_idx_a = idx_a if i == 0 else idx_b
+                    state_idx_b = idx_a if j == 0 else idx_b
+                    u_kln[state_idx_a, state_idx_b, :] = np.where(
+                        np.isnan(pairbar_ukln[i, j]), np.inf, pairbar_ukln[i, j]
+                    )
+    return u_kln, N_k
 
 
 @dataclass
@@ -1329,8 +1370,10 @@ def assert_ensembles_compatible(state_a: InitialState, state_b: InitialState):
         assert (state_a.box0 == state_b.box0).all()
 
 
-def compute_u_kn(trajs, initial_states) -> tuple[NDArray, NDArray]:
-    """makes K calls to execute_batch
+def compute_u_kln(trajs: Sequence[Trajectory], initial_states: Sequence[InitialState]) -> tuple[NDArray, NDArray]:
+    """Compute the complete U kln energy matrix given trajectories and the associated states.
+
+    Makes K, where K is the number of trajectories, calls to execute_batch
 
 
     Notes
@@ -1343,7 +1386,7 @@ def compute_u_kn(trajs, initial_states) -> tuple[NDArray, NDArray]:
         assert_potentials_compatible(initial_states[0].potentials, s.potentials)
         assert_ensembles_compatible(initial_states[0], s)
 
-    N_k = [len(traj.frames) for traj in trajs]
+    N_k = np.array([len(traj.frames) for traj in trajs], dtype=np.int32)
     kBTs = [BOLTZ * state.integrator.temperature for state in initial_states]
     assert len(set(kBTs)) == 1
     summed_pot = make_summed_potential(initial_states[0].potentials)
@@ -1357,7 +1400,7 @@ def compute_u_kn(trajs, initial_states) -> tuple[NDArray, NDArray]:
 
     unbound_impl = summed_pot.potential.to_gpu(np.float32).unbound_impl
     assert len(initial_states) == K
-    u_kln = np.nan * np.zeros((K, K, max(N_k)))
+    u_kln = np.full((K, K, np.max(N_k)), np.nan)
     for i, traj in enumerate(trajs):
         # The computations of the energies are computed serially on the GPU
         # TBD: Compute the parameters sets in parallel for improved throughput
@@ -1367,9 +1410,17 @@ def compute_u_kn(trajs, initial_states) -> tuple[NDArray, NDArray]:
         Us = Us.T  # Transpose to get energies by params
         us = Us.reshape(K, N_k[i]) / kBTs[i]
         u_kln[i, :, : N_k[i]] = np.nan_to_num(us, nan=+np.inf)
+    return u_kln, N_k
 
+
+def compute_u_kn(trajs: Sequence[Trajectory], initial_states: Sequence[InitialState]) -> tuple[NDArray, NDArray]:
+    """Compute the U kn matrix given trajectories and the associated states.
+
+    See compute_u_kln for more details
+    """
+    u_kln, N_k = compute_u_kln(trajs, initial_states)
     u_kn = kln_to_kn(u_kln, N_k)
-    return u_kn, np.array(N_k)
+    return u_kn, N_k
 
 
 def generate_pair_bar_ulkns(

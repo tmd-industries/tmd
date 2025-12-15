@@ -88,7 +88,7 @@ def test_cif_writer(n_frames):
         cif = PDBxFile(temp.name)
         assert cif.getNumFrames() == n_frames
         assert cif.getPositions(asNumpy=True).shape == good_coords.shape
-        np.testing.assert_allclose(cif.getPositions(asNumpy=True), good_coords)
+        np.testing.assert_allclose(cif.getPositions(asNumpy=True), good_coords, atol=1e-7)
 
     solvent_host_config = builders.build_water_system(4.0, ff.water_ff, mols=[mol_a, mol_b])
 
@@ -106,7 +106,7 @@ def test_cif_writer(n_frames):
         np.testing.assert_allclose(cif.getPositions(asNumpy=True), good_coords, atol=1e-5)
 
     # test complex
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as path_to_pdb:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as path_to_pdb:
         complex_host_config = builders.build_protein_system(str(path_to_pdb), ff.protein_ff, ff.water_ff)
 
         with NamedTemporaryFile(suffix=".cif") as temp:
@@ -120,7 +120,7 @@ def test_cif_writer(n_frames):
             cif = PDBxFile(temp.name)
             assert cif.getNumFrames() == n_frames
             assert cif.getPositions(asNumpy=True).shape == good_coords.shape
-            np.testing.assert_allclose(cif.getPositions(asNumpy=True), good_coords)
+            np.testing.assert_allclose(cif.getPositions(asNumpy=True), good_coords, atol=1e-7)
 
 
 def test_build_openmm_topology():

@@ -790,7 +790,7 @@ def test_compute_incremental_log_weights(batch_size, samples, box_size, precisio
 def hif2a_complex():
     seed = 2023
     ff = Forcefield.load_default()
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as path_to_pdb:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as path_to_pdb:
         host_config = builders.build_protein_system(str(path_to_pdb), ff.protein_ff, ff.water_ff, box_margin=0.1)
     bond_list = get_bond_list(host_config.host_system.bond.potential)
     conf = host_config.conf.astype(np.float32)
@@ -902,7 +902,7 @@ def test_moves_with_complex(
 def hif2a_rbfe_state() -> InitialState:
     seed = 2023
     ff = Forcefield.load_default()
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as path_to_pdb:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as path_to_pdb:
         host_config = builders.build_protein_system(str(path_to_pdb), ff.protein_ff, ff.water_ff, box_margin=0.1)
 
     mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()

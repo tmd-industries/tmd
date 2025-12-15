@@ -204,7 +204,7 @@ def test_nonbonded_mol_energy_random_moves(box_size, num_mols, moves, precision,
 def test_nonbonded_mol_energy_matches_exchange_mover_batch_U_in_complex(precision, atol, rtol):
     """Test that computing the per water energies of a system with a complex is equivalent."""
     ff = Forcefield.load_default()
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as path_to_pdb:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as path_to_pdb:
         complex_host_config = builders.build_protein_system(str(path_to_pdb), ff.protein_ff, ff.water_ff)
 
     conf = complex_host_config.conf

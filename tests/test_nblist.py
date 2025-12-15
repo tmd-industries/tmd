@@ -564,7 +564,7 @@ def setup_hif2a_initial_state(host_name: str):
 
     mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
     if host_name == "complex":
-        with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as protein_path:
+        with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as protein_path:
             host_config = build_protein_system(
                 str(protein_path), forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
             )

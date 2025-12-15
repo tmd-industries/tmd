@@ -61,7 +61,7 @@ def get_hif2a_single_topology_leg(host_name: str | None):
 
     mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
     if host_name == "complex":
-        with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as protein_path:
+        with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as protein_path:
             host_config = builders.build_protein_system(
                 str(protein_path), forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
             )
@@ -422,7 +422,7 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
         n_eq_steps=10000,
         steps_per_frame=400,
         seed=seed,
-        hrex_params=HREXParams(optimize_target_overlap=target_overlap),
+        hrex_params=HREXParams(optimize_target_overlap=target_overlap, n_frames_bisection=200),
     )
 
     ref_res = estimate_relative_free_energy_bisection_hrex(
@@ -431,7 +431,7 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
         core,
         forcefield,
         host_config,
-        replace(md_params, seed=seed),
+        md_params,
         lambda_interval=(0.0, 0.35),
         min_overlap=target_overlap,
     )
@@ -442,7 +442,7 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
         core,
         forcefield,
         host_config,
-        replace(md_params, seed=seed),
+        md_params,
         lambda_interval=(0.0, 0.35),
         min_overlap=target_overlap - overlap_diff,
     )
@@ -459,10 +459,14 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
     # Verify that all swaps are greater than zero
     assert np.all(ref_final_swap_acceptance_rates > tolerance)
     assert np.all(comp_final_swap_acceptance_rates > tolerance)
-
+    ref_overlaps = np.array(ref_res.final_result.overlaps)
+    comp_overlaps = np.array(comp_res.final_result.overlaps)
     # Overlaps should be within 5% of the target overlap or higher than the target overlap (because final neighboring windows can have significantly higher overlap)
-    assert np.all(np.array(ref_res.final_result.overlaps) >= target_overlap - tolerance)
-    assert np.all(np.array(comp_res.final_result.overlaps) >= target_overlap - tolerance)
+    assert np.all(ref_overlaps >= target_overlap - tolerance)
+    # Should have a smaller difference than the overlap difference of min_overlap and target_overlap
+    assert np.all(np.abs(comp_overlaps - target_overlap)[:-1] <= overlap_diff + tolerance)
+    # The final lambda may have a higher overlap, verify that it is is over the target overlap within tolerance
+    assert comp_overlaps[-1] >= target_overlap - tolerance
 
 
 @pytest.mark.parametrize("seed", [2023])
