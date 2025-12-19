@@ -170,7 +170,7 @@ def replace_clashy_waters(
     # Remove the chain filled with the dummy atoms
     ligand_chain = [chain for chain in modeller.topology.chains() if chain.id == dummy_chain_id]
     modeller.delete(ligand_chain)
-    assert num_system_atoms == modeller.getTopology().getNumAtoms()
+    assert num_system_atoms == modeller.topology.getNumAtoms(), "replace_clashy_waters changed the number of atoms"
 
 
 def solvate_modeller(
@@ -340,7 +340,7 @@ def load_pdb_system(
     box = strip_units(box)
     box += np.eye(3) * box_margin
 
-    assert len(list(modeller.topology.atoms())) == len(host_coords)
+    assert modeller.topology.getNumAtoms() == len(host_coords)
 
     return HostConfig(
         host_system=host_system,
@@ -424,15 +424,14 @@ def build_protein_system(
     solvate_modeller(
         modeller, box, host_ff, water_ff, mols=mols, neutralize=neutralize, ionic_concentration=ionic_concentration
     )
-    solvated_host_coords = strip_units(modeller.positions)
 
     if mols is not None:
         replace_clashy_waters(modeller, box, mols, host_ff, water_ff)
-        solvated_host_coords = strip_units(modeller.positions)
+    solvated_host_coords = strip_units(modeller.positions)
 
     num_water_atoms = solvated_host_coords.shape[0] - num_host_atoms
 
-    assert modeller.getTopology().getNumAtoms() == solvated_host_coords.shape[0]
+    assert modeller.topology.getNumAtoms() == solvated_host_coords.shape[0]
 
     print("building a protein system with", num_host_atoms, "protein atoms and", num_water_atoms, "water atoms")
     combined_templates = get_ion_residue_templates(modeller)
@@ -459,8 +458,6 @@ def build_protein_system(
 
     # Determine box from the system's coordinates
     box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
-
-    assert len(list(modeller.topology.atoms())) == len(solvated_host_coords)
 
     return HostConfig(
         host_system=solvated_host_system,
@@ -556,18 +553,18 @@ def build_membrane_system(
         ionic_concentration=ionic_concentration,
         membrane=True,
     )
-    solvated_host_coords = strip_units(modeller.positions)
 
     if mols is not None:
         replace_clashy_waters(modeller, box, mols, host_ff, water_ff)
-        solvated_host_coords = strip_units(modeller.positions)
+
+    solvated_host_coords = strip_units(modeller.positions)
 
     num_water_atoms = (
         len([residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]) * 3
     )
     num_membrane_atoms = len(solvated_host_coords) - len(host_coords) - num_water_atoms
 
-    assert modeller.getTopology().getNumAtoms() == solvated_host_coords.shape[0]
+    assert modeller.topology.getNumAtoms() == solvated_host_coords.shape[0]
 
     print(
         "building a protein system with",
@@ -603,7 +600,7 @@ def build_membrane_system(
     # Determine box from the system's coordinates
     box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
 
-    assert len(list(modeller.topology.atoms())) == len(solvated_host_coords)
+    assert modeller.topology.getNumAtoms() == len(solvated_host_coords)
 
     return HostConfig(
         host_system=solvated_host_system,
@@ -683,11 +680,10 @@ def build_water_system(
 
     if mols is not None:
         replace_clashy_waters(modeller, box.astype(np.float64), mols, ff, water_ff)
-        solvated_host_coords = strip_units(modeller.positions)
-    else:
-        solvated_host_coords = strip_units(modeller.positions)
 
-    assert modeller.getTopology().getNumAtoms() == solvated_host_coords.shape[0]
+    solvated_host_coords = strip_units(modeller.positions)
+
+    assert modeller.topology.getNumAtoms() == solvated_host_coords.shape[0]
 
     omm_host_system = ff.createSystem(
         modeller.getTopology(), nonbondedMethod=app.NoCutoff, constraints=None, rigidWater=False
@@ -707,8 +703,6 @@ def build_water_system(
     # Determine box from the system's coordinates
     box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
     num_water_atoms = len(solvated_host_coords)
-
-    assert len(list(modeller.topology.atoms())) == len(solvated_host_coords)
 
     return HostConfig(
         host_system=solvated_host_system,
