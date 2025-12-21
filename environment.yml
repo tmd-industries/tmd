@@ -2,5 +2,5 @@ name: tmd
 channels:
   - conda-forge
 dependencies:
-  - python=3.11.14
+  - python=3.10
   - ambertools=24.8

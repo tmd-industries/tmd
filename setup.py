@@ -106,7 +106,7 @@ setup(
     keywords="molecular dynamics",
     ext_modules=ext_modules,
     packages=find_packages(),
-    python_requires=">=3.11",
+    python_requires=">=3.10",
     install_requires=[
         "jax[cuda12]",
         "networkx",
