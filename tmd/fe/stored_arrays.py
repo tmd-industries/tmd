@@ -17,12 +17,15 @@ import tempfile
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from itertools import count
 from pathlib import Path
-from typing import NoReturn, Self, overload
+from typing import NoReturn, TypeVar, overload
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from tmd.parallel.client import AbstractFileClient
+
+# TypeVar for Self pattern (Python 3.10 compatible, Self was added in 3.11)
+_TStoredArrays = TypeVar("_TStoredArrays", bound="StoredArrays")
 
 
 class StoredArrays(Sequence[NDArray]):
@@ -48,7 +51,7 @@ class StoredArrays(Sequence[NDArray]):
         self._dir = tempfile.TemporaryDirectory(prefix="tmd_arr_")
 
     @classmethod
-    def from_chunks(cls, chunks: Iterable[Collection[NDArray]]) -> Self:
+    def from_chunks(cls: type[_TStoredArrays], chunks: Iterable[Collection[NDArray]]) -> _TStoredArrays:
         sa = cls()
         for chunk in chunks:
             sa.extend(chunk)
@@ -134,7 +137,7 @@ class StoredArrays(Sequence[NDArray]):
                 client.store_stream(str(dest_path), ifs)
 
     @classmethod
-    def load(cls, client: AbstractFileClient, prefix: Path = Path(".")) -> Self:
+    def load(cls: type[_TStoredArrays], client: AbstractFileClient, prefix: Path = Path(".")) -> _TStoredArrays:
         sa = cls()
         for idx in count():
             path = cls.get_chunk_path(prefix, idx)
