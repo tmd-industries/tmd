@@ -13,7 +13,7 @@
 // limitations under the License.
 
 #include "rmsd_align.hpp"
-#include <eigen3/Eigen/Dense>
+#include <Eigen/Dense>
 
 namespace tmd {
 
