@@ -35,8 +35,8 @@ else()
 endif()
 
 
-string(APPEND CMAKE_CXX_FLAGS "${COMMON_COMPILER_FLAGS} -Werror -Wdouble-promotion")
-string(APPEND CMAKE_CUDA_FLAGS "${COMMON_COMPILER_FLAGS}")
+string(APPEND CMAKE_CXX_FLAGS " ${COMMON_COMPILER_FLAGS} -Werror -Wdouble-promotion")
+string(APPEND CMAKE_CUDA_FLAGS " ${COMMON_COMPILER_FLAGS}")
 
 string(APPEND CMAKE_CUDA_FLAGS
   " -lineinfo"  # Disabling lineinfo reduces .so file by ~40MB
@@ -161,7 +161,7 @@ if (NOT CUDA_ARCH)
   set(CUDA_ARCH "native")
 endif()
 message("Cuda Arch: " ${CUDA_ARCH})
-set_property(TARGET ${LIBRARY_NAME} PROPERTY CUDA_ARCHITECTURES "${CUDA_ARCH}")
+set_property(TARGET ${LIBRARY_NAME} PROPERTY CUDA_ARCHITECTURES ${CUDA_ARCH})
 unset(CUDA_ARCH CACHE)
 
 target_link_libraries(${LIBRARY_NAME} PRIVATE -lcurand)
