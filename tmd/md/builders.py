@@ -482,7 +482,11 @@ def build_host_config_from_omm(
     num_membrane_atoms = 0
     if add_membrane:
         num_membrane_atoms = sum(
-            [len(list(residue.atoms())) for residue in modeller.topology.residues() if residue.name == POPC_RESIDUE_NAME]
+            [
+                len(list(residue.atoms()))
+                for residue in modeller.topology.residues()
+                if residue.name == POPC_RESIDUE_NAME
+            ]
         )
 
     (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
