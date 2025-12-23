@@ -31,7 +31,7 @@ rdkit_mol.SetProp("atom.dprop.PartialCharge", " ".join(str(x) for x in charges))
 ```
 
 > [!WARNING]
-> Loading SDFs with `atom.dprop.PartialCharge` may fail in RDKit if `readHs=False`. See RDKit [issue 8918](https://github.com/rdkit/rdkit/issues/8918).
+> Loading SDFs with `atom.dprop.PartialCharge` may fail in RDKit if `removeHs=True`. See RDKit [issue 8918](https://github.com/rdkit/rdkit/issues/8918).
 
 ## Protein and Water Forcefields
 TMD utilizes [OpenMM](https://github.com/openmm/openmm/) for system building, so the protein and water forcefields need to be readable by OpenMM.  The default protein forcefield is `amber99sbildn`, and the default water forcefield is `amber14/tip3p` (identical to `tip3p`, but includes ions).
