@@ -1,6 +1,6 @@
 # TMD Forcefields
 ## Ligand Forcefields
-All valence and Lennard-Jones terms originate from [Open Forcefield](https://openforcefield.org/).  Smirnoff format forcefields are convertible, with the limitation that virtual sites are not supported. Use the [tmd/ff/smirnoff_converter.py](https://github.com/tmd-industries/tmd/blob/master/tmd/ff/smirnoff_converter.py) script for conversion.
+All ligand valence and Lennard-Jones terms currently originate from the [Open Forcefield](https://openforcefield.org/) releases. Though any forcefield that is defined by the Smirnoff format is convertible, with the limitation that virtual sites are not supported. Use the [tmd/ff/smirnoff_converter.py](https://github.com/tmd-industries/tmd/blob/master/tmd/ff/smirnoff_converter.py) script to convert from Smirnoff to the TMD format.
 
 The following forcefields are included with TMD:
 - `smirnoff_2_0_0_<charge_model>.py` - OpenFF 2.0.0
@@ -20,7 +20,7 @@ TMD includes pre-constructed forcefields with charge type extensions:
 
 - `smirnoff_x_x_x_ccc.py` - Smirnoff with Correctable BCCs, using OpenEye AM1ELF10 as base charges, suitable for BCC refitting.
 - `smirnoff_x_x_x_am1bcc.py` - Smirnoff with OpenEye AM1BCCELF10 charges; supports phosphorus.
-- `smirnoff_x_x_x_amber_am1bcc.py` - Smirnoff with Amber AM1BCCELF10 charges; may be slow.
+- `smirnoff_x_x_x_amber_am1bcc.py` - Smirnoff with Amber AM1BCCELF10 charges; may be very slow.
 - `smirnoff_x_x_x_precomputed.py` - Smirnoff with precomputed charges assigned to ligands.
 
 #### Adding Precomputed Charges
@@ -34,7 +34,13 @@ rdkit_mol.SetProp("atom.dprop.PartialCharge", " ".join(str(x) for x in charges))
 > Loading SDFs with `atom.dprop.PartialCharge` may fail in RDKit if `readHs=False`. See RDKit [issue 8918](https://github.com/rdkit/rdkit/issues/8918).
 
 ## Protein and Water Forcefields
-TMD utilizes [OpenMM](https://github.com/openmm/openmm/) for system building, making OpenMM forcefields available for proteins and water.  The default protein forcefield is `amber99sbildn`, and the default water forcefield is `amber14/tip3p` (identical to `tip3p`, but includes ions).  These can be serialized to a forcefield file by doing the following:
+TMD utilizes [OpenMM](https://github.com/openmm/openmm/) for system building, so the protein and water forcefields need to be readable by OpenMM.  The default protein forcefield is `amber99sbildn`, and the default water forcefield is `amber14/tip3p` (identical to `tip3p`, but includes ions).
+
+> [!NOTE]
+> TMD excludes the `.xml` suffix to the protein and water forcefield.
+
+
+It is possible to store forcefields with different protein and water forceields by doing the following:
 
 ```python
 from dataclasses import replace
