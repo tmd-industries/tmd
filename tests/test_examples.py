@@ -27,10 +27,10 @@ from typing import Optional
 
 import numpy as np
 import pytest
-from common import ARTIFACT_DIR_NAME, hash_file, temporary_working_dir
+from common import ARTIFACT_DIR_NAME, hash_file, ligand_from_smiles, temporary_working_dir
 from rdkit import Chem
 
-from tmd.constants import DEFAULT_FF
+from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF
 from tmd.fe.free_energy import assert_deep_eq
 from tmd.fe.utils import read_sdf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
@@ -259,6 +259,91 @@ def test_build_rbfe_graph(scoring_method):
             assert ref_edge == comp_edge
 
 
+@pytest.mark.nocuda
+def test_build_rbfe_graph_charge_hop():
+    with NamedTemporaryFile(suffix=".sdf") as temp_sdf:
+        with Chem.SDWriter(temp_sdf.name) as writer:
+            mol_a = ligand_from_smiles("Cc1cc[nH]c1", seed=2025)
+            writer.write(mol_a)
+
+            mol_b = ligand_from_smiles("C[n+]1cc[nH]c1", seed=2025)
+            writer.write(mol_b)
+
+        base_args = [temp_sdf.name, "--enable_charge_hops"]
+        with NamedTemporaryFile(suffix=".json") as temp:
+            # Build a graph
+            proc = run_example("build_rbfe_graph.py", [*base_args, temp.name])
+            assert proc.returncode == 0
+            with open(temp.name) as ifs:
+                ref_edges = json.load(ifs)
+                # Only two compounds, so there will only be a single edge
+                assert len(ref_edges) == 1
+                assert all(isinstance(edge, dict) for edge in ref_edges)
+                for expected_key in ["mol_a", "mol_b", "core"]:
+                    assert all(expected_key in edge for edge in ref_edges)
+
+        with NamedTemporaryFile(suffix=".json") as temp:
+            # Re-build the graph, make sure the results are deterministic
+            proc = run_example("build_rbfe_graph.py", [*base_args, temp.name])
+            assert proc.returncode == 0
+            with open(temp.name) as ifs:
+                comp_edges = json.load(ifs)
+
+        assert len(ref_edges) == len(comp_edges)
+        for ref_edge, comp_edge in zip(ref_edges, comp_edges):
+            assert ref_edge == comp_edge
+
+        # Should fail due to having only one ligand per charge set
+        with NamedTemporaryFile(suffix=".json") as temp:
+            with pytest.raises(subprocess.CalledProcessError):
+                run_example("build_rbfe_graph.py", [temp_sdf.name, temp.name])
+
+
+@pytest.mark.nocuda
+@pytest.mark.parametrize(
+    "parameters_to_adjust",
+    [{"ring_matches_ring_only": True}, {"max_connected_components": 2}, {"enforce_core_core": False}],
+)
+def test_build_rbfe_graph_atom_mapping_parameters(parameters_to_adjust):
+    atom_mapping_kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    # Parameters to update should be in the base atom mapping set
+    assert set(atom_mapping_kwargs.keys()).union(parameters_to_adjust.keys()) == set(atom_mapping_kwargs.keys())
+    atom_mapping_kwargs.update(parameters_to_adjust)
+    with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
+        base_args = [str(hif2a_dir / "ligands.sdf")]
+        for key, val in atom_mapping_kwargs.items():
+            # The initial mapping isn't exposed through the CLI
+            if key == "initial_mapping":
+                continue
+            base_args.append(f"--atom_map_{key}")
+            if not isinstance(val, bool):
+                base_args.append(str(val))
+            else:
+                base_args.append("1" if val else "0")
+        with NamedTemporaryFile(suffix=".json") as temp:
+            # Build a graph
+            proc = run_example("build_rbfe_graph.py", [*base_args, temp.name])
+            assert proc.returncode == 0
+            with open(temp.name) as ifs:
+                ref_edges = json.load(ifs)
+                # The number of edges changes based on the mapping
+                assert 63 <= len(ref_edges) <= 66
+                assert all(isinstance(edge, dict) for edge in ref_edges)
+                for expected_key in ["mol_a", "mol_b", "core"]:
+                    assert all(expected_key in edge for edge in ref_edges)
+
+        with NamedTemporaryFile(suffix=".json") as temp:
+            # Re-build the graph, make sure the results are deterministic
+            proc = run_example("build_rbfe_graph.py", [*base_args, temp.name])
+            assert proc.returncode == 0
+            with open(temp.name) as ifs:
+                comp_edges = json.load(ifs)
+
+        assert len(ref_edges) == len(comp_edges)
+        for ref_edge, comp_edge in zip(ref_edges, comp_edges):
+            assert ref_edge == comp_edge
+
+
 @pytest.mark.fixed_output
 @pytest.mark.parametrize("batch_size", [1, 1000])
 @pytest.mark.parametrize(
@@ -301,7 +386,7 @@ def test_water_sampling_mc_bulk_water(batch_size, insertion_type, last_frame_sha
 )
 def test_water_sampling_mc_buckyball(batch_size, insertion_type, last_frame_sha):
     # Expectations of the test:
-    # 1) Different batch_sizes produces identical final frames
+    # 1) ggifferent batch_sizes produces identical final frames
     # 2) Different insertion_types produces different final frames, but bitwise identical to a reference final frame.
 
     # setup cli kwargs for the run_example_script
