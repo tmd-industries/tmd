@@ -143,6 +143,15 @@ def build_greedy_graph(
         for mol in mols:
             graph.add_node(get_mol_name(mol), **{MOL_FIELD: mol})
 
+        # If there are only two mols then, simply connect the two and exit
+        if len(mols) == 2:
+            i = 0
+            j = 1
+            core = core_matrix[i, j]
+            dummy_atoms = float(get_num_dummy_atoms(mols[i], mols[j], core))
+            graph.add_edge(get_mol_name(mols[i]), get_mol_name(mols[j]), **{CORE_FIELD: core, DUMMY_ATOMS: dummy_atoms})
+            return graph
+
         for a, b in nx.k_edge_augmentation(graph.to_undirected(as_view=True), k_min_cut, possible_edges, partial=True):
             (i, j) = sorted([mol_name_to_idx[a], mol_name_to_idx[b]])
             core = core_matrix[i, j]
@@ -208,7 +217,11 @@ def main():
         help="K min cut of graph to generate, only applicable if using greedy map generation",
     )
     parser.add_argument("--ligands", nargs="+", default=None, help="Name of ligands to consider")
-    parser.add_argument("--verbose", action="store_true", help="Report information about the dataset")
+    parser.add_argument(
+        "--enable_charge_hops",
+        action="store_true",
+        help="Build graphs that allow for charge hops, else will generate separated graphs. TMD does not currently support charge hopping",
+    )
     for arg, val in DEFAULT_ATOM_MAPPING_KWARGS.items():
         # No reason to provide an initial mapping
         if arg == "initial_mapping":
@@ -240,16 +253,24 @@ def main():
         initial_type = type(atom_mapping_kwargs[stripped_key])
         atom_mapping_kwargs[stripped_key] = initial_type(val)
 
-    mols_by_charge = defaultdict(list)
-    for mol in mols:
-        mols_by_charge[Chem.GetFormalCharge(mol)].append(mol)
+    if not args.enable_charge_hops:
+        mols_by_charge = defaultdict(list)
+        for mol in mols:
+            mols_by_charge[Chem.GetFormalCharge(mol)].append(mol)
+    else:
+        # Force all of the ligands into a single charge object
+        mols_by_charge = {0: mols}
     multiple_maps = len(mols_by_charge) > 1
     if multiple_maps:
-        print("Ligands contain provide contain different charges, generating multiple maps")
+        print(
+            "Ligands contain provide contain different charges, generating multiple maps. Add --enable_charge_hops to force compounds into a single graph"
+        )
     mols_by_name = {get_mol_name(m): m for m in mols}
     for charge, mol_subset in mols_by_charge.items():
         if args.ligands is not None and len(args.ligands):
             mol_subset = [mol for mol in mol_subset if get_mol_name(mol) in args.ligands]
+        if len(mol_subset) <= 1:
+            raise RuntimeError(f"Must provide at least 2 molecules to build graph, got {len(mol_subset)} mols")
         if args.mode == GREEDY:
             if args.greedy_scoring == BEST:
                 scoring_methods = [JACCARD, DUMMY_ATOMS]
@@ -272,33 +293,34 @@ def main():
             if CORE_FIELD in data:
                 edge[CORE_FIELD] = data[CORE_FIELD].tolist()
             json_output.append(edge)
-        if args.verbose:
-            dummy_atoms = []
-            for a, b, data in nx_graph.edges(data=True):
-                if CORE_FIELD in data:
-                    dummy_atoms.append(get_num_dummy_atoms(mols_by_name[a], mols_by_name[b], data[CORE_FIELD]))
-                    # Make this optional later
-                    # with open(f"atom_mapping_{a}_{b}.svg", "w") as ofs:
-                    #     ofs.write(plot_atom_mapping_grid(mols_by_name[a], mols_by_name[b], data[CORE_FIELD]))
-            assert len(dummy_atoms) > 0
-            dummy_atoms = [
-                get_num_dummy_atoms(mols_by_name[a], mols_by_name[b], data[CORE_FIELD])
-                for a, b, data in nx_graph.edges(data=True)
-                if CORE_FIELD in data
-            ]
-            print("Total Dummy Atoms", sum(dummy_atoms))
-            print("Mean Dummy Atoms", np.round(np.mean(dummy_atoms), 2))
-            print("Median Dummy Atoms", np.round(np.median(dummy_atoms), 2))
-            print("Min Dummy Atoms", np.min(dummy_atoms))
-            print("Max Dummy Atoms", np.max(dummy_atoms))
-            print("Network Diameter", nx.diameter(nx_graph.to_undirected(as_view=True)))
-            print("Node Connectivity", nx.node_connectivity(nx_graph.to_undirected(as_view=True)))
         output_path = Path(args.output_path).expanduser()
         if multiple_maps:
             output_path = output_path.parent / f"{output_path.stem}_charge_{charge:d}{''.join(output_path.suffixes)}"
         print(f"Generated {args.mode} map with {len(json_output)} edges, writing to {output_path!s}")
         with open(output_path, "w") as ofs:
             json.dump(json_output, ofs, indent=1)
+        dummy_atoms = []
+        for a, b, data in nx_graph.edges(data=True):
+            if CORE_FIELD in data:
+                dummy_atoms.append(get_num_dummy_atoms(mols_by_name[a], mols_by_name[b], data[CORE_FIELD]))
+                # Make this optional later
+                # with open(f"atom_mapping_{a}_{b}.svg", "w") as ofs:
+                #     ofs.write(plot_atom_mapping_grid(mols_by_name[a], mols_by_name[b], data[CORE_FIELD]))
+        assert len(dummy_atoms) > 0
+        dummy_atoms = [
+            get_num_dummy_atoms(mols_by_name[a], mols_by_name[b], data[CORE_FIELD])
+            for a, b, data in nx_graph.edges(data=True)
+            if CORE_FIELD in data
+        ]
+        print("Graph Summary")
+        print("-" * 20)
+        print("Total Dummy Atoms", sum(dummy_atoms))
+        print("Mean Dummy Atoms", np.round(np.mean(dummy_atoms), 2))
+        print("Median Dummy Atoms", np.round(np.median(dummy_atoms), 2))
+        print("Min Dummy Atoms", np.min(dummy_atoms))
+        print("Max Dummy Atoms", np.max(dummy_atoms))
+        print("Network Diameter", nx.diameter(nx_graph.to_undirected(as_view=True)))
+        print("Node Connectivity", nx.node_connectivity(nx_graph.to_undirected(as_view=True)))
 
 
 if __name__ == "__main__":

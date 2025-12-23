@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -410,9 +411,8 @@ def test_charge_perturbation_is_invalid():
     core[:, 0] = np.arange(core.shape[0])
     core[:, 1] = core[:, 0]
 
-    with pytest.raises(ChargePertubationError) as e:
+    with pytest.raises(ChargePertubationError, match=r"mol a and mol b don't have the same charge: a: 0 b: 1"):
         SingleTopology(mol_a, mol_b, core, ff)
-    assert str(e.value) == "mol a and mol b don't have the same charge: a: 0 b: 1"
 
 
 def bond_idxs_are_canonical(all_idxs):
