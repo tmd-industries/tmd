@@ -2,7 +2,7 @@
 
 ## Concepts
 
-- [Force fields](concepts/forcefields.md)
+- [Forcefields](concepts/forcefields.md)
 
 ## Tutorials
 
