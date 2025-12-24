@@ -106,6 +106,7 @@ def main():
 
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
     np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
 
     with open(Path(args.graph_json).expanduser()) as ifs:
         edges_data = json.load(ifs)
@@ -170,7 +171,8 @@ def main():
             else None,
             water_sampling_params=WaterSamplingParams(radius=mol_radius + args.water_sampling_padding),
         )
-
+        # Shuffle the order of the legs to improve load balancing of work in different GPUs
+        rng.shuffle(args.legs)
         for leg_name in args.legs:
             fut = pool.submit(
                 run_rbfe_leg,
