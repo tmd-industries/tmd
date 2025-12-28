@@ -496,6 +496,7 @@ def test_run_rbfe_legs(
             assert (output_dir / "atom_mapping.svg").is_file()
             assert (output_dir / "core.pkl").is_file()
             assert (output_dir / "ff.py").is_file()
+            assert output_dir / "ddg_results.csv"
 
             assert Forcefield.load_from_file(output_dir / "ff.py") is not None
 
@@ -549,6 +550,10 @@ def test_run_rbfe_legs(
                 traj_data = np.load(str(leg_dir / f"lambda{lamb:d}_traj.npz"))
                 assert len(traj_data["coords"]) == n_frames
                 assert len(traj_data["boxes"]) == n_frames
+            ddg_rows = list(DictReader(open(output_dir / "ddg_results.csv")))
+            assert len(ddg_rows) == 1
+            assert ddg_rows[0]["mol_a"] == mol_a
+            assert ddg_rows[0]["mol_b"] == mol_b
 
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
