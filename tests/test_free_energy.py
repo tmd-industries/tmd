@@ -310,6 +310,7 @@ def solvent_hif2a_ligand_pair_single_topology_lam0_state(hif2a_ligand_pair_singl
     return state
 
 
+@pytest.mark.memcheck
 @pytest.mark.parametrize("n_frames", [1, 10])
 @pytest.mark.parametrize("local_steps", [0, 1])
 @pytest.mark.parametrize("max_buffer_frames", [1])
