@@ -33,7 +33,7 @@ namespace tmd {
 template <typename RealType>
 void verify_nonbonded_potential_for_local_md(
     const std::shared_ptr<Potential<RealType>> pot,
-    const int expected_idx_count) {
+    const int expected_system_count, const int expected_idx_count) {
   if (std::shared_ptr<NonbondedInteractionGroup<RealType>> nb_pot =
           std::dynamic_pointer_cast<NonbondedInteractionGroup<RealType>>(pot);
       nb_pot) {
@@ -41,6 +41,10 @@ void verify_nonbonded_potential_for_local_md(
         nb_pot->get_num_col_idxs() != expected_idx_count) {
       throw std::runtime_error("unable to run local MD with nonbonded "
                                "potential on subset of the system");
+    } else if (nb_pot->num_systems() != expected_system_count) {
+      throw std::runtime_error(
+          "local MD expected " + std::to_string(expected_system_count) +
+          " systems, got " + std::to_string(nb_pot->num_systems()) + "systems");
     }
   } else {
     throw std::runtime_error(
@@ -49,9 +53,11 @@ void verify_nonbonded_potential_for_local_md(
 }
 
 template void verify_nonbonded_potential_for_local_md<float>(
-    const std::shared_ptr<Potential<float>> pot, const int expected_idx_count);
+    const std::shared_ptr<Potential<float>> pot,
+    const int expected_system_count, const int expected_idx_count);
 template void verify_nonbonded_potential_for_local_md<double>(
-    const std::shared_ptr<Potential<double>> pot, const int expected_idx_count);
+    const std::shared_ptr<Potential<double>> pot,
+    const int expected_system_count, const int expected_idx_count);
 
 template <typename RealType>
 void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,

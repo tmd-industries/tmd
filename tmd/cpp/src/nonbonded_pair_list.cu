@@ -90,6 +90,7 @@ NonbondedPairList<RealType, Negated>::NonbondedPairList(
                        cur_num_idxs_ * IDXS_DIM * sizeof(*d_scales_),
                        cudaMemcpyHostToDevice));
   cudaSafeMalloc(&d_system_idxs_, cur_num_idxs_ * sizeof(*d_system_idxs_));
+  printf("Allocate %d\n", cur_num_idxs_);
 
   gpuErrchk(cudaMemcpy(d_system_idxs_, &system_idxs[0],
                        cur_num_idxs_ * sizeof(*d_system_idxs_),
@@ -187,14 +188,22 @@ void NonbondedPairList<RealType, Negated>::set_idxs_device(
 template <typename RealType, bool Negated>
 void NonbondedPairList<RealType, Negated>::set_scales_device(
     const int num_idxs, const RealType *d_new_scales, cudaStream_t stream) {
-  if (max_idxs_ < num_idxs) {
-    throw std::runtime_error("set_scales_device(): Max number of scales " +
-                             std::to_string(max_idxs_) +
-                             " is less than new idxs " +
-                             std::to_string(num_idxs));
+  if (cur_num_idxs_ != num_idxs) {
+    throw std::runtime_error("set_scales_device(): num idxs must match");
   }
   gpuErrchk(cudaMemcpyAsync(d_scales_, d_new_scales,
                             num_idxs * IDXS_DIM * sizeof(*d_scales_),
+                            cudaMemcpyDeviceToDevice, stream));
+}
+
+template <typename RealType, bool Negated>
+void NonbondedPairList<RealType, Negated>::set_system_idxs_device(
+    const int num_idxs, const int *d_new_system_idxs, cudaStream_t stream) {
+  if (cur_num_idxs_ != num_idxs) {
+    throw std::runtime_error("set_system_idxs_device(): num idxs must match");
+  }
+  gpuErrchk(cudaMemcpyAsync(d_system_idxs_, d_new_system_idxs,
+                            num_idxs * sizeof(*d_system_idxs_),
                             cudaMemcpyDeviceToDevice, stream));
 }
 
@@ -206,6 +215,11 @@ int NonbondedPairList<RealType, Negated>::get_num_idxs() const {
 template <typename RealType, bool Negated>
 int *NonbondedPairList<RealType, Negated>::get_idxs_device() {
   return d_pair_idxs_;
+}
+
+template <typename RealType, bool Negated>
+int *NonbondedPairList<RealType, Negated>::get_system_idxs_device() {
+  return d_system_idxs_;
 }
 
 template <typename RealType, bool Negated>
