@@ -15,10 +15,11 @@
 
 import os
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 from numpy.typing import NDArray
-from openmm import app, unit
+from openmm import app, openmm, unit
 from rdkit import Chem
 
 from tmd.fe.system import HostSystem
@@ -31,6 +32,7 @@ WATER_RESIDUE_NAME = "HOH"
 SODIUM_ION_RESIDUE = "NA"
 CHLORINE_ION_RESIDUE = "CL"
 MAGNESIUM_ION_RESIDUE = "MG"
+POPC_RESIDUE_NAME = "POP"
 
 
 @dataclass(frozen=True)
@@ -155,22 +157,24 @@ def replace_clashy_waters(
             topology.addAtom(CHLORINE_ION_RESIDUE, app.Element.getBySymbol("Cl"), res)
     modeller.add(topology, ligand_coords * unit.nanometers)
 
+    # Get the latest residue templates then update with the input templates
+    ion_res_templates = get_ion_residue_templates(modeller)
+
     clashy_waters = get_waters_to_delete()
-    combined_templates = get_ion_residue_templates(modeller)
     # First add back in the number of waters that are clashy and we know we need to delete
     modeller.addSolvent(
         host_ff,
         numAdded=len(clashy_waters),
         neutralize=False,
         model=get_water_ff_model(water_ff),
-        residueTemplates=combined_templates,
+        residueTemplates=ion_res_templates,
     )
     clashy_waters = get_waters_to_delete()
     modeller.delete(list(clashy_waters))
     # Remove the chain filled with the dummy atoms
     ligand_chain = [chain for chain in modeller.topology.chains() if chain.id == dummy_chain_id]
     modeller.delete(ligand_chain)
-    assert num_system_atoms == modeller.getTopology().getNumAtoms()
+    assert num_system_atoms == modeller.topology.getNumAtoms(), "replace_clashy_waters changed the number of atoms"
 
 
 def solvate_modeller(
@@ -237,7 +241,8 @@ def solvate_modeller(
                     topology.addAtom(SODIUM_ION_RESIDUE, app.Element.getBySymbol("Na"), res)
             coords = np.zeros((topology.getNumAtoms(), 3)) * unit.angstroms
             modeller.add(topology, coords)
-    combined_templates = get_ion_residue_templates(modeller)
+        # Get the latest residue templates then update with the input templates
+    ion_res_templates = get_ion_residue_templates(modeller)
     if not membrane:
         modeller.addSolvent(
             ff,
@@ -245,7 +250,7 @@ def solvate_modeller(
             ionicStrength=ionic_concentration * unit.molar,
             model=get_water_ff_model(water_ff),
             neutralize=neutralize,
-            residueTemplates=combined_templates,
+            residueTemplates=ion_res_templates,
         )
     else:
         assert get_water_ff_model(water_ff) == "tip3p", "Only supports tip3p waters"
@@ -253,6 +258,7 @@ def solvate_modeller(
             ff,
             ionicStrength=ionic_concentration * unit.molar,
             neutralize=neutralize,
+            residueTemplates=ion_res_templates,
         )
     if add_dummy_ions:
         current_topo = modeller.getTopology()
@@ -269,7 +275,11 @@ def solvate_modeller(
 
 
 def load_pdb_system(
-    host_pdbfile: app.PDBFile | str, protein_ff: str, water_ff: str, box_margin: float = 0.0, cutoff: float = 1.2
+    host_pdbfile: app.PDBFile | str,
+    protein_ff: str,
+    water_ff: str,
+    box_margin: float = 0.0,
+    cutoff: float = 1.2,
 ) -> HostConfig:
     """
     Load a protein system. Useful for when using an pre-existing system that has been solvated/equilibrated.
@@ -311,15 +321,9 @@ def load_pdb_system(
     water_residues_in_pdb = [residue for residue in host_pdb.topology.residues() if residue.name == WATER_RESIDUE_NAME]
     num_water_atoms = sum([len(list(residue.atoms())) for residue in water_residues_in_pdb])
 
-    combined_templates = get_ion_residue_templates(modeller)
+    ion_res_templates = get_ion_residue_templates(modeller)
 
-    omm_host_system = host_ff.createSystem(
-        modeller.topology,
-        nonbondedMethod=app.NoCutoff,
-        constraints=None,
-        rigidWater=False,
-        residueTemplates=combined_templates,
-    )
+    omm_host_system = construct_default_omm_system(host_ff, modeller, ion_res_templates)
 
     (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
         omm_host_system, cutoff=cutoff
@@ -340,7 +344,7 @@ def load_pdb_system(
     box = strip_units(box)
     box += np.eye(3) * box_margin
 
-    assert len(list(modeller.topology.atoms())) == len(host_coords)
+    assert modeller.topology.getNumAtoms() == len(host_coords)
 
     return HostConfig(
         host_system=host_system,
@@ -348,6 +352,171 @@ def load_pdb_system(
         box=box,
         num_water_atoms=num_water_atoms,
         num_membrane_atoms=0,
+        omm_topology=modeller.topology,
+        masses=np.asarray(masses),
+    )
+
+
+def construct_default_omm_system(
+    ff: app.ForceField, modeller: app.Modeller, residue_templates: dict[app.Residue, str]
+) -> openmm.System:
+    """
+    Parameters
+    ----------
+    modeller: app.Modeller
+        Modeller with topology and starting coordinates
+
+    host_ff: str
+        The OpenMM forcefield defining relevant parameters
+
+    residue_templates: dict[app.Residue, str]
+        Residue templates for custom handling of residue templates.
+        See https://docs.openmm.org/latest/api-python/generated/openmm.app.modeller.Modeller.html#openmm.app.modeller.Modeller.addSolvent
+        for more details. Only valid to provide residues that are in the host_pdbfile and if host_pdbfile is an app.PDBFile.
+        The residue templates in get_ion_residue_templates will be applied, but will be overridden by any user provided input.
+
+    Returns
+    -------
+        OpenMM openmm.System
+    """
+    return ff.createSystem(
+        modeller.topology,
+        nonbondedMethod=app.NoCutoff,
+        constraints=None,
+        rigidWater=False,
+        residueTemplates=residue_templates,
+    )
+
+
+def build_host_config_from_omm(
+    modeller: app.Modeller,
+    host_ff: app.ForceField,
+    construct_system_func: Callable[
+        [app.ForceField, app.Modeller, dict[app.Residue, str]], openmm.System
+    ] = construct_default_omm_system,
+    ionic_concentration: float = 0.0,
+    neutralize: bool = False,
+    mols: list[Chem.Mol] | None = None,
+    padding: float = 1.0,
+    box_margin: float = 0.0,
+    water_model: str = "tip3p",
+    add_membrane: bool = False,
+):
+    """
+    Build a solvated system system from an existing OpenMM modeller object and Forcefield. Useful for having more fine-grain
+    control over system parameterization.
+
+    Parameters
+    ----------
+    modeller: app.Modeller
+        Modeller with topology and starting coordinates
+
+    host_ff: str
+        The OpenMM forcefield defining relevant parameters
+
+    construct_system_func: func(app.ForceField, app.Modeller, dict[app.Residue, str]) -> openmm.System
+        Function used to construct the OpenMM system object. Defaults to tmd.md.builders.construct_default_omm_system
+        Function is not allowed to change the number of atoms within the topology.
+
+    ionic_concentration: optional float
+        Concentration of ions, in molars, to add to the system. Defaults to 0.0, meaning no ions are added.
+
+    neutralize: optional bool
+        Whether or not to add ions to the system to ensure the system has a net charge of 0.0. Defaults to False.
+
+    mols: optional list of mols
+        Molecules to be part of the system, will avoid placing water molecules that clash with the mols.
+
+    padding: Solvent padding to add to box, in nanometers
+        If there are no particles will define the box dimensions
+
+    box_margin: Amount of box_margin to add to box, in nanometers
+        Avoids clashes within the system
+
+    water_model: str
+        Water model used when adding waters. Can use tmd.ff.get_water_ff_model to get the appropriate
+        model. Defaults to tip3p.
+
+    add_membrane: bool
+        Whether or not to add a membrane to the system. Defaults to False
+
+    Returns
+    -------
+    HostConfig
+    """
+    host_coords = strip_units(modeller.positions)
+    box = get_box_from_coords(host_coords)
+    box += np.eye(3) * padding
+
+    # Make sure to account for any waters that might come along in the modeller already
+    starting_water_atoms = (
+        len([residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]) * 3
+    )
+    num_host_atoms = len(host_coords) - starting_water_atoms
+
+    solvate_modeller(
+        modeller,
+        box,
+        host_ff,
+        water_model,
+        mols=mols,
+        neutralize=neutralize,
+        ionic_concentration=ionic_concentration,
+        membrane=add_membrane,
+    )
+
+    if mols is not None:
+        replace_clashy_waters(modeller, box, mols, host_ff, water_model)
+    solvated_host_coords = strip_units(modeller.positions)
+
+    ion_res_templates = get_ion_residue_templates(modeller)
+    solvated_omm_host_system = construct_system_func(host_ff, modeller, ion_res_templates)
+
+    assert modeller.topology.getNumAtoms() == solvated_host_coords.shape[0], (
+        "Modeller no longer matches number of atoms in the system"
+    )
+
+    num_water_atoms = (
+        len([residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]) * 3
+    )
+    num_membrane_atoms = 0
+    if add_membrane:
+        num_membrane_atoms = sum(
+            [
+                len(list(residue.atoms()))
+                for residue in modeller.topology.residues()
+                if residue.name == POPC_RESIDUE_NAME
+            ]
+        )
+
+    (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
+        solvated_omm_host_system, cutoff=1.2
+    )
+
+    solvated_host_system = HostSystem(
+        bond=bond,
+        angle=angle,
+        proper=proper,
+        improper=improper,
+        nonbonded_all_pairs=nonbonded,
+    )
+
+    # Determine box from the system's coordinates
+    box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
+
+    if num_membrane_atoms > 0:
+        print(
+            f"building a system with {num_host_atoms:d} host atoms, {num_water_atoms} water atoms and {num_membrane_atoms} membrane atoms"
+        )
+    else:
+        print(f"building a system with {num_host_atoms:d} host atoms and {num_water_atoms} water atoms")
+
+    return HostConfig(
+        host_system=solvated_host_system,
+        conf=solvated_host_coords,
+        box=box,
+        num_water_atoms=num_water_atoms,
+        num_membrane_atoms=num_membrane_atoms,
         omm_topology=modeller.topology,
         masses=np.asarray(masses),
     )
@@ -385,7 +554,7 @@ def build_protein_system(
     neutralize: optional bool
         Whether or not to add ions to the system to ensure the system has a net charge of 0.0. Defaults to False.
 
-    box_margin: Amount of box_margin to add to box
+    box_margin: Amount of box_margin to add to box, in nanometers
         Avoids clashes within the system
 
     Returns
@@ -417,59 +586,14 @@ def build_protein_system(
             water_indices, expected_water_indices, err_msg="Waters in PDB must be at the end of the file"
         )
 
-    padding = 1.0
-    box = get_box_from_coords(host_coords)
-    box += np.eye(3) * padding
-
-    solvate_modeller(
-        modeller, box, host_ff, water_ff, mols=mols, neutralize=neutralize, ionic_concentration=ionic_concentration
-    )
-    solvated_host_coords = strip_units(modeller.positions)
-
-    if mols is not None:
-        replace_clashy_waters(modeller, box, mols, host_ff, water_ff)
-        solvated_host_coords = strip_units(modeller.positions)
-
-    num_water_atoms = solvated_host_coords.shape[0] - num_host_atoms
-
-    assert modeller.getTopology().getNumAtoms() == solvated_host_coords.shape[0]
-
-    print("building a protein system with", num_host_atoms, "protein atoms and", num_water_atoms, "water atoms")
-    combined_templates = get_ion_residue_templates(modeller)
-
-    solvated_omm_host_system = host_ff.createSystem(
-        modeller.topology,
-        nonbondedMethod=app.NoCutoff,
-        constraints=None,
-        rigidWater=False,
-        residueTemplates=combined_templates,
-    )
-
-    (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
-        solvated_omm_host_system, cutoff=1.2
-    )
-
-    solvated_host_system = HostSystem(
-        bond=bond,
-        angle=angle,
-        proper=proper,
-        improper=improper,
-        nonbonded_all_pairs=nonbonded,
-    )
-
-    # Determine box from the system's coordinates
-    box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
-
-    assert len(list(modeller.topology.atoms())) == len(solvated_host_coords)
-
-    return HostConfig(
-        host_system=solvated_host_system,
-        conf=solvated_host_coords,
-        box=box,
-        num_water_atoms=num_water_atoms,
-        num_membrane_atoms=0,
-        omm_topology=modeller.topology,
-        masses=np.asarray(masses),
+    return build_host_config_from_omm(
+        modeller,
+        host_ff,
+        ionic_concentration=ionic_concentration,
+        neutralize=neutralize,
+        padding=1.0,
+        mols=mols,
+        box_margin=box_margin,
     )
 
 
@@ -542,77 +666,15 @@ def build_membrane_system(
             water_indices, expected_water_indices, err_msg="Waters in PDB must be at the end of the file"
         )
 
-    padding = 1.0
-    box = get_box_from_coords(host_coords)
-    box += np.eye(3) * padding
-
-    solvate_modeller(
+    return build_host_config_from_omm(
         modeller,
-        box,
         host_ff,
-        water_ff,
-        mols=mols,
-        neutralize=neutralize,
         ionic_concentration=ionic_concentration,
-        membrane=True,
-    )
-    solvated_host_coords = strip_units(modeller.positions)
-
-    if mols is not None:
-        replace_clashy_waters(modeller, box, mols, host_ff, water_ff)
-        solvated_host_coords = strip_units(modeller.positions)
-
-    num_water_atoms = (
-        len([residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]) * 3
-    )
-    num_membrane_atoms = len(solvated_host_coords) - len(host_coords) - num_water_atoms
-
-    assert modeller.getTopology().getNumAtoms() == solvated_host_coords.shape[0]
-
-    print(
-        "building a protein system with",
-        num_host_atoms,
-        "protein atoms,",
-        num_membrane_atoms,
-        "membrane atoms and",
-        num_water_atoms,
-        "water atoms",
-    )
-    combined_templates = get_ion_residue_templates(modeller)
-
-    solvated_omm_host_system = host_ff.createSystem(
-        modeller.topology,
-        nonbondedMethod=app.NoCutoff,
-        constraints=None,
-        rigidWater=False,
-        residueTemplates=combined_templates,
-    )
-
-    (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
-        solvated_omm_host_system, cutoff=1.2
-    )
-
-    solvated_host_system = HostSystem(
-        bond=bond,
-        angle=angle,
-        proper=proper,
-        improper=improper,
-        nonbonded_all_pairs=nonbonded,
-    )
-
-    # Determine box from the system's coordinates
-    box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
-
-    assert len(list(modeller.topology.atoms())) == len(solvated_host_coords)
-
-    return HostConfig(
-        host_system=solvated_host_system,
-        conf=solvated_host_coords,
-        box=box,
-        num_water_atoms=num_water_atoms,
-        omm_topology=modeller.topology,
-        masses=np.asarray(masses),
-        num_membrane_atoms=num_membrane_atoms,
+        neutralize=neutralize,
+        padding=1.0,
+        mols=mols,
+        box_margin=box_margin,
+        add_membrane=True,
     )
 
 
@@ -664,7 +726,13 @@ def build_water_system(
     box = np.eye(3) * box_width
 
     solvate_modeller(
-        modeller, box, ff, water_ff, mols=mols, neutralize=neutralize, ionic_concentration=ionic_concentration
+        modeller,
+        box,
+        ff,
+        water_ff,
+        mols=mols,
+        neutralize=neutralize,
+        ionic_concentration=ionic_concentration,
     )
 
     def get_centered_coords():
@@ -679,19 +747,19 @@ def build_water_system(
             host_coords = host_coords - host_centroid + mols_centroid
         return host_coords
 
+    # Don't use build_host_config_from_omm here because of the recentering
     modeller = app.Modeller(modeller.topology, get_centered_coords())
 
     if mols is not None:
         replace_clashy_waters(modeller, box.astype(np.float64), mols, ff, water_ff)
-        solvated_host_coords = strip_units(modeller.positions)
-    else:
-        solvated_host_coords = strip_units(modeller.positions)
 
-    assert modeller.getTopology().getNumAtoms() == solvated_host_coords.shape[0]
+    solvated_host_coords = strip_units(modeller.positions)
 
-    omm_host_system = ff.createSystem(
-        modeller.getTopology(), nonbondedMethod=app.NoCutoff, constraints=None, rigidWater=False
-    )
+    assert modeller.topology.getNumAtoms() == solvated_host_coords.shape[0]
+
+    ion_res_templates = get_ion_residue_templates(modeller)
+    omm_host_system = construct_default_omm_system(ff, modeller, ion_res_templates)
+
     (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
         omm_host_system, cutoff=1.2
     )
@@ -707,8 +775,6 @@ def build_water_system(
     # Determine box from the system's coordinates
     box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
     num_water_atoms = len(solvated_host_coords)
-
-    assert len(list(modeller.topology.atoms())) == len(solvated_host_coords)
 
     return HostConfig(
         host_system=solvated_host_system,
