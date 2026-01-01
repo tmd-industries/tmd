@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,7 +34,7 @@ public:
   constexpr static RealType DEFAULT_NBLIST_PADDING = static_cast<RealType>(0.2);
 
   LocalMDPotentials(
-      const int N,
+      const int num_systems, const int N,
       const std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
       const std::vector<std::shared_ptr<Potential<RealType>>> &nonbonded_pots,
       const bool freeze_reference = true,
@@ -63,6 +64,7 @@ public:
   const RealType nblist_padding; // Padding to set when configuring Local MD
 
 private:
+  const int num_systems_;
   const int N_;
   std::size_t temp_storage_bytes_;
   int num_allpairs_idxs_;
@@ -107,12 +109,17 @@ private:
   // the free-free and free-frozen interactions are computed.
   const std::vector<int> idxs_sizes_;
 
+  DeviceBuffer<RealType>
+      d_scales_buffer_; // Temporary buffer for storing Exclusion scales
+
   DeviceBuffer<char> d_idxs_flags_; // Flag the idxs that overlap
   DeviceBuffer<int> d_idxs_buffer_; // Where to store the original idxs
   DeviceBuffer<int> d_idxs_temp_; // Temporary buffer for setting up the subset
                                   // of idxs for bonded terms
-  DeviceBuffer<RealType>
-      d_scales_buffer_; // Temporary buffer for storing Exclusion scales
+  DeviceBuffer<int>
+      d_system_idxs_buffer_;             // Where to store original system idxs
+  DeviceBuffer<int> d_system_idxs_temp_; // Temporary buffer for the system idxs
+                                         // of bonded terms
   DeviceBuffer<RealType> d_params_temp_; // Temporary buffer for setting up the
                                          // subset of parameters for bonds
 
@@ -138,12 +145,14 @@ private:
       std::shared_ptr<BoundPotential<RealType>> bp,
       std::shared_ptr<Potential<RealType>> pot,
       int *d_idxs_buffer, // Where to store the original idxs
-      unsigned int *d_permutation, cudaStream_t stream);
+      unsigned int *d_permutation, int *d_system_idxs_buffer,
+      cudaStream_t stream);
 
   void _truncate_nonbonded_exclusions_potential_idxs(
       std::shared_ptr<Potential<RealType>> pot,
       int *d_idxs_buffer, // Where to store the original idxs
-      unsigned int *d_permutation, cudaStream_t stream);
+      unsigned int *d_permutation, int *d_system_idxs_buffer,
+      cudaStream_t stream);
 
   void _reset_nonbonded_ixn_group(std::shared_ptr<Potential<RealType>> pot,
                                   cudaStream_t stream);
@@ -153,13 +162,13 @@ private:
       std::shared_ptr<Potential<RealType>> pot,
       const int total_idxs, // divide by potential->IDX_DIMS
       int *d_idxs_buffer,   // Contains original idxs
-      unsigned int *d_permutation, cudaStream_t stream);
+      unsigned int *d_permutation, int *d_src_system_idxs, cudaStream_t stream);
 
   void _reset_nonbonded_exclusions_potential_idxs(
       std::shared_ptr<Potential<RealType>> pot,
       const int total_idxs, // divide by potential->IDX_DIMS
       int *d_idxs_buffer,   // Contains original idxs
-      unsigned int *d_permutation, cudaStream_t stream);
+      unsigned int *d_permutation, int *d_src_system_idxs, cudaStream_t stream);
 };
 
 } // namespace tmd

@@ -25,7 +25,7 @@ namespace tmd {
 template <typename RealType>
 void verify_nonbonded_potential_for_local_md(
     const std::shared_ptr<Potential<RealType>> pot,
-    const int expected_idx_count);
+    const int expected_system_count, const int expected_idx_count);
 
 template <typename RealType>
 void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,

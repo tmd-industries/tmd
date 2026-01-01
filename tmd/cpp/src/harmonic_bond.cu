@@ -66,22 +66,21 @@ HarmonicBond<RealType>::HarmonicBond(const int num_systems, const int num_atoms,
   cudaSafeMalloc(&d_bond_idxs_,
                  cur_num_idxs_ * IDXS_DIM * sizeof(*d_bond_idxs_));
 
-  cudaSafeMalloc(&d_bond_system_idxs_,
-                 cur_num_idxs_ * sizeof(*d_bond_system_idxs_));
+  cudaSafeMalloc(&d_system_idxs_, cur_num_idxs_ * sizeof(*d_system_idxs_));
   cudaSafeMalloc(&d_u_buffer_, cur_num_idxs_ * sizeof(*d_u_buffer_));
 
   gpuErrchk(cudaMemcpy(d_bond_idxs_, &bond_idxs[0],
                        cur_num_idxs_ * IDXS_DIM * sizeof(*d_bond_idxs_),
                        cudaMemcpyHostToDevice));
 
-  gpuErrchk(cudaMemcpy(d_bond_system_idxs_, &system_idxs[0],
-                       cur_num_idxs_ * sizeof(*d_bond_system_idxs_),
+  gpuErrchk(cudaMemcpy(d_system_idxs_, &system_idxs[0],
+                       cur_num_idxs_ * sizeof(*d_system_idxs_),
                        cudaMemcpyHostToDevice));
 };
 
 template <typename RealType> HarmonicBond<RealType>::~HarmonicBond() {
   gpuErrchk(cudaFree(d_bond_idxs_));
-  gpuErrchk(cudaFree(d_bond_system_idxs_));
+  gpuErrchk(cudaFree(d_system_idxs_));
   gpuErrchk(cudaFree(d_u_buffer_));
 };
 
@@ -116,13 +115,13 @@ void HarmonicBond<RealType>::execute_device(
 
     kernel_ptrs_[kernel_idx]<<<blocks, tpb, 0, stream>>>(
         num_atoms_, cur_num_idxs_, d_x, d_box, d_p, d_bond_idxs_,
-        d_bond_system_idxs_, d_du_dx, d_du_dp,
+        d_system_idxs_, d_du_dx, d_du_dp,
         d_u == nullptr ? nullptr : d_u_buffer_);
     gpuErrchk(cudaPeekAtLastError());
 
     if (d_u) {
-      nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, d_bond_system_idxs_,
-                            d_u, stream);
+      nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, d_system_idxs_, d_u,
+                            stream);
     }
   }
 };
@@ -142,12 +141,28 @@ void HarmonicBond<RealType>::set_idxs_device(const int num_idxs,
   cur_num_idxs_ = num_idxs;
 }
 
+template <typename RealType>
+void HarmonicBond<RealType>::set_system_idxs_device(
+    const int num_idxs, const int *d_new_system_idxs, cudaStream_t stream) {
+  if (cur_num_idxs_ != num_idxs) {
+    throw std::runtime_error("set_system_idxs_device(): num idxs must match");
+  }
+  gpuErrchk(cudaMemcpyAsync(d_system_idxs_, d_new_system_idxs,
+                            num_idxs * sizeof(*d_system_idxs_),
+                            cudaMemcpyDeviceToDevice, stream));
+}
+
 template <typename RealType> int HarmonicBond<RealType>::get_num_idxs() const {
   return cur_num_idxs_;
 }
 
 template <typename RealType> int *HarmonicBond<RealType>::get_idxs_device() {
   return d_bond_idxs_;
+}
+
+template <typename RealType>
+int *HarmonicBond<RealType>::get_system_idxs_device() {
+  return d_system_idxs_;
 }
 
 template <typename RealType>
