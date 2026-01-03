@@ -36,7 +36,7 @@ from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF
 from tmd.fe import atom_mapping
 from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, WaterSamplingParams
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
-from tmd.fe.utils import read_sdf_mols_by_name
+from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.md.exchange.utils import get_radius_of_mol_pair
 from tmd.parallel.client import CUDAPoolClient, FileClient, SerialClient
@@ -187,7 +187,7 @@ def main():
     leg_results = defaultdict(dict)
     for leg, fut in zip(args.legs, futures):
         res = fut.result()
-        leg_results[(mol_a, mol_b)][leg] = res
+        leg_results[(get_mol_name(mol_a), get_mol_name(mol_b))][leg] = res
     write_result_csvs(file_client, mols_by_name, leg_results, args.experimental_field, args.experimental_units)
 
 
