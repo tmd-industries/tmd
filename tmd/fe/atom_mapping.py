@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -71,6 +72,7 @@ def get_cores_and_diagnostics(
     max_cores,
     enforce_core_core,
     ring_matches_ring_only,
+    heavy_matches_heavy_only,
     enforce_chiral,
     disallow_planar_torsion_flips,
     min_threshold,
@@ -89,6 +91,7 @@ def get_cores_and_diagnostics(
         max_cores=max_cores,
         enforce_core_core=enforce_core_core,
         ring_matches_ring_only=ring_matches_ring_only,
+        heavy_matches_heavy_only=heavy_matches_heavy_only,
         enforce_chiral=enforce_chiral,
         disallow_planar_torsion_flips=disallow_planar_torsion_flips,
         min_threshold=min_threshold,
@@ -116,6 +119,7 @@ def get_cores(
     max_cores,
     enforce_core_core,
     ring_matches_ring_only,
+    heavy_matches_heavy_only,
     enforce_chiral,
     disallow_planar_torsion_flips,
     min_threshold,
@@ -169,6 +173,10 @@ def get_cores(
         atom i in mol A can match atom j in mol B
         only if in_ring(i, A) == in_ring(j, B)
 
+    heavy_matches_heavy_only: bool
+        atom i in mol A can match atom j in mol B
+        only if is_hydrogen(i, A) == is_hydrogen(i, B)
+
     enforce_chiral: bool
         Filter out cores that would flip atom chirality
 
@@ -198,6 +206,7 @@ def get_cores(
         max_cores,
         enforce_core_core,
         ring_matches_ring_only,
+        heavy_matches_heavy_only,
         enforce_chiral,
         disallow_planar_torsion_flips,
         min_threshold,
@@ -271,6 +280,7 @@ def _get_cores_impl(
     max_cores,
     enforce_core_core,
     ring_matches_ring_only,
+    heavy_matches_heavy_only,
     enforce_chiral,
     disallow_planar_torsion_flips,
     min_threshold,
@@ -294,6 +304,9 @@ def _get_cores_impl(
     for src, dst in initial_mapping:
         initial_mapping_kv[src] = dst
 
+    def _is_hydrogen(atom):
+        return atom.GetAtomicNum() == 1
+
     for idx, a_xyz in enumerate(conf_a):
         if idx < len(initial_mapping):
             priority_idxs.append([initial_mapping_kv[idx]])  # used to initialize marcs and nothing else
@@ -308,6 +321,9 @@ def _get_cores_impl(
                 dijs.append(dij)
 
                 if ring_matches_ring_only and (atom_i.IsInRing() != atom_j.IsInRing()):
+                    continue
+                # Either heavy atoms match with other heavy atoms or hydrogens match hydrogens
+                if heavy_matches_heavy_only and _is_hydrogen(atom_i) != _is_hydrogen(atom_j):
                     continue
 
                 cutoff = ring_cutoff if (atom_i.IsInRing() or atom_j.IsInRing()) else chain_cutoff
