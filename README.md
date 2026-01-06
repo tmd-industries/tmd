@@ -1,5 +1,6 @@
 # tmd
 
+[![EffVer Versioning](https://img.shields.io/badge/version_scheme-EffVer-0097a7)](https://jacobtomlinson.dev/effver)
 ![Nightly Tests](https://github.com/badisa/tmd/actions/workflows/nightly-tests.yml/badge.svg)
 
 A high-performance differentiable molecular dynamics and forcefield engine.
