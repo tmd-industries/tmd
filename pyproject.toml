@@ -56,7 +56,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [tool.tbump.version]
-current = "0.1.1"
+current = "0.2.0"
 
 regex = '''
   (?P<major>\d+)
@@ -73,6 +73,10 @@ tag_template = "v{new_version}"
 [[tool.tbump.file]]
 src = "pyproject.toml"
 search = 'current = "{current_version}"'
+
+[[tool.tbump.file]]
+src = "setup.py"
+search = 'version="{current_version}"'
 
 [[tool.tbump.file]]
 src = "tmd/__init__.py"
