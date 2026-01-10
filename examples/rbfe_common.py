@@ -66,6 +66,8 @@ def write_result_csvs(
                     row.append(str(leg_pred))
                     row.append(str(leg_err))
             if compute_dg:
+                if not (COMPLEX_LEG in leg_summaries and SOLVENT_LEG in leg_summaries):
+                    continue
                 edge_ddg = leg_summaries[COMPLEX_LEG]["pred_dg"] - leg_summaries[SOLVENT_LEG]["pred_dg"]
                 edge_ddg_err = np.linalg.norm(
                     [leg_summaries[COMPLEX_LEG]["pred_dg_err"], leg_summaries[SOLVENT_LEG]["pred_dg_err"]]
