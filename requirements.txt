@@ -8,3 +8,4 @@ openeye-toolkits==2020.2.0
 openmm==8.2.0
 jax==0.4.38
 jaxlib==0.4.38
+mdtraj==1.11.0
