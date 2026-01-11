@@ -27,12 +27,14 @@ from tmd.fe.free_energy import (
     MDParams,
     PairBarResult,
     SimulationResult,
+    WaterSamplingParams,
     image_frames,
 )
 from tmd.fe.rbfe import (
     estimate_relative_free_energy,
     estimate_relative_free_energy_bisection,
     estimate_relative_free_energy_bisection_hrex,
+    estimate_relative_free_energy_bisection_or_hrex,
     rebalance_lambda_schedule,
     run_solvent,
     run_vacuum,
@@ -319,6 +321,53 @@ def test_local_md_parameters(freeze_reference):
 
     # Some of the particles should have never moved
     assert np.all(res.frames[0][0] == res.frames[0][-1], axis=1).sum() > 0
+
+
+@pytest.mark.parametrize("local_md, water_sampling", [(True, True), (True, False), (False, True)])
+def test_invalid_params_vacuum_simulation(local_md, water_sampling):
+    """Verify that running a vacuum simulation with local MD params and/or water sampling params does not crash"""
+
+    mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
+    forcefield = Forcefield.load_default()
+    seed = 2023
+    frames = 5
+    windows = 2
+    steps_per_frame = 5
+
+    md_params = MDParams(
+        n_frames=frames,
+        n_eq_steps=10,
+        seed=seed,
+        steps_per_frame=steps_per_frame,
+        local_md_params=LocalMDParams(
+            local_steps=steps_per_frame,
+            min_radius=0.3,
+            max_radius=1.0,
+        )
+        if local_md
+        else None,
+        water_sampling_params=WaterSamplingParams() if water_sampling else None,
+    )
+
+    with catch_warnings(record=True) as w:
+        res = estimate_relative_free_energy_bisection_or_hrex(
+            mol_a,
+            mol_b,
+            core,
+            forcefield,
+            md_params=md_params,
+            host_config=None,
+            prefix="vacuum",
+            n_windows=windows,
+            min_overlap=0.1,
+            min_cutoff=None,
+        )
+        assert len(res.frames[0]) == frames
+    warning_messages = [x.message.args[0] for x in w]
+    if local_md:
+        assert "System has no Nonbonded potential, disabling local md" in warning_messages
+    if water_sampling:
+        assert "System has no Nonbonded potential, disabling water sampling" in warning_messages
 
 
 def test_steps_per_frames():
