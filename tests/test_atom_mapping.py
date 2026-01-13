@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -377,6 +378,7 @@ $$$$""",
         max_cores=1e6,
         enforce_core_core=True,
         ring_matches_ring_only=False,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -417,6 +419,7 @@ def test_all_pairs(dataset):
                 max_cores=1000,
                 enforce_core_core=True,
                 ring_matches_ring_only=False,
+                heavy_matches_heavy_only=False,
                 enforce_chiral=True,
                 disallow_planar_torsion_flips=False,
                 min_threshold=0,
@@ -570,6 +573,7 @@ $$$$""",
         max_cores=1000000,
         enforce_core_core=False,
         ring_matches_ring_only=False,
+        heavy_matches_heavy_only=False,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
         initial_mapping=None,
@@ -595,6 +599,7 @@ $$$$""",
         max_cores=1000000,
         enforce_core_core=True,
         ring_matches_ring_only=False,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -621,6 +626,7 @@ $$$$""",
         max_cores=1000000,
         enforce_core_core=True,
         ring_matches_ring_only=False,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -754,6 +760,7 @@ def test_hif2a_failure():
         max_cores=1e6,
         enforce_core_core=True,
         ring_matches_ring_only=False,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -819,6 +826,7 @@ def test_cyclohexane_stereo():
         max_cores=100000,
         enforce_core_core=True,
         ring_matches_ring_only=True,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -881,6 +889,7 @@ def test_chiral_atom_map():
         enforce_core_core=True,
         disallow_planar_torsion_flips=False,
         ring_matches_ring_only=True,
+        heavy_matches_heavy_only=False,
         min_threshold=0,
         initial_mapping=None,
     )
@@ -921,6 +930,7 @@ def test_ring_matches_ring_only(ring_matches_ring_only):
         enforce_core_core=False,
         enforce_chiral=False,
         disallow_planar_torsion_flips=False,
+        heavy_matches_heavy_only=False,
         min_threshold=0,
         initial_mapping=None,
     )
@@ -949,6 +959,7 @@ def test_max_visits_error():
         max_cores=1000,
         enforce_core_core=True,
         ring_matches_ring_only=False,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -982,6 +993,7 @@ def test_max_cores_warning():
         min_connected_component_size=1,
         enforce_core_core=True,
         ring_matches_ring_only=False,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -1005,6 +1017,7 @@ def test_min_threshold():
         max_cores=1000,
         enforce_core_core=True,
         ring_matches_ring_only=False,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=mol_a.GetNumAtoms(),
@@ -1176,6 +1189,7 @@ def test_initial_mapping(hif2a_ligands):
         max_cores=1e5,
         enforce_core_core=True,
         ring_matches_ring_only=True,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=True,
         min_threshold=0,
@@ -1433,3 +1447,240 @@ def test_hybrid_core_generation(hif2a_ligands):
     # plt.legend()
 
     # plt.show()
+
+
+def test_heavy_matches_heavy_only():
+    """Tests that only heavy atoms match heavy atoms in the atom mapping.
+
+    Uses MCL1 ligand 49 and 54, where previously the hydrogens on a methyl would be mapped
+    to ring atoms.
+
+    A useful feature for applying constraints where the heavy atoms and hydrogens will be have to be demapped
+    anyways.
+    """
+    mol_a = Chem.MolFromMolBlock(
+        """49
+     RDKit          3D
+
+ 41 43  0  0  1  0  0  0  0  0999 V2000
+    3.2882  -48.3838    6.5890 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.7977  -49.5315    6.5856 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.4275  -50.6005    6.8061 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.3311  -49.6554    6.3479 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.5716  -50.8911    6.4074 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5121  -51.9101    6.5989 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.8370  -51.6159    6.2843 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.1985  -50.3836    5.7498 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.2573  -49.3795    5.5112 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9064  -49.5984    5.8824 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3153  -48.8057    5.8681 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4768  -47.3560    5.4229 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4583  -46.3692    6.6107 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9047  -46.2168    7.3093 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.8095  -45.5295    6.4458 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.1313  -45.3765    6.8153 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.1136  -44.7343    6.0454 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.4404  -44.6590    6.4864 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -6.4575  -43.9587    5.5974 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.7906  -45.2331    7.7201 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -7.4178  -45.2246    8.3109 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+   -4.8092  -45.8417    8.5021 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.4928  -45.9109    8.0501 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2277  -52.8746    6.9949 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.6010  -52.3676    6.4443 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.2321  -50.1889    5.4980 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.7975  -47.9300    4.7462 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+   -0.2611  -47.0496    4.6791 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4420  -47.2460    4.9196 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7920  -45.3869    6.2700 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2002  -46.6940    7.3397 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7803  -45.6315    8.2225 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2793  -47.2014    7.5987 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.8537  -44.2885    5.0988 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -7.4741  -43.9976    5.9852 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -6.1834  -42.9109    5.4762 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -6.4643  -44.4144    4.6070 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.7333  -46.3832    8.6540 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.0691  -46.2686    9.4578 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7885  -50.8885    6.6426 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4242  -51.6087    6.9742 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  2  4  1  0
+  4 11  2  0
+  4 40  1  0
+  5  6  2  0
+  5 10  1  0
+  5 40  1  0
+  6  7  1  0
+  6 24  1  0
+  7  8  2  0
+  7 25  1  0
+  8  9  1  0
+  8 26  1  0
+  9 10  2  0
+  9 27  1  0
+ 10 11  1  0
+ 11 12  1  0
+ 12 28  1  0
+ 12 29  1  0
+ 12 13  1  0
+ 13 14  1  0
+ 13 30  1  0
+ 13 31  1  0
+ 14 15  1  0
+ 14 32  1  0
+ 14 33  1  0
+ 15 16  1  0
+ 16 17  2  0
+ 16 23  1  0
+ 17 18  1  0
+ 17 34  1  0
+ 18 19  1  0
+ 18 20  2  0
+ 19 35  1  0
+ 19 36  1  0
+ 19 37  1  0
+ 20 21  1  0
+ 20 22  1  0
+ 22 23  2  0
+ 22 39  1  0
+ 23 38  1  0
+ 40 41  1  0
+M  CHG  1   3  -1
+M  END
+
+$$$$""",
+        removeHs=False,
+    )
+
+    mol_b = Chem.MolFromMolBlock(
+        """54
+     RDKit          3D
+
+ 44 47  0  0  1  0  0  0  0  0999 V2000
+    3.3478  -48.4173    6.5720 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.8388  -49.5557    6.5848 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.4483  -50.6256    6.8416 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.3686  -49.6643    6.3411 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.5625  -50.8698    6.4071 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5354  -51.8642    6.5694 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.8499  -51.5261    6.2479 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.1772  -50.2531    5.7893 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.2084  -49.2604    5.6205 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.8667  -49.5602    5.9220 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3637  -48.8113    5.8496 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4941  -47.3829    5.3462 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4921  -46.3634    6.5011 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.8482  -46.2585    7.2540 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.8570  -45.6667    6.4484 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.1557  -45.4679    6.9012 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.6282  -45.2570    8.2561 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.5614  -45.9239    8.8390 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.3484  -46.0091    8.1742 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2986  -52.8520    6.9308 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.0966  -52.7140    6.4180 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+   -4.2139  -50.0339    5.5648 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.4870  -48.2760    5.2766 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.2946  -47.1322    4.6360 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4262  -47.2753    4.7827 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7813  -45.3778    6.1309 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2712  -46.6616    7.2034 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7092  -45.6540    8.1532 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.1456  -47.2703    7.5314 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.5202  -46.5088    8.6561 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.5008  -44.6692    6.9788 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.2669  -44.7884    6.2518 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.2595  -44.2048    4.9425 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.3558  -43.5156    4.4300 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -6.5180  -43.3796    5.1734 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -6.6033  -43.9609    6.4324 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.4282  -44.2576    4.2709 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.2899  -43.0835    3.4451 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -7.3549  -42.8301    4.7676 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -7.5170  -43.8657    7.0046 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.6664  -46.3641    9.8186 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -6.5687  -45.1778    8.7789 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.8015  -50.8924    6.6395 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4200  -51.6277    6.9741 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  2  4  1  0
+  4 11  2  0
+  4 43  1  0
+  5  6  2  0
+  5 10  1  0
+  5 43  1  0
+  6  7  1  0
+  6 20  1  0
+  7  8  2  0
+  7 21  1  0
+  8  9  1  0
+  8 22  1  0
+  9 10  2  0
+  9 23  1  0
+ 10 11  1  0
+ 11 12  1  0
+ 12 24  1  0
+ 12 25  1  0
+ 12 13  1  0
+ 13 14  1  0
+ 13 26  1  0
+ 13 27  1  0
+ 14 15  1  0
+ 14 28  1  0
+ 14 29  1  0
+ 15 16  1  0
+ 16 19  2  0
+ 16 32  1  0
+ 17 18  2  0
+ 17 31  1  0
+ 17 42  1  0
+ 18 19  1  0
+ 18 41  1  0
+ 19 30  1  0
+ 31 32  2  0
+ 31 36  1  0
+ 32 33  1  0
+ 33 34  2  0
+ 33 37  1  0
+ 34 35  1  0
+ 34 38  1  0
+ 35 36  2  0
+ 35 39  1  0
+ 36 40  1  0
+ 43 44  1  0
+M  CHG  1   3  -1
+M  END""",
+        removeHs=False,
+    )
+
+    get_cores = partial(
+        atom_mapping.get_cores,
+        ring_cutoff=0.1,
+        chain_cutoff=0.2,
+        max_visits=1e7,
+        max_connected_components=1,
+        min_connected_component_size=1,
+        max_cores=1e6,
+        enforce_core_core=True,
+        ring_matches_ring_only=False,
+        enforce_chiral=True,
+        disallow_planar_torsion_flips=False,
+        min_threshold=0,
+        initial_mapping=None,
+    )
+
+    all_atoms_match = get_cores(mol_a, mol_b, heavy_matches_heavy_only=False)[0]
+    heavy_matches_heavy_core = get_cores(mol_a, mol_b, heavy_matches_heavy_only=True)[0]
+
+    # Core should be smaller since fewer atoms can be allowed to match
+    assert len(all_atoms_match) > len(heavy_matches_heavy_core)
+
+    for a, b in heavy_matches_heavy_core:
+        atom_a = mol_a.GetAtomWithIdx(int(a))
+        atom_b = mol_b.GetAtomWithIdx(int(b))
+
+        assert (atom_a.GetAtomicNum() == 1 and atom_b.GetAtomicNum() == 1) or (
+            atom_a.GetAtomicNum() > 1 and atom_b.GetAtomicNum() > 1
+        )
