@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025, Forrest York
+// Modifications Copyright 2025-2026, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@ public:
                        const RealType radius, const RealType k,
                        cudaStream_t stream);
 
-  void setup_from_selection(const int reference_idx,
+  void setup_from_selection(const std::vector<int> &reference_idx,
                             const std::vector<int> &selection_idxs,
                             const RealType radius, const RealType k,
                             cudaStream_t stream);
@@ -89,16 +89,18 @@ private:
 
   DeviceBuffer<int> d_restraint_pairs_;
   DeviceBuffer<RealType> d_bond_params_;
+  DeviceBuffer<int> d_bond_system_idxs_;
 
   DeviceBuffer<RealType> d_probability_buffer_;
 
-  // Buffers used to setup the flagged parition
+  // Buffers used to setup the flagged partition
   DeviceBuffer<unsigned int> d_arange_;
   DeviceBuffer<char>
       d_flags_; // 1 indicates a free atom, 0 indicates a frozen atom
   // The first partition will be the free indices, the rest the frozen.
   DeviceBuffer<unsigned int> d_partitioned_indices_;
 
+  DeviceBuffer<int> d_reference_idxs_;
   DeviceBuffer<unsigned int> d_free_idxs_;
   DeviceBuffer<char> d_temp_storage_buffer_;
 
