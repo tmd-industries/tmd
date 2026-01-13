@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -146,6 +146,18 @@ void LogFlatBottomBond<RealType>::set_bonds_device(const int num_bonds,
                             num_bonds * IDXS_DIM * sizeof(*d_bond_idxs_),
                             cudaMemcpyDeviceToDevice, stream));
   cur_num_idxs_ = num_bonds;
+}
+
+template <typename RealType>
+void LogFlatBottomBond<RealType>::set_system_idxs_device(
+    const int num_idxs, const int *d_new_system_idxs, cudaStream_t stream) {
+  if (cur_num_idxs_ != num_idxs) {
+    throw std::runtime_error(
+        "LogFlatBottomBond::set_system_idxs_device(): num idxs must match");
+  }
+  gpuErrchk(cudaMemcpyAsync(d_system_idxs_, d_new_system_idxs,
+                            num_idxs * sizeof(*d_system_idxs_),
+                            cudaMemcpyDeviceToDevice, stream));
 }
 
 template <typename RealType>

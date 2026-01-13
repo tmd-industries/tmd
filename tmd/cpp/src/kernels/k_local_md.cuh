@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,25 +17,51 @@
 
 namespace tmd {
 
-template <typename RealType>
-void __global__ k_construct_bonded_params(
-    const int num_idxs,               // Number of idxs
-    const int num_atoms,              // Max value any idx can be
-    const unsigned int reference_idx, // Atom index to create bonds to
+template <typename RealType, bool FROZEN_BONDS>
+void __global__ k_construct_bonded_params_and_system_idxs(
+    const int num_systems,          // Number of systems
+    const int atoms_per_system,     // Max value any idx can be
+    const int *num_idxs_per_system, // Number of idxs
+    const int *reference_idxs,      // Atom index to create bonds to
     const RealType k, const RealType r_min, const RealType r_max,
     const unsigned int *__restrict__ idxs, // [num_idxs]
     int *__restrict__ bonds,               // [num_idxs * 2]
-    RealType *__restrict__ params          // [num_idxs * 3]
+    int *__restrict__ system_idxs,
+    RealType *__restrict__ params // [num_idxs * 3]
 ) {
-  const auto idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+  // Get the starting point for adding new indices.
+  // TBD: Figure out if this is a bottleneck, as this is done repeatedly.
+  // But typically system idx won't be greater than 48
+  int system_offset = 0;
+  for (int i = 0; i < system_idx; i++) {
+    system_offset += FROZEN_BONDS ? atoms_per_system - num_idxs_per_system[i]
+                                  : num_idxs_per_system[i];
+  }
+
+  const int num_free_bonds = num_idxs_per_system[system_idx];
+  const int num_idxs =
+      FROZEN_BONDS ? atoms_per_system - num_free_bonds : num_free_bonds;
+
+  int idx = blockDim.x * blockIdx.x + threadIdx.x;
   if (idx >= num_idxs) {
     return;
   }
-  const unsigned int atom_idx = idxs[idx];
-  if (atom_idx >= num_atoms) {
+  // The free is partitioned at the front of this array, the frozen is at the
+  // tail.
+  const unsigned int atom_idx =
+      FROZEN_BONDS ? idxs[atoms_per_system * system_idx + idx + num_free_bonds]
+                   : idxs[atoms_per_system * system_idx + idx];
+  if (atom_idx >= atoms_per_system) {
     return;
   }
-  bonds[idx * 2 + 0] = reference_idx;
+  idx += system_offset;
+  system_idxs[idx] = system_idx;
+  bonds[idx * 2 + 0] = reference_idxs[system_idx];
   bonds[idx * 2 + 1] = atom_idx;
 
   params[idx * 3 + 0] = k;

@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025, Forrest York
+// Modifications Copyright 2025-2026, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -163,9 +163,11 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
           get_nonbonded_ixn_potential_nblist_padding(nonbonded_pot_)),
       d_restraint_pairs_(num_systems_ * N_ * 2),
       d_bond_params_(num_systems_ * N_ * 3),
+      d_bond_system_idxs_(num_systems_ * N_),
       d_probability_buffer_(num_systems_ * N_), d_arange_(0),
       d_flags_(num_systems_ * N_), d_partitioned_indices_(0),
-      d_free_idxs_(num_systems_ * N_), d_temp_storage_buffer_(0),
+      d_reference_idxs_(num_systems_), d_free_idxs_(num_systems_ * N_),
+      d_temp_storage_buffer_(0),
       idxs_sizes_(get_indices_buffer_sizes_from_bps(bps_)),
       d_scales_buffer_(get_scales_buffer_length_from_bps(bps_)),
       d_idxs_flags_(0), d_idxs_buffer_(0), d_idxs_temp_(0),
@@ -201,11 +203,12 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
   d_system_idxs_temp_.realloc(max_required_idxs_temp_buffer);
   // d_arange is used both for idxs and for free, which is why it must be the
   // max of N_ or max number of idxs.
-  d_arange_.realloc(max(max_required_idxs_temp_buffer, N_));
+  d_arange_.realloc(max(max_required_idxs_temp_buffer, num_systems_ * N_));
   // Allow enough partition indices for us to store a permutation for each
   // potential
-  d_partitioned_indices_.realloc(max(max_required_idxs_temp_buffer, N_) *
-                                 idxs_sizes_.size());
+  d_partitioned_indices_.realloc(
+      max(max_required_idxs_temp_buffer, num_systems_ * N_) *
+      idxs_sizes_.size());
   d_system_idxs_buffer_.realloc(d_partitioned_indices_.length);
 
   // arange buffer that is constant throughout the lifetime of this class
@@ -222,9 +225,10 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
     default_bonds[i * 2 + 1] = i + 1;
   }
   std::vector<RealType> default_params(num_systems_ * N_ * 3);
-  std::vector<int> system_idxs(N_, 0);
-  free_restraint_ = std::shared_ptr<FlatBottomBond<RealType>>(
-      new FlatBottomBond<RealType>(1, N, default_bonds, system_idxs));
+  std::vector<int> system_idxs(num_systems_ * N_, 0);
+  free_restraint_ =
+      std::shared_ptr<FlatBottomBond<RealType>>(new FlatBottomBond<RealType>(
+          num_systems_, N, default_bonds, system_idxs));
   // Construct a bound potential with 0 params
   bound_free_restraint_ = std::shared_ptr<BoundPotential<RealType>>(
       new BoundPotential<RealType>(free_restraint_, default_params, 3));
@@ -232,7 +236,7 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
   if (!freeze_reference) {
     frozen_restraint_ = std::shared_ptr<LogFlatBottomBond<RealType>>(
         new LogFlatBottomBond<RealType>(
-            1, N, default_bonds, system_idxs,
+            num_systems_, N, default_bonds, system_idxs,
             1 / (temperature * static_cast<RealType>(BOLTZ))));
     bound_frozen_restraint_ = std::shared_ptr<BoundPotential<RealType>>(
         new BoundPotential<RealType>(frozen_restraint_, default_params, 3));
@@ -246,9 +250,12 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
   local_md_potentials_.insert(local_md_potentials_.begin(),
                               bound_free_restraint_);
 
-  gpuErrchk(
-      cudaHostAlloc(&m_counter_, 1 * sizeof(*m_counter_), cudaHostAllocMapped));
-  m_counter_[0] = 0;
+  gpuErrchk(cudaHostAlloc(&m_counter_, num_systems_ * sizeof(*m_counter_),
+                          cudaHostAllocMapped));
+  for (int i = 0; i < num_systems_; i++) {
+    m_counter_[i] = 0;
+  }
+
   gpuErrchk(cudaHostGetDevicePointer(&d_counter_, m_counter_, 0));
 
   size_t max_free_flags_storage = 0;
@@ -309,14 +316,19 @@ void LocalMDPotentials<RealType>::setup_from_idxs(
   std::uniform_int_distribution<unsigned int> random_dist(0, local_idxs.size() -
                                                                  1);
 
-  const unsigned int reference_idx = local_idxs[random_dist(rng)];
+  std::vector<int> reference_idxs(num_systems_);
+  for (int i = 0; i < num_systems_; i++) {
+    reference_idxs[i] = local_idxs[random_dist(rng)];
+  }
+  d_reference_idxs_.copy_from(&reference_idxs[0]);
 
   const RealType kBT = static_cast<RealType>(BOLTZ) * temperature;
   // flag all of the particles that will be in the row atoms, includes the
   // reference.
-  k_log_probability_flag<RealType><<<ceil_divide(N_, tpb), tpb, 0, stream>>>(
-      N_, kBT, radius, k, reference_idx, d_x_t, d_box_t,
-      d_probability_buffer_.data, d_flags_.data);
+  k_log_probability_flag<RealType>
+      <<<dim3(ceil_divide(N_, tpb), num_systems_), tpb, 0, stream>>>(
+          num_systems_, N_, kBT, radius, k, d_reference_idxs_.data, d_x_t,
+          d_box_t, d_probability_buffer_.data, d_flags_.data);
   gpuErrchk(cudaPeekAtLastError());
 
   this->_setup_free_idxs_given_reference_idx(reference_idx, radius, k, stream);
@@ -335,6 +347,10 @@ void LocalMDPotentials<RealType>::setup_from_selection(
     const std::vector<int> &selection_idxs, const RealType radius,
     const RealType k, const cudaStream_t stream) {
 
+  if (reference_idxs.size() != 1) {
+    throw std::runtime_error(
+        "Setup from selection only supported for single system simulations");
+  }
   if (reference_idxs.size() != num_systems_) {
     throw std::runtime_error(
         "Number of references must match number of systems");
@@ -357,20 +373,22 @@ void LocalMDPotentials<RealType>::setup_from_selection(
   k_update_index<char><<<1, 1, 0, stream>>>(d_flags_.data, reference_idx, 1);
   gpuErrchk(cudaPeekAtLastError());
 
-  this->_setup_free_idxs_given_reference_idx(
-      static_cast<unsigned int>(reference_idx), radius, k, stream);
+  this->_setup_free_idxs_given_reference_idx(reference_idx, radius, k, stream);
 }
 
 template <typename RealType>
 void LocalMDPotentials<RealType>::_setup_free_idxs_given_reference_idx(
-    const unsigned int reference_idx, const RealType radius, const RealType k,
+    const int reference_idx, const RealType radius, const RealType k,
     cudaStream_t stream) {
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
 
-  // Partition the flagged indices, separating the free and frozen indices.
-  gpuErrchk(cub::DevicePartition::Flagged(
-      d_temp_storage_buffer_.data, temp_storage_bytes_, d_arange_.data,
-      d_flags_.data, d_partitioned_indices_.data, d_counter_, N_, stream));
+  for (int i = 0; i < num_systems_; i++) {
+    // Partition the flagged indices, separating the free and frozen indices.
+    gpuErrchk(cub::DevicePartition::Flagged(
+        d_temp_storage_buffer_.data, temp_storage_bytes_, d_arange_.data,
+        d_flags_.data + i * N_, d_partitioned_indices_.data + i * N_,
+        d_counter_ + i, N_, stream));
+  }
   gpuErrchk(cudaEventRecord(sync_event_, stream));
 
   k_initialize_array<unsigned int>
@@ -378,41 +396,52 @@ void LocalMDPotentials<RealType>::_setup_free_idxs_given_reference_idx(
           num_systems_ * N_, d_free_idxs_.data, N_);
   gpuErrchk(cudaPeekAtLastError());
 
-  gpuErrchk(cudaEventSynchronize(sync_event_));
-
-  // The row indices is all of the free plus the reference
-  const int num_row_idxs = *m_counter_;
-  const int num_frozen_atoms = N_ - num_row_idxs;
-
   // k_set_value_to_idx will place the row indices into `d_free_idxs_.data` such
   // that `d_free_idxs_.data[row_idx] = row_idx`, indicating that the particle
   // is free to the integrator.
-  k_set_value_to_idx<<<ceil_divide(num_row_idxs, tpb), tpb, 0, stream>>>(
-      num_row_idxs, N_, d_partitioned_indices_.data, d_free_idxs_.data);
+  k_set_value_to_idx<<<dim3(ceil_divide(num_row_idxs, tpb), num_systems_), tpb,
+                       0, stream>>>(
+      num_systems_, N_, d_partitioned_indices_.data, d_free_idxs_.data);
 
-  if (num_row_idxs == N_) {
-    fprintf(stderr, "LocalMDPotentials setup has entire system selected\n");
-  }
-
-  k_construct_bonded_params<RealType>
-      <<<ceil_divide(num_row_idxs, tpb), tpb, 0, stream>>>(
-          num_row_idxs, N_, reference_idx, k, 0.0, radius,
+  k_construct_bonded_params_and_system_idxs<RealType, false>
+      <<<dim3(ceil_divide(N_, tpb), num_systems_), tpb, 0, stream>>>(
+          num_systems_, N_, d_counter_, d_reference_idxs_.data, k, 0.0, radius,
           d_partitioned_indices_.data, d_restraint_pairs_.data,
-          d_bond_params_.data);
+          d_bond_params_.data, d_bond_system_idxs_.data, );
   gpuErrchk(cudaPeekAtLastError());
+
+  gpuErrchk(cudaEventSynchronize(sync_event_));
+
+  int total_free = 0;
+  int total_frozen = 0;
+
+  for (int i = 0; i < num_systems_; i++) {
+    const int num_row_idxs = m_counter_[i];
+    // If only the reference particle is in the free region, we haven't selected
+    // anything. Put it at the end, so we can correctly reset the potentials
+    if (num_row_idxs == N_) {
+      fprintf(stderr,
+              "LocalMDPotentials setup has entire system selected in system " +
+                  std::to_string(i) + "\n");
+    } else if (num_row_idxs == 1) {
+      throw std::runtime_error(
+          "LocalMDPotentials setup has no free particles selected in system " +
+          std::to_string(i));
+    }
+    total_free += num_row_idxs;
+    total_frozen += N - num_row_idxs;
+  }
 
   // Setup the flat bottom restraints
   bound_free_restraint_->set_params_device(bound_free_restraint_->params_dim *
-                                               num_row_idxs,
+                                               total_free,
                                            d_bond_params_.data, stream);
-  free_restraint_->set_bonds_device(num_row_idxs, d_restraint_pairs_.data,
+  free_restraint_->set_bonds_device(total_free, d_restraint_pairs_.data,
                                     stream);
-
-  // TBD: Make truncation of ixn group part of _truncate_potentials
-  this->_truncate_nonbonded_ixn_group(nonbonded_pot_, num_row_idxs,
-                                      d_partitioned_indices_.data, stream);
+  free_restraint_->set_system_idxs_device(total_free, d_bond_system_idxs_.data);
 
   if (freeze_reference) {
+    // UPDATE
     // Remove the reference idx from the d_free_idxs so that the reference is
     // frozen throughout the simulation
     k_update_index<unsigned int>
@@ -421,34 +450,32 @@ void LocalMDPotentials<RealType>::_setup_free_idxs_given_reference_idx(
   } else {
     // Only update the log flat bottom's restraint parameters if there are
     // frozen atoms
-    if (num_frozen_atoms > 0) {
-      k_construct_bonded_params<RealType>
-          <<<ceil_divide(num_frozen_atoms, tpb), tpb, 0, stream>>>(
-              num_frozen_atoms, N_, reference_idx, k, 0.0, radius,
-              d_partitioned_indices_.data +
-                  num_row_idxs, // Offset to skip the prefixed row atoms
-              d_restraint_pairs_.data, d_bond_params_.data);
+    if (total_frozen > 0) {
+      k_construct_bonded_params_and_system_idxs<RealType, true>
+          <<<dim3(ceil_divide(N_, tpb), num_systems_), tpb, 0, stream>>>(
+              num_systems_, N_, d_counter_, d_reference_idxs_.data, k, 0.0,
+              radius, d_partitioned_indices_.data, d_restraint_pairs_.data,
+              d_bond_params_.data, d_bond_system_idxs_.data, );
       gpuErrchk(cudaPeekAtLastError());
     }
 
     bound_frozen_restraint_->set_params_device(
-        bound_frozen_restraint_->params_dim * num_frozen_atoms,
-        d_bond_params_.data, stream);
-    frozen_restraint_->set_bonds_device(num_frozen_atoms,
-                                        d_restraint_pairs_.data, stream);
+        bound_frozen_restraint_->params_dim * total_frozen, d_bond_params_.data,
+        stream);
+    frozen_restraint_->set_bonds_device(total_frozen, d_restraint_pairs_.data,
+                                        stream);
+    frozen_restraint_->set_system_idxs_device(total_free,
+                                              d_bond_system_idxs_.data);
   }
   this->_truncate_potentials(stream);
-
-  // If only the reference particle is in the free region, we haven't selected
-  // anything. Put it at the end, so we can correctly reset the potentials
-  if (num_row_idxs == 1) {
-    throw std::runtime_error(
-        "LocalMDPotentials setup has no free particles selected");
-  }
 }
 
 template <typename RealType>
 void LocalMDPotentials<RealType>::_truncate_potentials(cudaStream_t stream) {
+
+  this->_truncate_nonbonded_ixn_group(nonbonded_pot_, m_counter_,
+                                      d_partitioned_indices_.data, stream);
+
   int i = 0;
   int idxs_offset = 0;
   int partition_offset = 0;
@@ -657,14 +684,14 @@ void LocalMDPotentials<RealType>::_truncate_bonded_potential_idxs(
  */
 template <typename RealType>
 void LocalMDPotentials<RealType>::_truncate_nonbonded_ixn_group(
-    std::shared_ptr<Potential<RealType>> pot, const int num_free_idxs,
+    std::shared_ptr<Potential<RealType>> pot, const int *num_free_idxs,
     unsigned int *d_partitioned_idxs, // Partitioned in num_free_idxs at the
                                       // front and the frozen afterwards
     cudaStream_t stream) {
   set_nonbonded_ixn_potential_nblist_padding(pot, nblist_padding);
   // Permutation will have the free indices (plus reference) at the front and
   // frozen indices at the back
-  set_nonbonded_ixn_potential_idxs(pot, num_free_idxs, N_, d_partitioned_idxs,
+  set_nonbonded_ixn_potential_idxs(pot, *num_free_idxs, N_, d_partitioned_idxs,
                                    d_partitioned_idxs, stream);
 }
 

@@ -40,52 +40,69 @@ RealType __device__ __forceinline__ compute_flat_bottom_energy(RealType k,
 
 template <typename RealType>
 void __global__ k_log_probability_flag(
+    const int num_systems, // Number of systems
     const int N,           // Num atoms
     const RealType kBT,    // BOLTZ * temperature
     const RealType radius, // Radius, corresponds to r_max for flat bottom
     const RealType k,      // Constant restraint value
-    const unsigned int reference_idx, // Idx that the probability is specific to
-    const RealType *__restrict__ coords, // [N, 3]
-    const RealType *__restrict__ box,    // [3, 3]
-    const RealType
-        *__restrict__ probabilities, // [N] probabilities of selection
-    char *__restrict__ flags         // [N] 0 if idx is not selected, else 1
+    const int *__restrict__ reference_idxs,     // [num_systems], Idxs that the
+                                                // probability is specific to
+    const RealType *__restrict__ coords,        // [num_systems, N, 3]
+    const RealType *__restrict__ box,           // [num_systems, 3, 3]
+    const RealType *__restrict__ probabilities, // [num_systems, N]
+                                                // probabilities of selection
+    char
+        *__restrict__ flags // [num_systems, N] 0 if idx is not selected, else 1
 ) {
-  const unsigned int idx = blockDim.x * blockIdx.x + threadIdx.x;
-  if (idx >= N) {
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
     return;
   }
+
+  const int box_offset = system_idx * 9;
+  const int idx_offset = system_idx * N;
+  const int coord_offset = idx_offset * 3;
+
+  const int ref_idx = reference_idxs[system_idx];
   const RealType radius_sq = radius * radius;
-  const RealType bx = box[0 * 3 + 0];
-  const RealType by = box[1 * 3 + 1];
-  const RealType bz = box[2 * 3 + 2];
+  const RealType bx = box[box_offset + 0 * 3 + 0];
+  const RealType by = box[box_offset + 1 * 3 + 1];
+  const RealType bz = box[box_offset + 2 * 3 + 2];
 
   const RealType inv_bx = rcp_rn(bx);
   const RealType inv_by = rcp_rn(by);
   const RealType inv_bz = rcp_rn(bz);
 
-  RealType atom_atom_dx = coords[idx * 3 + 0] - coords[reference_idx * 3 + 0];
-  RealType atom_atom_dy = coords[idx * 3 + 1] - coords[reference_idx * 3 + 1];
-  RealType atom_atom_dz = coords[idx * 3 + 2] - coords[reference_idx * 3 + 2];
+  int idx = blockDim.x * blockIdx.x + threadIdx.x;
+  while (idx < N) {
 
-  atom_atom_dx -= bx * nearbyint(atom_atom_dx * inv_bx);
-  atom_atom_dy -= by * nearbyint(atom_atom_dy * inv_by);
-  atom_atom_dz -= bz * nearbyint(atom_atom_dz * inv_bz);
+    RealType atom_atom_dx = coords[coord_offset + idx * 3 + 0] -
+                            coords[coord_offset + ref_idx * 3 + 0];
+    RealType atom_atom_dy = coords[coord_offset + idx * 3 + 1] -
+                            coords[coord_offset + ref_idx * 3 + 1];
+    RealType atom_atom_dz = coords[coord_offset + idx * 3 + 2] -
+                            coords[coord_offset + ref_idx * 3 + 2];
 
-  const RealType distance_sq = atom_atom_dx * atom_atom_dx +
-                               atom_atom_dy * atom_atom_dy +
-                               atom_atom_dz * atom_atom_dz;
+    atom_atom_dx -= bx * nearbyint(atom_atom_dx * inv_bx);
+    atom_atom_dy -= by * nearbyint(atom_atom_dy * inv_by);
+    atom_atom_dz -= bz * nearbyint(atom_atom_dz * inv_bz);
 
-  RealType prob = 1.0;
-  if (distance_sq >= radius_sq) {
-    RealType energy = compute_flat_bottom_energy<RealType>(
-        k, sqrt(distance_sq),
-        0.0, // Any value works just fine here
-        radius);
+    const RealType distance_sq = atom_atom_dx * atom_atom_dx +
+                                 atom_atom_dy * atom_atom_dy +
+                                 atom_atom_dz * atom_atom_dz;
 
-    prob = exp(-energy / kBT);
+    RealType prob = 1.0;
+    if (distance_sq >= radius_sq) {
+      RealType energy = compute_flat_bottom_energy<RealType>(
+          k, sqrt(distance_sq),
+          0.0, // Any value works just fine here
+          radius);
+
+      prob = exp(-energy / kBT);
+    }
+    flags[idx + idx_offset] = (prob >= probabilities[idx + idx_offset]) ? 1 : 0;
+    idx += gridDim.x * blockDim.x;
   }
-  flags[idx] = (prob >= probabilities[idx]) ? 1 : 0;
 }
 
 template <typename RealType, bool COMPUTE_U, bool COMPUTE_DU_DX,
