@@ -35,31 +35,6 @@ void __global__ k_set_value_to_idx(const int N, // Number of values in src
   dest[val] = val;
 }
 
-// Takes a source and destination array.
-// The value of the src is used as the index and the value in the destination
-// array. Allows combining a series of indices to get a unique set of values.
-void __global__ k_batched_set_value_to_idx(
-    const int num_batches,       // Number of values in src
-    const int items_per_batches, // [num_batches] Number of values in each batch
-                                 // source
-    const int K,                 // Number of values in dest
-    const unsigned int *__restrict__ src, unsigned int *__restrict__ dest) {
-  const int batch_idx = blockIdx.y;
-  if (batch_idx >= num_batches) {
-    return;
-  }
-  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  const int items = items_per_batches[batch_idx];
-  if (idx >= items) {
-    return;
-  }
-  const unsigned int val = src[idx];
-  if (val >= K) {
-    return;
-  }
-  dest[val] = val;
-}
-
 // Any value that is >=N becomes the idx and any value that is an idx becomes N
 void __global__ k_invert_indices(const int N, unsigned int *__restrict__ arr) {
   const unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
