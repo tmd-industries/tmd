@@ -65,7 +65,7 @@ LogFlatBottomBond<RealType>::LogFlatBottomBond(
     auto src = bond_idxs[b * IDXS_DIM + 0];
     auto dst = bond_idxs[b * IDXS_DIM + 1];
     if (src == dst) {
-      throw std::runtime_error("src == dst");
+      throw std::runtime_error("LogFlatBottomBond::src == dst");
     }
 
     if ((src < 0) or (dst < 0)) {

@@ -220,7 +220,7 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
   // default_bonds[i * 2 + 0] != default_bonds[i * 2 + 1], so set first value to
   // 0, second to i + 1
   std::vector<int> default_bonds(num_systems_ * N_ * 2);
-  for (int i = 0; i < N_; i++) {
+  for (int i = 0; i < num_systems_ * N_; i++) {
     default_bonds[i * 2 + 0] = 0;
     default_bonds[i * 2 + 1] = i + 1;
   }
@@ -474,7 +474,7 @@ void LocalMDPotentials<RealType>::_setup_free_idxs_given_reference_idxs(
         stream);
     frozen_restraint_->set_bonds_device(total_frozen, d_restraint_pairs_.data,
                                         stream);
-    frozen_restraint_->set_system_idxs_device(total_free,
+    frozen_restraint_->set_system_idxs_device(total_frozen,
                                               d_bond_system_idxs_.data, stream);
   }
   this->_truncate_potentials(stream);
