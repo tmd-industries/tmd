@@ -29,8 +29,8 @@ void verify_nonbonded_potential_for_local_md(
 
 template <typename RealType>
 void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,
-                                      const int num_col_idxs,
-                                      const int num_row_idxs,
+                                      const std::vector<int> &num_col_idxs,
+                                      const std::vector<int> &num_row_idxs,
                                       unsigned int *d_col_idxs,
                                       unsigned int *d_row_idxs,
                                       const cudaStream_t stream);

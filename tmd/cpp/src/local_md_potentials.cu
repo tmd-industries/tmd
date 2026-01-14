@@ -701,16 +701,18 @@ void LocalMDPotentials<RealType>::_truncate_nonbonded_ixn_group(
   set_nonbonded_ixn_potential_nblist_padding(nonbonded_pot_, nblist_padding);
   // Permutation will have the free indices (plus reference) at the front and
   // frozen indices at the back
-  set_nonbonded_ixn_potential_idxs(nonbonded_pot_, *num_free_idxs, N_,
-                                   d_partitioned_idxs, d_partitioned_idxs,
-                                   stream);
+  std::vector<int> free_vect(num_free_idxs, num_free_idxs + num_systems_);
+  set_nonbonded_ixn_potential_idxs(
+      nonbonded_pot_, free_vect, std::vector<int>(num_systems_, N_),
+      d_partitioned_idxs, d_partitioned_idxs, stream);
 }
 
 template <typename RealType>
 void LocalMDPotentials<RealType>::_reset_nonbonded_ixn_group(
     std::shared_ptr<Potential<RealType>> pot, cudaStream_t stream) {
-  set_nonbonded_ixn_potential_idxs(pot, N_, N_, d_arange_.data, d_arange_.data,
-                                   stream);
+  set_nonbonded_ixn_potential_idxs(pot, std::vector<int>(num_systems_, N_),
+                                   std::vector<int>(num_systems_, N_),
+                                   d_arange_.data, d_arange_.data, stream);
   set_nonbonded_ixn_potential_nblist_padding(pot, initial_nblist_padding_);
 }
 

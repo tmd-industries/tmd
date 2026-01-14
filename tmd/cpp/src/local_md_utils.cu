@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -61,8 +61,8 @@ template void verify_nonbonded_potential_for_local_md<double>(
 
 template <typename RealType>
 void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,
-                                      const int num_row_idxs,
-                                      const int num_col_idxs,
+                                      const std::vector<int> &num_row_idxs,
+                                      const std::vector<int> &num_col_idxs,
                                       unsigned int *d_row_idxs,
                                       unsigned int *d_col_idxs,
                                       const cudaStream_t stream) {
@@ -79,8 +79,7 @@ void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,
   if (std::shared_ptr<NonbondedInteractionGroup<RealType>> nb_pot =
           std::dynamic_pointer_cast<NonbondedInteractionGroup<RealType>>(pot);
       nb_pot) {
-    nb_pot->set_atom_idxs_device(std::vector<int>(1, num_row_idxs),
-                                 std::vector<int>(1, num_col_idxs), d_row_idxs,
+    nb_pot->set_atom_idxs_device(num_row_idxs, num_col_idxs, d_row_idxs,
                                  d_col_idxs, stream);
     nb_pot->set_compute_col_grads(set_compute_col_grads);
   } else {
@@ -90,12 +89,13 @@ void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,
 }
 
 template void set_nonbonded_ixn_potential_idxs<float>(
-    std::shared_ptr<Potential<float>> pot, const int num_col_idxs,
-    const int num_row_idxs, unsigned int *d_col_idxs, unsigned int *d_row_idxs,
-    const cudaStream_t stream);
+    std::shared_ptr<Potential<float>> pot, const std::vector<int> &num_row_idxs,
+    const std::vector<int> &num_col_idxs, unsigned int *d_row_idxs,
+    unsigned int *d_col_idxs, const cudaStream_t stream);
 template void set_nonbonded_ixn_potential_idxs<double>(
-    std::shared_ptr<Potential<double>> pot, const int num_col_idxs,
-    const int num_row_idxs, unsigned int *d_col_idxs, unsigned int *d_row_idxs,
+    std::shared_ptr<Potential<double>> pot,
+    const std::vector<int> &num_row_idxs, const std::vector<int> &num_col_idxs,
+    unsigned int *d_row_idxs, unsigned int *d_col_idxs,
     const cudaStream_t stream);
 
 template <typename RealType>
