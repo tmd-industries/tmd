@@ -133,13 +133,11 @@ private:
 
   void _truncate_potentials(cudaStream_t stream);
 
-  void _setup_free_idxs_given_reference_idx(const unsigned int reference_idx,
-                                            const RealType radius,
-                                            const RealType k,
-                                            cudaStream_t stream);
+  void _setup_free_idxs_given_reference_idxs(const RealType radius,
+                                             const RealType k,
+                                             cudaStream_t stream);
 
-  void _truncate_nonbonded_ixn_group(std::shared_ptr<Potential<RealType>> pot,
-                                     const int num_free_idxs,
+  void _truncate_nonbonded_ixn_group(const int *d_num_free_idxs,
                                      unsigned int *d_permutation,
                                      cudaStream_t stream);
 

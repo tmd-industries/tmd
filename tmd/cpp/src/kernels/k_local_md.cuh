@@ -19,16 +19,16 @@ namespace tmd {
 
 template <typename RealType, bool FROZEN_BONDS>
 void __global__ k_construct_bonded_params_and_system_idxs(
-    const int num_systems,          // Number of systems
-    const int atoms_per_system,     // Max value any idx can be
-    const int *num_idxs_per_system, // Number of idxs
-    const int *reference_idxs,      // Atom index to create bonds to
+    const int num_systems,      // Number of systems
+    const int atoms_per_system, // Max value any idx can be
+    const int
+        *__restrict__ d_num_idxs_per_system,  // Number of idxs in each system
+    const int *__restrict__ d_reference_idxs, // Atom index to create bonds to
     const RealType k, const RealType r_min, const RealType r_max,
-    const unsigned int *__restrict__ idxs, // [num_idxs]
-    int *__restrict__ bonds,               // [num_idxs * 2]
-    int *__restrict__ system_idxs,
-    RealType *__restrict__ params // [num_idxs * 3]
-) {
+    const unsigned int *__restrict__ idxs, // [K]
+    int *__restrict__ bonds,               // [K * 2]
+    RealType *__restrict__ params,         // [K * 3]
+    int *__restrict__ system_idxs) {
 
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
@@ -39,11 +39,11 @@ void __global__ k_construct_bonded_params_and_system_idxs(
   // But typically system idx won't be greater than 48
   int system_offset = 0;
   for (int i = 0; i < system_idx; i++) {
-    system_offset += FROZEN_BONDS ? atoms_per_system - num_idxs_per_system[i]
-                                  : num_idxs_per_system[i];
+    system_offset += FROZEN_BONDS ? atoms_per_system - d_num_idxs_per_system[i]
+                                  : d_num_idxs_per_system[i];
   }
 
-  const int num_free_bonds = num_idxs_per_system[system_idx];
+  const int num_free_bonds = d_num_idxs_per_system[system_idx];
   const int num_idxs =
       FROZEN_BONDS ? atoms_per_system - num_free_bonds : num_free_bonds;
 
@@ -61,7 +61,7 @@ void __global__ k_construct_bonded_params_and_system_idxs(
   }
   idx += system_offset;
   system_idxs[idx] = system_idx;
-  bonds[idx * 2 + 0] = reference_idxs[system_idx];
+  bonds[idx * 2 + 0] = d_reference_idxs[system_idx];
   bonds[idx * 2 + 1] = atom_idx;
 
   params[idx * 3 + 0] = k;
@@ -73,6 +73,31 @@ template <typename T>
 void __global__ k_update_index(T *__restrict__ d_array, std::size_t idx,
                                T val) {
   d_array[idx] = val;
+}
+
+template <bool FREEZE_REF>
+void __global__ k_setup_free_indices_from_partitions(
+    const size_t num_systems, const size_t N,
+    const int *__restrict__ d_free_counts,
+    const int *__restrict__ d_reference_idxs,
+    const unsigned int *__restrict__ d_partitioned_idxs,
+    unsigned int *__restrict__ d_free_indices) {
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+  const int idx_offset = system_idx * N;
+  const int free_count = d_free_counts[system_idx];
+  // If we are freezing the reference, we need to be
+  const int reference_idx = FREEZE_REF ? d_reference_idxs[system_idx] : 0;
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (idx < N && idx < free_count) {
+    const int partition_idx = d_partitioned_idxs[idx_offset + idx];
+    d_free_indices[partition_idx] =
+        FREEZE_REF && partition_idx != reference_idx ? partition_idx : N;
+
+    idx += gridDim.x * blockDim.x;
+  }
 }
 
 void __global__ k_idxs_intersection(const int N,
