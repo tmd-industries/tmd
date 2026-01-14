@@ -93,9 +93,12 @@ void __global__ k_setup_free_indices_from_partitions(
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (idx < N && idx < free_count) {
     const int partition_idx = d_partitioned_idxs[idx_offset + idx];
-    d_free_indices[partition_idx] =
-        FREEZE_REF && partition_idx != reference_idx ? partition_idx : N;
-
+    if (FREEZE_REF) {
+      d_free_indices[partition_idx] =
+          partition_idx != reference_idx ? partition_idx : N;
+    } else {
+      d_free_indices[partition_idx] = partition_idx;
+    }
     idx += gridDim.x * blockDim.x;
   }
 }

@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025-206 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ FlatBottomBond<RealType>::FlatBottomBond(const int num_systems,
     auto src = bond_idxs[b * IDXS_DIM + 0];
     auto dst = bond_idxs[b * IDXS_DIM + 1];
     if (src == dst) {
-      throw std::runtime_error("src == dst");
+      throw std::runtime_error("FlatBottomBond::src == dst");
     }
 
     if ((src < 0) or (dst < 0)) {

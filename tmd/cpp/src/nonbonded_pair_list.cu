@@ -90,7 +90,6 @@ NonbondedPairList<RealType, Negated>::NonbondedPairList(
                        cur_num_idxs_ * IDXS_DIM * sizeof(*d_scales_),
                        cudaMemcpyHostToDevice));
   cudaSafeMalloc(&d_system_idxs_, cur_num_idxs_ * sizeof(*d_system_idxs_));
-  printf("Allocate %d\n", cur_num_idxs_);
 
   gpuErrchk(cudaMemcpy(d_system_idxs_, &system_idxs[0],
                        cur_num_idxs_ * sizeof(*d_system_idxs_),

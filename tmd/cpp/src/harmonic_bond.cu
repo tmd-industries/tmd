@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ HarmonicBond<RealType>::HarmonicBond(const int num_systems, const int num_atoms,
     auto src = bond_idxs[b * IDXS_DIM + 0];
     auto dst = bond_idxs[b * IDXS_DIM + 1];
     if (src == dst) {
-      throw std::runtime_error("src == dst");
+      throw std::runtime_error("HarmonicBond::src == dst");
     }
   }
 
