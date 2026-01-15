@@ -486,47 +486,47 @@ void LocalMDPotentials<RealType>::_truncate_potentials(cudaStream_t stream) {
   this->_truncate_nonbonded_ixn_group(m_counter_, d_partitioned_indices_.data,
                                       stream);
 
-  int i = 0;
-  int idxs_offset = 0;
-  int partition_offset = 0;
-  for (auto bp : bps_) {
-    if (std::shared_ptr<FanoutSummedPotential<RealType>> fanned_potential =
-            std::dynamic_pointer_cast<FanoutSummedPotential<RealType>>(
-                bp->potential);
-        fanned_potential != nullptr) {
-      for (auto pot : fanned_potential->get_potentials()) {
-        if (is_exclusions_nonbonded_all_pairs_potential(pot)) {
-          this->_truncate_nonbonded_exclusions_potential_idxs(
-              pot, d_idxs_buffer_.data + idxs_offset,
-              d_partitioned_indices_.data + partition_offset,
-              d_system_idxs_buffer_.data + idxs_offset, stream);
-        } else {
-          this->_truncate_bonded_potential_idxs(
-              bp, pot, d_idxs_buffer_.data + idxs_offset,
-              d_partitioned_indices_.data + partition_offset,
-              d_system_idxs_buffer_.data + idxs_offset, stream);
-        }
-        partition_offset += d_arange_.length;
-        idxs_offset += idxs_sizes_[i];
-        i++;
-      }
-    } else {
-      if (is_exclusions_nonbonded_all_pairs_potential(bp->potential)) {
-        this->_truncate_nonbonded_exclusions_potential_idxs(
-            bp->potential, d_idxs_buffer_.data + idxs_offset,
-            d_partitioned_indices_.data + partition_offset,
-            d_system_idxs_buffer_.data + idxs_offset, stream);
-      } else {
-        this->_truncate_bonded_potential_idxs(
-            bp, bp->potential, d_idxs_buffer_.data + idxs_offset,
-            d_partitioned_indices_.data + partition_offset,
-            d_system_idxs_buffer_.data + idxs_offset, stream);
-      }
-      partition_offset += d_arange_.length;
-      idxs_offset += idxs_sizes_[i];
-      i++;
-    }
-  }
+  // int i = 0;
+  // int idxs_offset = 0;
+  // int partition_offset = 0;
+  // for (auto bp : bps_) {
+  //   if (std::shared_ptr<FanoutSummedPotential<RealType>> fanned_potential =
+  //           std::dynamic_pointer_cast<FanoutSummedPotential<RealType>>(
+  //               bp->potential);
+  //       fanned_potential != nullptr) {
+  //     for (auto pot : fanned_potential->get_potentials()) {
+  //       if (is_exclusions_nonbonded_all_pairs_potential(pot)) {
+  //         this->_truncate_nonbonded_exclusions_potential_idxs(
+  //             pot, d_idxs_buffer_.data + idxs_offset,
+  //             d_partitioned_indices_.data + partition_offset,
+  //             d_system_idxs_buffer_.data + idxs_offset, stream);
+  //       } else {
+  //         this->_truncate_bonded_potential_idxs(
+  //             bp, pot, d_idxs_buffer_.data + idxs_offset,
+  //             d_partitioned_indices_.data + partition_offset,
+  //             d_system_idxs_buffer_.data + idxs_offset, stream);
+  //       }
+  //       partition_offset += d_arange_.length;
+  //       idxs_offset += idxs_sizes_[i];
+  //       i++;
+  //     }
+  //   } else {
+  //     if (is_exclusions_nonbonded_all_pairs_potential(bp->potential)) {
+  //       this->_truncate_nonbonded_exclusions_potential_idxs(
+  //           bp->potential, d_idxs_buffer_.data + idxs_offset,
+  //           d_partitioned_indices_.data + partition_offset,
+  //           d_system_idxs_buffer_.data + idxs_offset, stream);
+  //     } else {
+  //       this->_truncate_bonded_potential_idxs(
+  //           bp, bp->potential, d_idxs_buffer_.data + idxs_offset,
+  //           d_partitioned_indices_.data + partition_offset,
+  //           d_system_idxs_buffer_.data + idxs_offset, stream);
+  //     }
+  //     partition_offset += d_arange_.length;
+  //     idxs_offset += idxs_sizes_[i];
+  //     i++;
+  //   }
+  // }
 }
 
 template <typename RealType>
@@ -702,6 +702,9 @@ void LocalMDPotentials<RealType>::_truncate_nonbonded_ixn_group(
   // Permutation will have the free indices (plus reference) at the front and
   // frozen indices at the back
   std::vector<int> free_vect(num_free_idxs, num_free_idxs + num_systems_);
+  for (auto i = 0; i < free_vect.size(); i++) {
+    printf("Free Vect %d %d\n", i, free_vect[i]);
+  }
   set_nonbonded_ixn_potential_idxs(
       nonbonded_pot_, free_vect, std::vector<int>(num_systems_, N_),
       d_partitioned_idxs, d_partitioned_idxs, stream);
@@ -710,6 +713,7 @@ void LocalMDPotentials<RealType>::_truncate_nonbonded_ixn_group(
 template <typename RealType>
 void LocalMDPotentials<RealType>::_reset_nonbonded_ixn_group(
     std::shared_ptr<Potential<RealType>> pot, cudaStream_t stream) {
+  printf("WE AREN't GETTING HERE\n");
   set_nonbonded_ixn_potential_idxs(pot, std::vector<int>(num_systems_, N_),
                                    std::vector<int>(num_systems_, N_),
                                    d_arange_.data, d_arange_.data, stream);
@@ -892,49 +896,49 @@ void LocalMDPotentials<RealType>::_reset_nonbonded_exclusions_potential_idxs(
 template <typename RealType>
 void LocalMDPotentials<RealType>::reset_potentials(cudaStream_t stream) {
   this->_reset_nonbonded_ixn_group(nonbonded_pot_, stream);
-  int i = 0;
-  int idxs_offset = 0;
-  int partition_offset = 0;
-  for (auto bp : bps_) {
-    if (std::shared_ptr<FanoutSummedPotential<RealType>> fanned_potential =
-            std::dynamic_pointer_cast<FanoutSummedPotential<RealType>>(
-                bp->potential);
-        fanned_potential != nullptr) {
-      for (auto pot : fanned_potential->get_potentials()) {
-        if (is_exclusions_nonbonded_all_pairs_potential(pot)) {
-          this->_reset_nonbonded_exclusions_potential_idxs(
-              pot, idxs_sizes_[i], d_idxs_buffer_.data + idxs_offset,
-              d_partitioned_indices_.data + partition_offset,
-              d_system_idxs_buffer_.data + idxs_offset, stream);
-        } else {
-          this->_reset_bonded_potential_idxs(
-              bp, pot, idxs_sizes_[i], d_idxs_buffer_.data + idxs_offset,
-              d_partitioned_indices_.data + partition_offset,
-              d_system_idxs_buffer_.data + idxs_offset, stream);
-        }
+  // int i = 0;
+  // int idxs_offset = 0;
+  // int partition_offset = 0;
+  // for (auto bp : bps_) {
+  //   if (std::shared_ptr<FanoutSummedPotential<RealType>> fanned_potential =
+  //           std::dynamic_pointer_cast<FanoutSummedPotential<RealType>>(
+  //               bp->potential);
+  //       fanned_potential != nullptr) {
+  //     for (auto pot : fanned_potential->get_potentials()) {
+  //       if (is_exclusions_nonbonded_all_pairs_potential(pot)) {
+  //         this->_reset_nonbonded_exclusions_potential_idxs(
+  //             pot, idxs_sizes_[i], d_idxs_buffer_.data + idxs_offset,
+  //             d_partitioned_indices_.data + partition_offset,
+  //             d_system_idxs_buffer_.data + idxs_offset, stream);
+  //       } else {
+  //         this->_reset_bonded_potential_idxs(
+  //             bp, pot, idxs_sizes_[i], d_idxs_buffer_.data + idxs_offset,
+  //             d_partitioned_indices_.data + partition_offset,
+  //             d_system_idxs_buffer_.data + idxs_offset, stream);
+  //       }
 
-        partition_offset += d_arange_.length;
-        idxs_offset += idxs_sizes_[i];
-        i++;
-      }
-    } else {
-      if (is_exclusions_nonbonded_all_pairs_potential(bp->potential)) {
-        this->_reset_nonbonded_exclusions_potential_idxs(
-            bp->potential, idxs_sizes_[i], d_idxs_buffer_.data + idxs_offset,
-            d_partitioned_indices_.data + partition_offset,
-            d_system_idxs_buffer_.data + idxs_offset, stream);
-      } else {
-        this->_reset_bonded_potential_idxs(
-            bp, bp->potential, idxs_sizes_[i],
-            d_idxs_buffer_.data + idxs_offset,
-            d_partitioned_indices_.data + partition_offset,
-            d_system_idxs_buffer_.data + idxs_offset, stream);
-      }
-      partition_offset += d_arange_.length;
-      idxs_offset += idxs_sizes_[i];
-      i++;
-    }
-  }
+  //       partition_offset += d_arange_.length;
+  //       idxs_offset += idxs_sizes_[i];
+  //       i++;
+  //     }
+  //   } else {
+  //     if (is_exclusions_nonbonded_all_pairs_potential(bp->potential)) {
+  //       this->_reset_nonbonded_exclusions_potential_idxs(
+  //           bp->potential, idxs_sizes_[i], d_idxs_buffer_.data + idxs_offset,
+  //           d_partitioned_indices_.data + partition_offset,
+  //           d_system_idxs_buffer_.data + idxs_offset, stream);
+  //     } else {
+  //       this->_reset_bonded_potential_idxs(
+  //           bp, bp->potential, idxs_sizes_[i],
+  //           d_idxs_buffer_.data + idxs_offset,
+  //           d_partitioned_indices_.data + partition_offset,
+  //           d_system_idxs_buffer_.data + idxs_offset, stream);
+  //     }
+  //     partition_offset += d_arange_.length;
+  //     idxs_offset += idxs_sizes_[i];
+  //     i++;
+  //   }
+  // }
 }
 
 template class LocalMDPotentials<double>;
