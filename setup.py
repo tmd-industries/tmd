@@ -107,16 +107,7 @@ setup(
     ext_modules=ext_modules,
     packages=find_packages(),
     python_requires=">=3.12",
-    install_requires=[
-        "jax",
-        "jaxlib>0.4.1",
-        "networkx",
-        "numpy",
-        "rdkit",
-        "scipy",
-        "matplotlib",
-        "openmm",
-    ],
+    install_requires=["jax", "jaxlib>0.4.1", "networkx", "numpy", "rdkit", "scipy", "matplotlib", "openmm", "mdtraj"],
     extras_require={
         "dev": ["ruff==0.9.3", "mypy==1.14.1", "pre-commit==4.1.0", "tbump==6.11.*"],
         "test": [

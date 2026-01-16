@@ -28,7 +28,7 @@ import pytest
 from numpy.typing import NDArray
 
 from tmd import constants
-from tmd.fe import absolute_hydration
+from tmd.fe.absolute import hydration as absolute_hydration
 from tmd.fe.free_energy import (
     AbsoluteFreeEnergy,
     HostConfig,
