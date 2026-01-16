@@ -114,6 +114,7 @@ def replace_clashy_waters(
 
     with path_to_internal_file("tmd.ff.params", "openmm_custom_templates.xml") as custom_templates_path:
         host_ff.loadFile(str(custom_templates_path))
+
     def get_clashy_idxs() -> NDArray[np.int32]:
         # Hard coded value for the maximum number of ligand atoms to consider when evaluating water idxs
         # Without this setting up a system with thousands of molecules can lead to JAX failures
