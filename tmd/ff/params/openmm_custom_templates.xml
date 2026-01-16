@@ -3,7 +3,7 @@
     <DateGenerated>2026-1-16</DateGenerated>
   </Info>
   <AtomTypes>
-    <Type class="tmd_custom-DUM" element="Ar" mass="6.94" name="tmd_custom-DUM"/>
+    <Type class="tmd_custom-DUM" element="U" mass="6.94" name="tmd_custom-DUM"/>
  </AtomTypes>
  <Residues>
     <Residue name="DUM">

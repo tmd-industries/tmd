@@ -69,7 +69,7 @@ def get_ion_residue_templates(modeller) -> dict[app.Residue, str]:
     the use of the NA/CL/MG templates (from the amber14 water models) rather than the amber99sbildn templates.
     """
     residue_templates = {}
-    for res_name in (SODIUM_ION_RESIDUE, CHLORINE_ION_RESIDUE, MAGNESIUM_ION_RESIDUE):
+    for res_name in (SODIUM_ION_RESIDUE, CHLORINE_ION_RESIDUE, MAGNESIUM_ION_RESIDUE, DUMMY_ATOM_TEMPLATE):
         residue_templates.update({res: res_name for res in modeller.getTopology().residues() if res.name == res_name})
     return residue_templates
 
@@ -165,7 +165,7 @@ def replace_clashy_waters(
         # so this is fine.
         for atom in mol.GetAtoms():
             res = topology.addResidue(DUMMY_ATOM_TEMPLATE, dummy_chain)
-            topology.addAtom(DUMMY_ATOM_TEMPLATE, app.Element.getBySymbol("Ar"), res)
+            topology.addAtom(DUMMY_ATOM_TEMPLATE, app.Element.getBySymbol("U"), res)
     modeller.add(topology, ligand_coords * unit.nanometers)
 
     # Get the latest residue templates then update with the input templates
