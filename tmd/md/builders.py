@@ -621,7 +621,7 @@ def build_membrane_system(
     Build a solvated protein+membrane system with a 10A padding. Assumes the PDB file is posed such that the XY plane
     will contain the membrane, this matches with OpenMM.
 
-    Note that this will pproduce different numbers of water molecules due to non-deterministic minimization in OpenMM
+    Note that this will produce different numbers of water molecules due to non-deterministic minimization in OpenMM
 
     Parameters
     ----------
