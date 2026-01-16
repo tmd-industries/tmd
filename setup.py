@@ -134,6 +134,9 @@ setup(
         "tmd": [
             "py.typed",
         ],
+        "tmd.ff.params": [
+            "*.xml",
+        ],
         "tmd.testsystems": [
             "**/*.pdb",
             "**/*.npz",

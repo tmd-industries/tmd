@@ -27,12 +27,16 @@ from tmd.fe.utils import get_romol_conf
 from tmd.ff import get_water_ff_model
 from tmd.ff.handlers import openmm_deserializer
 from tmd.potentials.jax_utils import idxs_within_cutoff
+from tmd.utils import path_to_internal_file
 
 WATER_RESIDUE_NAME = "HOH"
 SODIUM_ION_RESIDUE = "NA"
 CHLORINE_ION_RESIDUE = "CL"
 MAGNESIUM_ION_RESIDUE = "MG"
 POPC_RESIDUE_NAME = "POP"
+
+# Custom values defined in tmd/ff/params/openmm_custom_templates.xml
+DUMMY_ATOM_TEMPLATE = "DUM"  # Used as a place holder when replacing clashy waters
 
 
 @dataclass(frozen=True)
@@ -81,6 +85,10 @@ def replace_clashy_waters(
     """Replace waters that clash with a set of molecules with waters at the boundaries rather than
     clashing with the molecules. The number of atoms in the system will be identical before and after
 
+    Note:
+    This will modify the host_ff by adding custom OpenMM templates from tmd/ff/params/openmm_custom_templates.xml.
+    You may experience collisions with any custom templates.
+
     Parameters
     ----------
     modeller: app.Modeller
@@ -104,6 +112,8 @@ def replace_clashy_waters(
     if len(mols) == 0:
         return
 
+    with path_to_internal_file("tmd.ff.params", "openmm_custom_templates.xml") as custom_templates_path:
+        host_ff.loadFile(str(custom_templates_path))
     def get_clashy_idxs() -> NDArray[np.int32]:
         # Hard coded value for the maximum number of ligand atoms to consider when evaluating water idxs
         # Without this setting up a system with thousands of molecules can lead to JAX failures
@@ -149,12 +159,12 @@ def replace_clashy_waters(
     dummy_chain = topology.addChain(dummy_chain_id)
     ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
     for mol in mols:
-        # Add a bunch of chlorine atoms in place of the ligand atoms. This will prevent OpenMM from
+        # Add a bunch of dummy Argon atoms in place of the ligand atoms. This will prevent OpenMM from
         # placing atoms in the binding pocket. OpenMM only looks at the parameters of waters, not the solute
         # so this is fine.
         for atom in mol.GetAtoms():
-            res = topology.addResidue(CHLORINE_ION_RESIDUE, dummy_chain)
-            topology.addAtom(CHLORINE_ION_RESIDUE, app.Element.getBySymbol("Cl"), res)
+            res = topology.addResidue(DUMMY_ATOM_TEMPLATE, dummy_chain)
+            topology.addAtom(DUMMY_ATOM_TEMPLATE, app.Element.getBySymbol("Ar"), res)
     modeller.add(topology, ligand_coords * unit.nanometers)
 
     # Get the latest residue templates then update with the input templates
@@ -610,7 +620,7 @@ def build_membrane_system(
     Build a solvated protein+membrane system with a 10A padding. Assumes the PDB file is posed such that the XY plane
     will contain the membrane, this matches with OpenMM.
 
-    Note that this will produce different numbers of water molecules due to non-deterministic minimization in OpenMM
+    Note that this will pproduce different numbers of water molecules due to non-deterministic minimization in OpenMM
 
     Parameters
     ----------
