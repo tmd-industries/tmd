@@ -228,8 +228,11 @@ def main():
             continue
         help_str = f"Value for Atom Mapping argument {arg}"
         if isinstance(val, bool):
-            parser.add_argument(f"--atom_map_{arg}", type=int, choices=[0, 1], default=1 if val else 0, help=help_str)
+            default_val = 1 if val else 0
+            help_str += f", default value is {default_val}"
+            parser.add_argument(f"--atom_map_{arg}", type=int, choices=[0, 1], default=default_val, help=help_str)
         elif isinstance(val, (int, float)):
+            help_str += f", default value is {val}"
             parser.add_argument(f"--atom_map_{arg}", type=type(val), default=val, help=help_str)
         else:
             raise ValueError(f"Unknown type for {arg}: {type(val)}")
