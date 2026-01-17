@@ -1,0 +1,18 @@
+<ForceField>
+ <Info>
+    <DateGenerated>2026-1-16</DateGenerated>
+  </Info>
+  <AtomTypes>
+    <Type class="tmd_custom-DUM" element="U" mass="6.94" name="tmd_custom-DUM"/>
+ </AtomTypes>
+ <Residues>
+    <Residue name="DUM">
+      <Atom charge="0.0" name="DUM" type="tmd_custom-DUM"/>
+    </Residue>
+ </Residues>
+ <NonbondedForce coulomb14scale="0.8333333333333334" lj14scale="0.5">
+  <UseAttributeFromResidue name="charge"/>
+  <!-- These values don't mean anything -->
+    <Atom epsilon="0.1" sigma="0.1" type="tmd_custom-DUM"/>
+ </NonbondedForce>
+</ForceField>
