@@ -92,7 +92,11 @@ def build_star_graph(hub_cmpd_name: str, mols: list, atom_mapping_kwargs: dict[s
 
 
 def build_greedy_graph(
-    mols, scoring_methods: list[str], k_min_cut: int = 2, atom_mapping_kwargs: dict[str, Any] | None = None
+    mols,
+    scoring_methods: list[str],
+    k_min_cut: int = 2,
+    atom_mapping_kwargs: dict[str, Any] | None = None,
+    remove_articulation_points: bool = False,
 ) -> nx.DiGraph:
     """Build a densely connected graph using a greedy method
 
@@ -106,6 +110,13 @@ def build_greedy_graph(
 
     k_min_cut: int
         Number of edges that can be cut before producing a disconnected graph. See networkx.k_edge_augmentation for more details
+
+    atom_mapping_kwargs: dict[str, Any]:
+        Keyword arguments to pass to tmd.fe.atom_mapping.get_cores. Any value not set will use the defaults.
+
+    remove_articulation_points: bool
+        Whether or not remove articulation points (nodes that if removed would create a disconnected graph). Useful
+        to reduce dependency on a single node.
 
     Returns
     -------
@@ -143,26 +154,56 @@ def build_greedy_graph(
         for mol in mols:
             graph.add_node(get_mol_name(mol), **{MOL_FIELD: mol})
 
-        # If there are only two mols then, simply connect the two and exit
-        if len(mols) == 2:
-            i = 0
-            j = 1
-            core = core_matrix[i, j]
-            dummy_atoms = float(get_num_dummy_atoms(mols[i], mols[j], core))
-            graph.add_edge(get_mol_name(mols[i]), get_mol_name(mols[j]), **{CORE_FIELD: core, DUMMY_ATOMS: dummy_atoms})
-            return graph
-
-        for a, b in nx.k_edge_augmentation(graph.to_undirected(as_view=True), k_min_cut, possible_edges, partial=True):
-            (i, j) = sorted([mol_name_to_idx[a], mol_name_to_idx[b]])
+        def add_edge_from_mol_names(name_a: str, name_b: str):
+            """Utility function to add edges with standard values"""
+            (i, j) = sorted([mol_name_to_idx[name_a], mol_name_to_idx[name_b]])
             core = core_matrix[i, j]
             src_mol = get_mol_name(mols[i])
             dst_mol = get_mol_name(mols[j])
             dummy_atoms = float(get_num_dummy_atoms(mols[i], mols[j], core))
             graph.add_edge(src_mol, dst_mol, **{CORE_FIELD: core, DUMMY_ATOMS: dummy_atoms})
+
+        # If there are only two mols then, simply connect the two and exit
+        if len(mols) == 2:
+            add_edge_from_mol_names(get_mol_name(mols[0]), get_mol_name(mols[1]))
+            return graph
+
+        for a, b in nx.k_edge_augmentation(graph.to_undirected(as_view=True), k_min_cut, possible_edges, partial=True):
+            add_edge_from_mol_names(a, b)
+        # If we have articulation points in the graph, add edges to remove them
+        if remove_articulation_points:
+            biconnected_components = list(nx.biconnected_components(graph.to_undirected(as_view=True)))
+            while len(biconnected_components) > 1:
+                articulation_nodes = set(nx.articulation_points(graph.to_undirected(as_view=True)))
+                additional_edges = []
+                for component in biconnected_components:
+                    connecting_nodes = graph.nodes() - component
+                    # Once we add a node that removes any articulation points, exit
+                    if len(articulation_nodes) == 0:
+                        break
+                    for node in component:
+                        if node in articulation_nodes:
+                            continue
+                        for comp_node in connecting_nodes:
+                            if comp_node in articulation_nodes:
+                                continue
+                            (i, j) = sorted([mol_name_to_idx[node], mol_name_to_idx[comp_node]])
+                            src_mol = get_mol_name(mols[i])
+                            dst_mol = get_mol_name(mols[j])
+                            # Skip any edges already in the graph
+                            if (src_mol, dst_mol) not in graph.edges():
+                                additional_edges.append(
+                                    next(edge for edge in possible_edges if edge[0] == src_mol and edge[1] == dst_mol)
+                                )
+                # Find the cheapest edge
+                src_mol, dst_mol, _ = min(sorted(additional_edges), key=lambda x: x[2])
+                add_edge_from_mol_names(src_mol, dst_mol)
+                biconnected_components = list(nx.biconnected_components(graph.to_undirected(as_view=True)))
         if best_graph is None:
             best_graph = graph
         elif get_graph_mean_dummy_atoms(best_graph) > get_graph_mean_dummy_atoms(graph):
             best_graph = graph
+
     assert best_graph is not None
     return best_graph
 
@@ -208,6 +249,11 @@ def main():
         choices=[BEST, JACCARD, DUMMY_ATOMS],
         default=BEST,
         help=f"How to score edges when generating greedy maps. The {BEST} option will try multiple scoring functions and return the mapping with the fewest dummy atoms",
+    )
+    parser.add_argument(
+        "--greedy_remove_articulation_points",
+        action="store_true",
+        help="Remove articulation points from graphs. Articulation points are nodes that if removed would disconnect the graph.",
     )
 
     parser.add_argument(
@@ -280,7 +326,11 @@ def main():
             else:
                 scoring_methods = [args.greedy_scoring]
             nx_graph = build_greedy_graph(
-                mol_subset, scoring_methods, k_min_cut=args.greedy_k_min_cut, atom_mapping_kwargs=atom_mapping_kwargs
+                mol_subset,
+                scoring_methods,
+                k_min_cut=args.greedy_k_min_cut,
+                atom_mapping_kwargs=atom_mapping_kwargs,
+                remove_articulation_points=args.greedy_remove_articulation_points,
             )
         else:
             assert args.hub_cmpd is not None
@@ -316,7 +366,7 @@ def main():
             if CORE_FIELD in data
         ]
         print("Graph Summary")
-        print("-" * 20)
+        print("-" * 13)
         print("Total Dummy Atoms", sum(dummy_atoms))
         print("Mean Dummy Atoms", np.round(np.mean(dummy_atoms), 2))
         print("Median Dummy Atoms", np.round(np.median(dummy_atoms), 2))
