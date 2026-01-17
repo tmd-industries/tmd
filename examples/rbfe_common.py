@@ -36,87 +36,98 @@ def write_result_csvs(
     experimental_field: str,
     experimental_units: str,
 ):
-    # Write out the DDG csv
-    ddg_csv_header = ["mol_a", "mol_b"]
     legs = list(sorted(set(leg for legs in leg_results.values() for leg in legs.keys())))
-    for leg in legs:
-        ddg_csv_header.append(f"{leg}_pred_dg (kcal/mol)")
-        ddg_csv_header.append(f"{leg}_pred_dg_err (kcal/mol)")
-    compute_dg = SOLVENT_LEG in legs and COMPLEX_LEG in legs
-    if compute_dg:
-        ddg_csv_header.append("pred_ddg (kcal/mol)")
-        ddg_csv_header.append("pred_ddg_err (kcal/mol)")
-        ddg_csv_header.append("exp_ddg (kcal/mol)")
     g = nx.DiGraph()
-    ddg_path = file_client.full_path("ddg_results.csv")
-    with open(ddg_path, "w", newline="") as ofs:
-        writer = csv.writer(ofs)
-        writer.writerow(ddg_csv_header)
-        for (name_a, name_b), leg_summaries in leg_results.items():
-            row = [name_a, name_b]
-            for leg in legs:
-                leg_res = leg_summaries.get(leg)
-                if leg_res is None:
-                    # Add empty values, since the leg didn't run
-                    row.append("")
-                    row.append("")
-                else:
-                    leg_pred = leg_res["pred_dg"] / KCAL_TO_KJ
-                    leg_err = leg_res["pred_dg_err"] / KCAL_TO_KJ
-                    row.append(str(leg_pred))
-                    row.append(str(leg_err))
-            if compute_dg:
-                if not (COMPLEX_LEG in leg_summaries and SOLVENT_LEG in leg_summaries):
-                    continue
-                edge_ddg = leg_summaries[COMPLEX_LEG]["pred_dg"] - leg_summaries[SOLVENT_LEG]["pred_dg"]
-                edge_ddg_err = np.linalg.norm(
-                    [leg_summaries[COMPLEX_LEG]["pred_dg_err"], leg_summaries[SOLVENT_LEG]["pred_dg_err"]]
-                )
-                g.add_edge(name_a, name_b, edge_pred=edge_ddg, edge_pred_std=edge_ddg_err)
-                row.append(str(edge_ddg / KCAL_TO_KJ))
-                row.append(str(edge_ddg_err / KCAL_TO_KJ))
+    edge_records: dict[tuple[str, str], dict] = {}
+    for (name_a, name_b), leg_summaries in leg_results.items():
+        edge: dict[str, Any] = {
+            "mol_a": name_a,
+            "mol_b": name_b,
+        }
+        for leg in legs:
+            leg_res = leg_summaries.get(leg)
+            if leg_res is not None:
+                edge[f"{leg}_pred_dg (kcal/mol)"] = leg_res["pred_dg"] / KCAL_TO_KJ
+                edge[f"{leg}_pred_dg_err (kcal/mol)"] = leg_res["pred_dg_err"] / KCAL_TO_KJ
 
-                exp_a = None
-                exp_b = None
-                try:
-                    exp_a = get_mol_experimental_value(mols_by_name[name_a], experimental_field, experimental_units)
-                    g.add_node(name_a, node_exp=exp_a)
-                except KeyError:
-                    pass
-                try:
-                    exp_b = get_mol_experimental_value(mols_by_name[name_b], experimental_field, experimental_units)
-                    g.add_node(name_b, node_exp=exp_b)
-                except KeyError:
-                    pass
-                if exp_a is not None and exp_b is not None:
-                    row.append(str((exp_b - exp_a) / KCAL_TO_KJ))
-                else:
-                    row.append("")
-            writer.writerow(row)
-    if not compute_dg:
-        return
-    dg_csv_header = ["mol", "smiles", "pred_dg (kcal/mol)", "pred_dg_err (kcal/mol)", "exp_dg (kcal/mol)"]
-    res = infer_node_vals_and_errs_networkx(
-        g,
-        edge_diff_prop="edge_pred",
-        edge_stddev_prop="edge_pred_std",
-        ref_node_val_prop="node_exp",
-        ref_node_stddev_prop="node_exp_std",
-    )
-    ddg_path = file_client.full_path("dg_results.csv")
-    with open(ddg_path, "w", newline="") as ofs:
-        writer = csv.writer(ofs)
-        writer.writerow(dg_csv_header)
-        for n, data in res.nodes(data=True):
-            writer.writerow(
-                [
-                    n,
-                    Chem.MolToSmiles(Chem.RemoveHs(mols_by_name[n])),
-                    data["inferred_dg"] / KCAL_TO_KJ if "inferred_dg" in data else "",
-                    data["inferred_dg_stddev"] / KCAL_TO_KJ if "inferred_dg" in data else "",
-                    data["node_exp"] / KCAL_TO_KJ if "node_exp" in data else "",
-                ]
+        exp_a = None
+        exp_b = None
+        try:
+            exp_a = get_mol_experimental_value(mols_by_name[name_a], experimental_field, experimental_units)
+            g.add_node(name_a, node_exp=exp_a)
+        except KeyError:
+            pass
+        try:
+            exp_b = get_mol_experimental_value(mols_by_name[name_b], experimental_field, experimental_units)
+            g.add_node(name_b, node_exp=exp_b)
+        except KeyError:
+            pass
+        if exp_a is not None and exp_b is not None:
+            edge["exp_ddg (kcal/mol)"] = (exp_b - exp_a) / KCAL_TO_KJ
+
+        if COMPLEX_LEG in leg_summaries and SOLVENT_LEG in leg_summaries:
+            edge["pred_ddg (kcal/mol)"] = (
+                leg_summaries[COMPLEX_LEG]["pred_dg"] - leg_summaries[SOLVENT_LEG]["pred_dg"]
+            ) / KCAL_TO_KJ
+            edge["pred_ddg_err (kcal/mol)"] = (
+                np.linalg.norm([leg_summaries[COMPLEX_LEG]["pred_dg_err"], leg_summaries[SOLVENT_LEG]["pred_dg_err"]])
+                / KCAL_TO_KJ
             )
+
+        edge_records[(name_a, name_b)] = edge
+
+    for edge in edge_records.values():
+        if "pred_ddg (kcal/mol)" in edge:
+            g.add_edge(
+                edge["mol_a"],
+                edge["mol_b"],
+                edge_pred=edge["pred_ddg (kcal/mol)"],
+                edge_pred_std=edge["pred_ddg_err (kcal/mol)"],
+            )
+
+    res = None
+    if len(g.edges) > 0:
+        res = infer_node_vals_and_errs_networkx(
+            g,
+            edge_diff_prop="edge_pred",
+            edge_stddev_prop="edge_pred_std",
+            ref_node_val_prop="node_exp",
+            ref_node_stddev_prop="node_exp_std",
+        )
+        dg_csv_header = ["mol", "smiles", "pred_dg (kcal/mol)", "pred_dg_err (kcal/mol)", "exp_dg (kcal/mol)"]
+        dg_path = file_client.full_path("dg_results.csv")
+        with open(dg_path, "w", newline="") as ofs:
+            writer = csv.writer(ofs)
+            writer.writerow(dg_csv_header)
+            for n, data in res.nodes(data=True):
+                writer.writerow(
+                    [
+                        n,
+                        Chem.MolToSmiles(Chem.RemoveHs(mols_by_name[n])),
+                        data["inferred_dg"] / KCAL_TO_KJ if "inferred_dg" in data else "",
+                        data["inferred_dg_stddev"] / KCAL_TO_KJ if "inferred_dg" in data else "",
+                        data["node_exp"] / KCAL_TO_KJ if "node_exp" in data else "",
+                    ]
+                )
+        for edge in edge_records.values():
+            name_a = edge["mol_a"]
+            name_b = edge["mol_b"]
+            # If both nodes had predictions, add the implied MLE ddG
+            if name_a in res.nodes and name_b in res.nodes:
+                data_a = res.nodes[name_a]
+                data_b = res.nodes[name_b]
+                edge["mle_ddg (kcal/mol)"] = data_b["inferred_dg"] - data_a["inferred_dg"]
+                edge["mle_ddg_err (kcal/mol)"] = np.linalg.norm(
+                    [data_b["inferred_dg_stddev"], data_a["inferred_dg_stddev"]]
+                )
+
+    ddg_path = file_client.full_path("ddg_results.csv")
+    # Get the edge with the most fields
+    field_names = list(max(edge_records.values(), key=len).keys())
+    ddg_writer = csv.DictWriter(open(ddg_path, "w"), fieldnames=field_names)
+    ddg_writer.writeheader()
+    for edge in edge_records.values():
+        ddg_writer.writerow(edge)
 
 
 def run_rbfe_leg(
