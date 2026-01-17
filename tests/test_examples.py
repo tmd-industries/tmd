@@ -110,6 +110,7 @@ def test_run_rbfe_graph_local(
             output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_graph_local_{seed}",
             experimental_field="IC50[uM](SPA)",
             experimental_units="uM",
+            force_overwrite=None,  # Force overwrite any existing data
         )
 
         temp_mols = NamedTemporaryFile(suffix=".sdf")
@@ -201,6 +202,8 @@ def test_run_rbfe_graph_local(
                 "pred_ddg (kcal/mol)",
                 "pred_ddg_err (kcal/mol)",
                 "exp_ddg (kcal/mol)",
+                "mle_ddg (kcal/mol)",
+                "mle_ddg_err (kcal/mol)",
             }
             for leg in leg_names:
                 expected_ddg_keys.add(f"{leg}_pred_dg (kcal/mol)")
