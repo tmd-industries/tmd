@@ -234,8 +234,8 @@ def test_run_rbfe_graph_local(
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("scoring_method", ["best", "jaccard", "dummy_atoms"])
-def test_build_rbfe_graph(scoring_method):
+@pytest.mark.parametrize("scoring_method, expected_edges", [("best", 58), ("jaccard", 59), ("dummy_atoms", 58)])
+def test_build_rbfe_graph(scoring_method, expected_edges):
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
         base_args = [str(hif2a_dir / "ligands.sdf"), "--greedy_scoring", scoring_method]
         with NamedTemporaryFile(suffix=".json") as temp:
@@ -245,7 +245,7 @@ def test_build_rbfe_graph(scoring_method):
             with open(temp.name) as ifs:
                 ref_edges = json.load(ifs)
                 # The number of edges changes based on the mapping
-                assert 63 <= len(ref_edges) <= 64
+                assert len(ref_edges) == expected_edges
                 assert all(isinstance(edge, dict) for edge in ref_edges)
                 for expected_key in ["mol_a", "mol_b", "core"]:
                     assert all(expected_key in edge for edge in ref_edges)
@@ -304,10 +304,10 @@ def test_build_rbfe_graph_charge_hop():
 
 @pytest.mark.nocuda
 @pytest.mark.parametrize(
-    "parameters_to_adjust",
-    [{"ring_matches_ring_only": True}, {"max_connected_components": 2}, {"enforce_core_core": False}],
+    "parameters_to_adjust, expected_edges",
+    [({"ring_matches_ring_only": True}, 58), ({"max_connected_components": 2}, 58), ({"enforce_core_core": False}, 58)],
 )
-def test_build_rbfe_graph_atom_mapping_parameters(parameters_to_adjust):
+def test_build_rbfe_graph_atom_mapping_parameters(parameters_to_adjust, expected_edges):
     atom_mapping_kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
     # Parameters to update should be in the base atom mapping set
     assert set(atom_mapping_kwargs.keys()).union(parameters_to_adjust.keys()) == set(atom_mapping_kwargs.keys())
@@ -330,7 +330,7 @@ def test_build_rbfe_graph_atom_mapping_parameters(parameters_to_adjust):
             with open(temp.name) as ifs:
                 ref_edges = json.load(ifs)
                 # The number of edges changes based on the mapping
-                assert 63 <= len(ref_edges) <= 66
+                assert len(ref_edges) == expected_edges
                 assert all(isinstance(edge, dict) for edge in ref_edges)
                 for expected_key in ["mol_a", "mol_b", "core"]:
                     assert all(expected_key in edge for edge in ref_edges)
