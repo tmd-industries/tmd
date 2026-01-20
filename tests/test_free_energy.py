@@ -28,9 +28,9 @@ from jax import grad, jacfwd, jacrev, value_and_grad
 from scipy.optimize import check_grad, minimize
 
 import tmd._vendored.pymbar as pymbar
-from tmd.constants import DEFAULT_TEMP, NBParamIdx
+from tmd.constants import BOLTZ, DEFAULT_TEMP, NBParamIdx
 from tmd.fe import free_energy, topology, utils
-from tmd.fe.bar import DEFAULT_SOLVER_PROTOCOL, IndeterminateEnergyWarning, ukln_to_ukn
+from tmd.fe.bar import DEFAULT_SOLVER_PROTOCOL, IndeterminateEnergyWarning, df_from_u_kln, ukln_to_ukn
 from tmd.fe.free_energy import (
     BarResult,
     HREXParams,
@@ -54,7 +54,7 @@ from tmd.fe.free_energy import (
     trajectories_by_replica_to_by_state,
     verify_and_sanitize_potential_matrix,
 )
-from tmd.fe.rbfe import setup_initial_state, setup_initial_states, setup_optimized_host
+from tmd.fe.rbfe import run_vacuum, setup_initial_state, setup_initial_states, setup_optimized_host
 from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.single_topology import AtomMapFlags, SingleTopology
 from tmd.fe.stored_arrays import StoredArrays
@@ -857,6 +857,47 @@ def test_assert_potentials_compatible(hif2a_ligand_pair_single_topology):
         [replace(sp, potential=replace(sp.potential, params_init=params_init_1))],
         r"shape mismatch in field \$\.\[\d\].params_init\.\[0\]",
     )
+
+
+def test_reconstruct_ukln_simulation_result():
+    """Check that SimulationResult.reconstruct_ukln correctly re-generates u_klns from the series of bisected windows"""
+    mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
+    forcefield = Forcefield.load_default()
+    seed = 2025
+    frames = 100
+    steps_per_frame = 10
+    equil_steps = 1000
+
+    md_params = MDParams(n_frames=frames, n_eq_steps=equil_steps, steps_per_frame=steps_per_frame, seed=seed)
+
+    windows = 4
+    res = run_vacuum(mol_a, mol_b, core, forcefield, None, md_params=md_params, n_windows=windows, min_overlap=0.1)
+
+    reference_u_kln, ref_N_k = res.compute_u_kln()
+    reconstructed_u_kln, comp_N_k = res.reconstruct_ukln()
+    np.testing.assert_array_equal(ref_N_k, comp_N_k)
+    assert np.all(np.isfinite(np.diagonal(reconstructed_u_kln)))
+    np.testing.assert_array_equal(reconstructed_u_kln.shape, reference_u_kln.shape)
+
+    # Need to mask any values that are in the reference but not in the reconstructed u_kln
+    # since the reconstructed u_kln is using bisection u_klns to construct the full u_kln
+    masked_reference = np.where(np.isfinite(reconstructed_u_kln), reference_u_kln, np.inf)
+
+    np.testing.assert_allclose(reconstructed_u_kln, masked_reference, rtol=1e-6)
+
+    # Verify that the dG estimates are similar
+    ref_estimate = np.sum(res.final_result.dGs)
+
+    temperature = res.final_result.initial_states[0].integrator.temperature
+
+    kBT = BOLTZ * temperature
+
+    full_estimate = df_from_u_kln(reference_u_kln) * kBT
+    # np.testing.assert_allclose(full_estimate, ref_estimate)
+    reconstructed_estimate = df_from_u_kln(reconstructed_u_kln) * kBT
+
+    np.testing.assert_allclose(full_estimate, ref_estimate, atol=1e-3)
+    np.testing.assert_allclose(reconstructed_estimate, full_estimate, atol=1e-3)
 
 
 def test_initial_state_to_bound_impl():
