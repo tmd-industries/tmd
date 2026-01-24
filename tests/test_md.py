@@ -801,10 +801,7 @@ def test_host_batch_simulation(
 )
 @pytest.mark.parametrize(
     "integrator_klass, friction",
-    [
-        (LangevinIntegrator, 0.0),
-        (LangevinIntegrator, 1.0)
-    ],
+    [(LangevinIntegrator, 0.0), (LangevinIntegrator, 1.0)],
 )
 @pytest.mark.parametrize("host", ["solvent", "complex"])
 def test_local_md_batch_simulation(precision, seed, num_systems, integrator_klass, friction, host):
