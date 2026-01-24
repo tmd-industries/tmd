@@ -144,15 +144,18 @@ void __global__ k_flag_indices_to_keep(
         *__restrict__ comp_atoms, // [num_atoms] comp_atoms[i] == i atom is
                                   // being considered, else comp_atoms[i] ==
                                   // num_atoms indicating to ignore the value
+    const int *__restrict__ system_idxs, // [num_idxs] Which system the index is
+                                         // coming from
     char *__restrict__ overlapping_flags // [num_idxs]
 ) {
   int tidx = blockIdx.x * blockDim.x + threadIdx.x;
   while (tidx < num_idxs) {
 
+    const int system_idx = system_idxs[tidx];
     bool is_free = false;
     for (int d = 0; d < idxs_dims; d++) {
       int atom_idx = idxs[tidx * idxs_dims + d];
-      is_free |= comp_atoms[atom_idx] < num_atoms;
+      is_free |= comp_atoms[system_idx * num_atoms + atom_idx] < num_atoms;
     }
     overlapping_flags[tidx] = is_free;
 

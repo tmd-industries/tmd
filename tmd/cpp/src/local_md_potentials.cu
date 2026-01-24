@@ -614,7 +614,7 @@ void LocalMDPotentials<RealType>::_truncate_bonded_potential_idxs(
   assert(bp->size == bp->d_p.length);
 
   k_flag_indices_to_keep<<<blocks, tpb, 0, stream>>>(
-      num_idxs, idxs_dim, N_, d_src_idxs, d_free_idxs_.data,
+      num_idxs, idxs_dim, N_, d_src_idxs, d_free_idxs_.data, d_system_idxs,
       d_idxs_flags_.data);
   gpuErrchk(cudaPeekAtLastError());
 
@@ -702,9 +702,6 @@ void LocalMDPotentials<RealType>::_truncate_nonbonded_ixn_group(
   // Permutation will have the free indices (plus reference) at the front and
   // frozen indices at the back
   std::vector<int> free_vect(num_free_idxs, num_free_idxs + num_systems_);
-  for (auto i = 0; i < free_vect.size(); i++) {
-    printf("Free Vect %d %d\n", i, free_vect[i]);
-  }
   set_nonbonded_ixn_potential_idxs(
       nonbonded_pot_, free_vect, std::vector<int>(num_systems_, N_),
       d_partitioned_idxs, d_partitioned_idxs, stream);
@@ -713,7 +710,6 @@ void LocalMDPotentials<RealType>::_truncate_nonbonded_ixn_group(
 template <typename RealType>
 void LocalMDPotentials<RealType>::_reset_nonbonded_ixn_group(
     std::shared_ptr<Potential<RealType>> pot, cudaStream_t stream) {
-  printf("WE AREN't GETTING HERE\n");
   set_nonbonded_ixn_potential_idxs(pot, std::vector<int>(num_systems_, N_),
                                    std::vector<int>(num_systems_, N_),
                                    d_arange_.data, d_arange_.data, stream);
@@ -760,7 +756,7 @@ void LocalMDPotentials<RealType>::_truncate_nonbonded_exclusions_potential_idxs(
   const int blocks = ceil_divide(num_idxs, tpb);
 
   k_flag_indices_to_keep<<<blocks, tpb, 0, stream>>>(
-      num_idxs, idxs_dim, N_, src_idxs_ptr, d_free_idxs_.data,
+      num_idxs, idxs_dim, N_, src_idxs_ptr, d_free_idxs_.data, d_system_idxs,
       d_idxs_flags_.data);
   gpuErrchk(cudaPeekAtLastError());
 

@@ -669,10 +669,10 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
 
     // TBD: Figure out a way to handle this more gracefully
     gpuErrchk(cudaMemcpyAsync(d_row_atom_idxs_counts_, &row_counts[0],
-                              num_systems_ * sizeof(int),
+                              num_systems_ * sizeof(*d_row_atom_idxs_counts_),
                               cudaMemcpyHostToDevice, stream));
     gpuErrchk(cudaMemcpyAsync(d_col_atom_idxs_counts_, &col_counts[0],
-                              num_systems_ * sizeof(int),
+                              num_systems_ * sizeof(*d_col_atom_idxs_counts_),
                               cudaMemcpyHostToDevice, stream));
 
     // Resize the nblist

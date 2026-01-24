@@ -795,14 +795,15 @@ def test_host_batch_simulation(
     [
         1,
         2,
+        4,
+        16,
     ],
 )
 @pytest.mark.parametrize(
     "integrator_klass, friction",
     [
-        # (VelocityVerletIntegrator, np.inf),
         (LangevinIntegrator, 0.0),
-        # (LangevinIntegrator, 1.0)
+        (LangevinIntegrator, 1.0)
     ],
 )
 @pytest.mark.parametrize("host", ["solvent", "complex"])
@@ -825,7 +826,7 @@ def test_local_md_batch_simulation(precision, seed, num_systems, integrator_klas
                 str(protein_path), ff.protein_ff, ff.water_ff, mols=[mol], box_margin=0.1
             )
     elif host == "solvent":
-        host_config = build_water_system(2.7, ff.water_ff, mols=[mol], box_margin=0.1)
+        host_config = build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
     assert host_config is not None
     host_config = setup_optimized_host(host_config, [mol], ff)
 
@@ -908,14 +909,15 @@ def test_local_md_batch_simulation(precision, seed, num_systems, integrator_klas
         precision=precision,
     )
 
-    # CHANGE THIS back
-    local_idxs = np.arange(len(x0) - 1, len(x0), dtype=np.int32)
+    local_idxs = np.arange(len(x0) - mol.GetNumAtoms(), len(x0), dtype=np.int32)
 
-    steps = 5
+    steps = 1000
+    iterations = 10
     start = time.perf_counter()
-    xs, boxes = ctxt.multiple_steps_local(steps, local_idxs)
+    for _ in range(iterations):
+        xs, boxes = ctxt.multiple_steps_local(steps, local_idxs)
     took = time.perf_counter() - start
-    ns_per_day = (steps * num_systems) / took
+    ns_per_day = (steps * iterations * num_systems) / took
     ns_per_day = ns_per_day * SECONDS_PER_DAY * dt * 1e-3
     print(f"{num_systems} simulations took {time.perf_counter() - start}s, ns per day {ns_per_day}")
 
@@ -924,7 +926,7 @@ def test_local_md_batch_simulation(precision, seed, num_systems, integrator_klas
         assert boxes.shape == (1, num_systems, 3, 3)
         for i, x_batch in enumerate(xs.reshape(num_systems, len(x0), 3)[1:]):
             # Can't guarantee identical simulations because of probabilistic selection of atoms
-            assert np.all(xs[0, 0] == x_batch, axis=1).sum() < len(x_batch), (
+            assert np.all(xs[0, 0] == x_batch, axis=1).sum() != len(x_batch), (
                 f"Batch {i + 1} has identical atom coordinates"
             )
     else:

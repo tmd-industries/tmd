@@ -68,13 +68,14 @@ void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,
                                       const cudaStream_t stream) {
 
   if (num_row_idxs.size() != num_col_idxs.size()) {
-    throw std::runtime_error("Number of row counts and number of column counts must match");
+    throw std::runtime_error(
+        "Number of row counts and number of column counts must match");
   }
   bool set_compute_col_grads = false;
   for (auto i = 0; i < num_row_idxs.size(); i++) {
     if (num_row_idxs[i] == num_col_idxs[i]) {
-        set_compute_col_grads = true;
-        break;
+      set_compute_col_grads = true;
+      break;
     }
   }
   if (std::shared_ptr<NonbondedInteractionGroup<RealType>> nb_pot =
