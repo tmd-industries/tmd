@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -448,7 +449,7 @@ def compute_or_load_oe_bond_smirks_matches(mol: Chem.Mol, smirks_list: list[str]
 
 
 def compute_or_load_rdkit_bond_smirks_matches(mol: Chem.Mol, smirks_list: list[str]) -> tuple[NDArray, NDArray]:
-    """Unless already cached in mol's "BondSmirkMatchCache" property, uses RDKit to compute arrays of ordered bonds and their assigned types.
+    """Unless already cached in mol's "RDKitBondSmirkMatchCache" property, uses RDKit to compute arrays of ordered bonds and their assigned types.
 
     Notes
     -----
