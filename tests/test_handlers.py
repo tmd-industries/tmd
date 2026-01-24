@@ -919,8 +919,10 @@ def test_compute_or_load_oe_charges():
 
     mols = mols[:5]  # truncate so that whole test is ~ 10 seconds
 
+
     # don't expect AM1 cache yet
     for mol in mols:
+        mol.ClearProp(cache_key)
         assert not mol.HasProp(cache_key)
 
     # compute charges once
@@ -1094,7 +1096,7 @@ def test_precomputed_charge_handler():
 
 
 @pytest.mark.skip("No OE")
-def test_compute_or_load_bond_smirks_matches():
+def test_compute_or_load_oe_bond_smirks_matches():
     """Loop over test ligands, asserting that
     * verify no cache key
     * returned indices are in bounds
@@ -1111,11 +1113,12 @@ def test_compute_or_load_bond_smirks_matches():
     smirks_list = [smirks for (smirks, param) in AM1CCC_CHARGES["patterns"]]
 
     for mol in all_mols:
+        mol.ClearProp(match_cache_key)
         assert not mol.HasProp(match_cache_key)
 
     fresh_matches = []
     for mol in all_mols:
-        bond_idxs, type_idxs = nonbonded.compute_or_load_bond_smirks_matches(mol, smirks_list)
+        bond_idxs, type_idxs = nonbonded.compute_or_load_oe_bond_smirks_matches(mol, smirks_list)
         fresh_matches.append((bond_idxs, type_idxs))
         # assert indices in bounds
         assert (bond_idxs.min() >= 0) and (bond_idxs.max() < mol.GetNumAtoms())
@@ -1131,7 +1134,7 @@ def test_compute_or_load_bond_smirks_matches():
             assert tuple(bond) in bonds
     for mol in all_mols:
         assert mol.HasProp(match_cache_key)
-    cached_matches = [nonbonded.compute_or_load_bond_smirks_matches(mol, smirks_list) for mol in all_mols]
+    cached_matches = [nonbonded.compute_or_load_oe_bond_smirks_matches(mol, smirks_list) for mol in all_mols]
     for (fresh_bonds, fresh_types), (cached_bonds, cached_types) in zip(fresh_matches, cached_matches):
         np.testing.assert_array_equal(fresh_bonds, cached_bonds)
         np.testing.assert_array_equal(fresh_types, cached_types)
@@ -1417,12 +1420,11 @@ def test_env_bcc_peptide_symmetries(protein_path_and_symmetries, is_nn, env_nn_a
 @pytest.mark.skip("No OE")
 @pytest.mark.nightly(reason="Slow")
 @pytest.mark.parametrize("is_nn", [True, False])
-@pytest.mark.parametrize("protein_path", [path_to_internal_file("tmd.testsystems.data", "5dfr_solv_equil.pdb")])
-def test_environment_bcc_full_protein(protein_path, is_nn, env_nn_args):
+def test_environment_bcc_full_protein(is_nn, env_nn_args):
     """
     Test that we can compute BCCs to generate per atom charge offsets and that they can be differentiated
     """
-    with protein_path as path_to_pdb:
+    with path_to_internal_file("tmd.testsystems.data", "5dfr_solv_equil.pdb") as path_to_pdb:
         host_pdb = app.PDBFile(str(path_to_pdb))
         host_config = builders.build_protein_system(host_pdb, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
 
