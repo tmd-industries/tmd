@@ -59,7 +59,7 @@ DEFAULT_ATOM_MAPPING_KWARGS: dict[str, Any] = {
     "max_cores": 100_000,
     "enforce_core_core": True,
     "ring_matches_ring_only": False,
-    "heavy_matches_heavy_only": False,
+    "heavy_matches_heavy_only": True,
     "enforce_chiral": True,
     "disallow_planar_torsion_flips": True,
     "min_threshold": 0,
