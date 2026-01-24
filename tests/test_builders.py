@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 import jax
@@ -29,9 +30,11 @@ from tmd.ff import get_water_ff_model
 from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
 from tmd.md.builders import (
     WATER_RESIDUE_NAME,
+    build_host_config_from_omm,
     build_membrane_system,
     build_protein_system,
     build_water_system,
+    construct_default_omm_system,
     get_box_from_coords,
     load_pdb_system,
     strip_units,
@@ -91,7 +94,7 @@ def test_build_water_system_raises_on_water_ff_with_virtual_sites(water_ff):
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/spce", "amber14/opc3"])
+@pytest.mark.parametrize("water_ff", ["tip3p", "spce", "opc3", "amber14/tip3p", "amber14/spce", "amber14/opc3"])
 def test_build_water_system_different_water_ffs(water_ff):
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
     host_config = build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
@@ -433,6 +436,79 @@ def test_build_protein_system():
     host_atoms_with_moved_ligands = moved_host_config.conf.shape[0] - moved_host_config.num_water_atoms
     assert num_host_atoms == host_atoms_with_moved_ligands
     assert compute_box_volume(host_config.box) < compute_box_volume(moved_host_config.box)
+
+
+@pytest.mark.nocuda
+def test_build_host_config_from_omm():
+    """Verify that it is possible to setup a system that is not handled by the default build_protein_system
+
+    This test demonstrates setting up a system with DNA.
+    """
+    lipid_patch = Path(app.__file__).parent / "data" / "POPC.pdb"
+    with pytest.raises(ValueError, match=r"No template found for residue 1"):
+        build_protein_system(str(lipid_patch), DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
+
+    omm_pdb = app.PDBFile(str(lipid_patch))
+    host_ff = app.ForceField("amber14/lipid17.xml", f"{DEFAULT_WATER_FF}.xml")
+    modeller = app.Modeller(omm_pdb.topology, omm_pdb.positions)
+    host_config = build_host_config_from_omm(
+        modeller,
+        host_ff,
+        padding=1.0,
+        box_margin=0.1,
+    )
+    assert host_config is not None
+    # Host atoms are excluded from membrane atom detection. This is janky...
+    assert host_config.num_membrane_atoms == 0
+    assert host_config.num_water_atoms > 0
+
+    called = False
+
+    def verify_system_build_func_without_ions(ff, modeller, residue_templates):
+        nonlocal called
+        called = True
+        assert len(residue_templates) == 0, "Residues unexpectedly included"
+        assert isinstance(ff, app.ForceField)
+        assert isinstance(modeller, app.Modeller)
+        return construct_default_omm_system(ff, modeller, residue_templates)
+
+    host_config = build_host_config_from_omm(
+        modeller,
+        host_ff,
+        padding=0.5,
+        box_margin=0.1,
+        construct_system_func=verify_system_build_func_without_ions,
+    )
+    assert host_config is not None
+    assert host_config.num_membrane_atoms == 0
+    assert host_config.num_water_atoms > 0
+
+    assert called
+
+    called = False
+
+    def verify_system_build_func_with_ions(ff, modeller, residue_templates):
+        nonlocal called
+        called = True
+        # Should have residue templates thanks to the ions
+        assert len(residue_templates) > 0, "No residues included"
+        assert isinstance(ff, app.ForceField)
+        assert isinstance(modeller, app.Modeller)
+        return construct_default_omm_system(ff, modeller, residue_templates)
+
+    host_config = build_host_config_from_omm(
+        modeller,
+        host_ff,
+        padding=0.5,
+        box_margin=0.1,
+        ionic_concentration=0.15,
+        construct_system_func=verify_system_build_func_with_ions,
+    )
+    assert host_config is not None
+    assert host_config.num_membrane_atoms == 0
+    assert host_config.num_water_atoms > 0
+
+    assert called
 
 
 @pytest.mark.nocuda
