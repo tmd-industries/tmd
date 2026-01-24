@@ -868,7 +868,7 @@ class AmberAM1CCCHandler(SerializableMixIn):
         assert len(smirks) == len(params)
         assert props is None
         self.smirks = smirks
-        self.params = params
+        self.params = np.asarray(params, dtype=np.float64)
         self.props = None
 
     def partial_parameterize(self, params, mol):
@@ -895,7 +895,6 @@ class AmberAM1CCCHandler(SerializableMixIn):
         """
         am1bcc_charges = compute_or_load_amber_am1bcc_charges(mol)
         bond_idxs, type_idxs = compute_or_load_rdkit_bond_smirks_matches(mol, smirks)
-        assert len(type_idxs) > 0, "No matches found"
 
         deltas = params[type_idxs]
         q_params = apply_bond_charge_corrections(
