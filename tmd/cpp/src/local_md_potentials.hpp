@@ -133,7 +133,7 @@ private:
 
   void _truncate_potentials(cudaStream_t stream);
 
-  void _setup_free_idxs_given_reference_idxs(const RealType radius,
+  void _setup_free_idxs_given_parittions(const RealType radius,
                                              const RealType k,
                                              cudaStream_t stream);
 

@@ -88,16 +88,17 @@ void __global__ k_setup_free_indices_from_partitions(
   }
   const int idx_offset = system_idx * N;
   const int free_count = d_free_counts[system_idx];
-  // If we are freezing the reference, we need to be
+
+  // If we are freezing the reference, we need to exclude it from the free
   const int reference_idx = FREEZE_REF ? d_reference_idxs[system_idx] : 0;
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (idx < N && idx < free_count) {
     const int partition_idx = d_partitioned_idxs[idx_offset + idx];
     if (FREEZE_REF) {
-      d_free_indices[partition_idx] =
+      d_free_indices[idx_offset + partition_idx] =
           partition_idx != reference_idx ? partition_idx : N;
     } else {
-      d_free_indices[partition_idx] = partition_idx;
+      d_free_indices[idx_offset + partition_idx] = partition_idx;
     }
     idx += gridDim.x * blockDim.x;
   }
