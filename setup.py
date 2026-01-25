@@ -97,9 +97,9 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/badisa/tmd",
     author="Forrest York",
+    license="Apache-2.0",
     classifiers=[
         "Development Status :: 5 - Production/Stable",
-        "License :: OSI Approved :: Apache Software License",
         "Programming Language :: Python :: 3",
         "Environment :: GPU :: NVIDIA CUDA :: 12",
     ],
@@ -118,7 +118,7 @@ setup(
         "openmm",
     ],
     extras_require={
-        "dev": ["ruff==0.9.3", "mypy==1.14.1", "pre-commit==4.1.0", "tbump==6.11.*"],
+        "dev": ["ruff==0.9.3", "mypy==1.14.1", "pre-commit==4.1.0", "tbump==6.11.*", "build"],
         "test": [
             "pytest",
             "pytest-cov",

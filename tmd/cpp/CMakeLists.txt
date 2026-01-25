@@ -61,7 +61,8 @@ if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 	set(CMAKE_INSTALL_PREFIX ${PARENT_DIR} CACHE PATH "Default Install Path" FORCE)
 endif()
 
-list(APPEND CMAKE_INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/lib)
+list(APPEND CMAKE_INSTALL_RPATH "\$ORIGIN")
+list(APPEND CMAKE_BUILD_RPATH "\$ORIGIN")
 
 set(LIBRARY_NAME custom_ops)
 set(PYBIND_SRC_DIR pybind11)
@@ -150,7 +151,7 @@ pybind11_add_module(${LIBRARY_NAME} SHARED NO_EXTRAS
 
 include_directories(src/kernels)
 include_directories(SYSTEM ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
-# To handle inporting CCCL library headers in the host code (ie compiled by GCC), need to include CCCL directory
+# To handle importing CCCL library headers in the host code (ie compiled by GCC), need to include CCCL directory
 # See https://nvidia.github.io/cccl/cccl/3.0_migration_guide.html#cuda-toolkit-changes
 if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "13.0")
   include_directories(SYSTEM ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}/cccl/)
