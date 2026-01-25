@@ -787,14 +787,13 @@ def test_host_batch_simulation(
         assert boxes.shape == (1, 3, 3)
 
 
-@pytest.mark.memcheck
 @pytest.mark.parametrize("precision", [np.float32])
 @pytest.mark.parametrize("seed", [2025])
 @pytest.mark.parametrize(
     "num_systems",
     [
-        1,
-        2,
+        pytest.param(1, marks=pytest.mark.memcheck),
+        pytest.param(2, marks=pytest.mark.memcheck),
         4,
         16,
     ],
