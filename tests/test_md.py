@@ -792,8 +792,8 @@ def test_host_batch_simulation(
 @pytest.mark.parametrize(
     "num_systems",
     [
-        pytest.param(1, marks=pytest.mark.memcheck),
-        pytest.param(2, marks=pytest.mark.memcheck),
+        1,
+        2,
         4,
         16,
     ],
