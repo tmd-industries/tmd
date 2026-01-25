@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,6 +23,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from common import ligand_from_smiles
 from jax import flatten_util
 from openmm import app
 from rdkit import Chem
@@ -451,8 +453,7 @@ def test_am1bcc_parameterization():
 
     cache_key = nonbonded.AM1BCCELF10_CHARGE_CACHE
     am1h = nonbonded.AM1BCCHandler(smirks, params, props)
-    mol = Chem.AddHs(Chem.MolFromSmiles("C1CNCOC1F"))
-    AllChem.EmbedMolecule(mol)
+    mol = ligand_from_smiles("C1CNCOC1F")
 
     assert not mol.HasProp(cache_key)
 
@@ -469,6 +470,90 @@ def test_am1bcc_parameterization():
     # charges_adjoints = np.random.randn(*charges.shape)
 
     # assert vjp_fn(charges_adjoints) == None
+
+
+def test_amber_am1ccc_matches_am1bcc_base_charges():
+    """Verify that the base charges of AM1CCC matches that of AM1BCC for Amber.
+
+    Should only change patterns for refitting purposes
+    """
+    patterns = [
+        ["[#6A:1]-[#1:2]", 0.0],  # Aliphatic carbon single bonded to a hydrogen
+    ]
+
+    smirks = [x[0] for x in patterns]
+    params = np.array([x[1] for x in patterns])
+    props = None
+
+    amber_ccc = nonbonded.AmberAM1CCCHandler(smirks, params, props)
+    amber_bcc = nonbonded.AmberAM1BCCHandler([], [], props)
+    mol = ligand_from_smiles("C1CNCOC1")
+    # Create copy avoid caching of caches
+    mol_copy = Chem.Mol(mol)
+
+    np.testing.assert_array_equal(amber_bcc.parameterize(mol), amber_ccc.parameterize(mol_copy))
+
+
+def test_amber_am1ccc_parameterization():
+    """Test that Amber AM1CCC can correctly handle the correctable charge corrections. Useful when training charges in a forcefield"""
+    patterns = [
+        # ["[#6X4:1]-[#1:2]", 0.0],
+        ["[#6X3$(*=[#8,#16]):1]-[#6a:2]", 0.0],
+        ["[#6X3$(*=[#8,#16]):1]-[#8X1,#8X2:2]", 0.0],
+        ["[#6X3$(*=[#8,#16]):1]=[#8X1$(*=[#6X3]-[#8X2]):2]", 0.0],
+        ["[#6X3$(*=[#8,#16]):1]=[#8X1,#8X2:2]", 0.0],
+        ["[#6a:1]-[#8X1,#8X2:2]", 0.0],
+        ["[#6A:1]-[#1:2]", 0.0],  # Aliphatic carbon single bonded to a hydrogen
+        ["[#6a:1]:[#6a:2]", 0.0],
+        ["[#6a:1]:[#6a:2]", 0.0],
+        ["[#8X1,#8X2:1]-[#1:2]", 0.0],
+        ["[#16:1]-[#8:2]", 0.0],
+    ]
+
+    smirks = [x[0] for x in patterns]
+    params = np.array([x[1] for x in patterns])
+    props = None
+
+    cache_key = nonbonded.AMBER_AM1BCCELF10_CHARGE_CHACHE
+    am1h = nonbonded.AmberAM1CCCHandler(smirks, params, props)
+    mol = ligand_from_smiles("C1CNCOC1")
+
+    assert not mol.HasProp(cache_key)
+
+    charges = am1h.parameterize(mol)
+
+    assert len(charges) == mol.GetNumAtoms()
+    assert mol.HasProp(cache_key)
+
+    # Make sure if we pass the same values through static_parameterize, identical charges are returned
+    static_charges = am1h.static_parameterize(params, smirks, mol)
+    np.testing.assert_array_equal(static_charges, charges)
+
+    # Shift charge from carbon to hydrogens
+    params[5] = 1.0
+
+    new_charges = am1h.static_parameterize(params, smirks, mol)
+    # Sum of charges shouldn't change
+    np.testing.assert_allclose(np.sum(new_charges), np.sum(charges))
+
+    changed_charges = charges != new_charges
+    total_changed = np.sum(changed_charges)
+    assert total_changed > 0
+    delta = charges - new_charges
+
+    # Values should all be integers
+    np.testing.assert_array_equal(delta, np.round(delta, 0))
+
+    # Should move charge from the aliphatic carbons to the hydrogens
+    for i, charge_diff in enumerate(delta):
+        if charge_diff == -2.0:
+            atom = mol.GetAtomWithIdx(i)
+            assert atom.GetAtomicNum() == 6
+        elif charge_diff == 1.0:
+            atom = mol.GetAtomWithIdx(i)
+            assert atom.GetAtomicNum() == 1
+        else:
+            assert charge_diff == 0.0
 
 
 @pytest.mark.skip(reason="No OE")
@@ -701,7 +786,7 @@ def test_am1ccc_throws_error_on_phosphorus():
 
     # contains phosphorus
     smi = "[H]c1c(OP(=S)(OC([H])([H])C([H])([H])[H])OC([H])([H])C([H])([H])[H])nc(C([H])(C([H])([H])[H])C([H])([H])[H])nc1C([H])([H])[H]"
-    mol = Chem.AddHs(Chem.MolFromSmiles(smi))
+    mol = ligand_from_smiles(smi)
 
     with pytest.raises(RuntimeError) as e:
         _ = ff.q_handle.parameterize(mol)
@@ -718,7 +803,7 @@ def test_am1bcc_handles_phosphorus(am1bcc_ff):
 
     # contains phosphorus
     smi = "[H]c1c(OP(=S)(OC([H])([H])C([H])([H])[H])OC([H])([H])C([H])([H])[H])nc(C([H])(C([H])([H])[H])C([H])([H])[H])nc1C([H])([H])[H]"
-    mol = Chem.AddHs(Chem.MolFromSmiles(smi))
+    mol = ligand_from_smiles(smi)
 
     _ = ff.q_handle.parameterize(mol)
 
@@ -742,10 +827,7 @@ def test_am1_differences():
     assert isinstance(ccc, nonbonded.AM1CCCHandler)
 
     smi = "Clc1c(Cl)c(Cl)c(-c2c(Cl)c(Cl)c(Cl)c(Cl)c2Cl)c(Cl)c1Cl"
-    mol = Chem.MolFromSmiles(smi)
-    mol = Chem.AddHs(mol)
-    utils.set_mol_name(mol, "Debug")
-    assert AllChem.EmbedMolecule(mol) == 0
+    mol = ligand_from_smiles(smi)
 
     suppl = [mol]
     am1 = nonbonded.AM1Handler([], [], None)
@@ -839,6 +921,7 @@ def test_compute_or_load_oe_charges():
 
     # don't expect AM1 cache yet
     for mol in mols:
+        mol.ClearProp(cache_key)
         assert not mol.HasProp(cache_key)
 
     # compute charges once
@@ -885,11 +968,11 @@ def test_charging_compounds_with_non_zero_charge():
     props = None
     am1h = nonbonded.AmberAM1BCCHandler(smirks, params, props)
 
-    positive_mol = Chem.AddHs(Chem.MolFromSmiles("c1cc[nH+]cc1"))
+    positive_mol = ligand_from_smiles("c1cc[nH+]cc1")
     utils.set_mol_name(positive_mol, "positive_mol")
     AllChem.EmbedMolecule(positive_mol)
 
-    negative_mol = Chem.AddHs(Chem.MolFromSmiles("[N+](=O)([O-])[O-]"))
+    negative_mol = ligand_from_smiles("[N+](=O)([O-])[O-]")
     utils.set_mol_name(negative_mol, "negative_mol")
     AllChem.EmbedMolecule(negative_mol)
 
@@ -1012,7 +1095,7 @@ def test_precomputed_charge_handler():
 
 
 @pytest.mark.skip("No OE")
-def test_compute_or_load_bond_smirks_matches():
+def test_compute_or_load_oe_bond_smirks_matches():
     """Loop over test ligands, asserting that
     * verify no cache key
     * returned indices are in bounds
@@ -1029,11 +1112,12 @@ def test_compute_or_load_bond_smirks_matches():
     smirks_list = [smirks for (smirks, param) in AM1CCC_CHARGES["patterns"]]
 
     for mol in all_mols:
+        mol.ClearProp(match_cache_key)
         assert not mol.HasProp(match_cache_key)
 
     fresh_matches = []
     for mol in all_mols:
-        bond_idxs, type_idxs = nonbonded.compute_or_load_bond_smirks_matches(mol, smirks_list)
+        bond_idxs, type_idxs = nonbonded.compute_or_load_oe_bond_smirks_matches(mol, smirks_list)
         fresh_matches.append((bond_idxs, type_idxs))
         # assert indices in bounds
         assert (bond_idxs.min() >= 0) and (bond_idxs.max() < mol.GetNumAtoms())
@@ -1049,7 +1133,7 @@ def test_compute_or_load_bond_smirks_matches():
             assert tuple(bond) in bonds
     for mol in all_mols:
         assert mol.HasProp(match_cache_key)
-    cached_matches = [nonbonded.compute_or_load_bond_smirks_matches(mol, smirks_list) for mol in all_mols]
+    cached_matches = [nonbonded.compute_or_load_oe_bond_smirks_matches(mol, smirks_list) for mol in all_mols]
     for (fresh_bonds, fresh_types), (cached_bonds, cached_types) in zip(fresh_matches, cached_matches):
         np.testing.assert_array_equal(fresh_bonds, cached_bonds)
         np.testing.assert_array_equal(fresh_types, cached_types)
@@ -1335,12 +1419,11 @@ def test_env_bcc_peptide_symmetries(protein_path_and_symmetries, is_nn, env_nn_a
 @pytest.mark.skip("No OE")
 @pytest.mark.nightly(reason="Slow")
 @pytest.mark.parametrize("is_nn", [True, False])
-@pytest.mark.parametrize("protein_path", [path_to_internal_file("tmd.testsystems.data", "5dfr_solv_equil.pdb")])
-def test_environment_bcc_full_protein(protein_path, is_nn, env_nn_args):
+def test_environment_bcc_full_protein(is_nn, env_nn_args):
     """
     Test that we can compute BCCs to generate per atom charge offsets and that they can be differentiated
     """
-    with protein_path as path_to_pdb:
+    with path_to_internal_file("tmd.testsystems.data", "5dfr_solv_equil.pdb") as path_to_pdb:
         host_pdb = app.PDBFile(str(path_to_pdb))
         host_config = builders.build_protein_system(host_pdb, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
 
