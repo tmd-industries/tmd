@@ -153,7 +153,7 @@ setup(
         ],
     },
     project_urls={
-        "Bug Reports": "https://github.com/badisa/tmd/issues",
-        "Source": "https://github.com/badisa/tmd/",
+        "Bug Reports": "https://github.com/tmd-industries/tmd/issues",
+        "Source": "https://github.com/tmd-industries/tmd",
     },
 )
