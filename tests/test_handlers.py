@@ -919,7 +919,6 @@ def test_compute_or_load_oe_charges():
 
     mols = mols[:5]  # truncate so that whole test is ~ 10 seconds
 
-
     # don't expect AM1 cache yet
     for mol in mols:
         mol.ClearProp(cache_key)
