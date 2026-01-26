@@ -135,7 +135,7 @@ setup(
             "py.typed",
         ],
         "tmd.lib": [
-            "*.so",
+            "*.so*",
         ],
         "tmd.ff.params": [
             "*.xml",
