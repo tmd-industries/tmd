@@ -864,37 +864,39 @@ def test_local_md_batch_simulation(precision, seed, num_systems, integrator_klas
         assert False, f"Unknown integrator type {integrator_klass}"
     assert intg_impl is not None
 
-    for pot in bps:
-        assert pot.potential.to_gpu(precision).unbound_impl.num_systems() == num_systems
-        bp = pot.to_gpu(precision).bound_impl
-        ref_du_dx, _, ref_u = pot.potential.to_gpu(precision).unbound_impl.execute_dim(
-            np.stack(batch_coords),
-            [pot.params.astype(precision)] if num_systems == 1 else [p.astype(precision) for p in pot.params],
-            np.stack(batch_boxes),
-            1,
-            0,
-            1,
-        )
-        assert bp.num_systems() == num_systems
-        du_dx, u = bp.execute(np.stack(batch_coords).squeeze(), np.stack(batch_boxes).squeeze())
-        np.testing.assert_array_equal(du_dx.squeeze(), ref_du_dx.squeeze())
-        np.testing.assert_array_equal(u.squeeze(), ref_u.squeeze())
-
-        # Sanity check
-        assert np.all(np.isfinite(du_dx))
-        assert np.all(np.isfinite(u))
-        if num_systems > 1:
-            assert du_dx.shape == (num_systems, len(x0), 3)
-            assert u.shape == (num_systems,)
-            assert all([np.all(du_dx[0] == du_dx_batch) for du_dx_batch in du_dx]), (
-                f"Pot {type(pot.potential)} has force mismatch"
-            )
-            assert all([np.all(u[0] == u_batch) for u_batch in u]), f"Pot {type(pot.potential)} has energy mismatch"
-        else:
-            assert du_dx.shape == (len(x0), 3)
-            assert u.shape == (num_systems,)
-
     u_impls = [bp.to_gpu(precision).bound_impl for bp in bps]
+
+    def verify_impls_match_bps():
+        for pot, bp_impl in zip(bps, u_impls):
+            assert pot.potential.to_gpu(precision).unbound_impl.num_systems() == num_systems
+            ref_du_dx, _, ref_u = pot.potential.to_gpu(precision).unbound_impl.execute_dim(
+                np.stack(batch_coords),
+                [pot.params.astype(precision)] if num_systems == 1 else [p.astype(precision) for p in pot.params],
+                np.stack(batch_boxes),
+                1,
+                0,
+                1,
+            )
+            assert bp_impl.num_systems() == num_systems
+            du_dx, u = bp_impl.execute(np.stack(batch_coords).squeeze(), np.stack(batch_boxes).squeeze())
+            np.testing.assert_array_equal(du_dx.squeeze(), ref_du_dx.squeeze())
+            np.testing.assert_array_equal(u.squeeze(), ref_u.squeeze())
+
+            # Sanity check
+            assert np.all(np.isfinite(du_dx))
+            assert np.all(np.isfinite(u))
+            if num_systems > 1:
+                assert du_dx.shape == (num_systems, len(x0), 3)
+                assert u.shape == (num_systems,)
+                assert all([np.all(du_dx[0] == du_dx_batch) for du_dx_batch in du_dx]), (
+                    f"Pot {type(pot.potential)} has force mismatch"
+                )
+                assert all([np.all(u[0] == u_batch) for u_batch in u]), f"Pot {type(pot.potential)} has energy mismatch"
+            else:
+                assert du_dx.shape == (len(x0), 3)
+                assert u.shape == (num_systems,)
+
+    verify_impls_match_bps()
 
     ctxt = Context(
         np.stack(batch_coords).squeeze(),
@@ -928,6 +930,9 @@ def test_local_md_batch_simulation(precision, seed, num_systems, integrator_klas
     else:
         assert xs.shape == (1, len(x0), 3)
         assert boxes.shape == (1, 3, 3)
+
+    # After running local MD, potentials should be correctly reset
+    verify_impls_match_bps()
 
 
 @pytest.mark.memcheck

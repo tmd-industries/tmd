@@ -63,8 +63,8 @@ template <typename RealType>
 void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,
                                       const std::vector<int> &num_row_idxs,
                                       const std::vector<int> &num_col_idxs,
-                                      unsigned int *d_row_idxs,
-                                      unsigned int *d_col_idxs,
+                                      const unsigned int *d_row_idxs,
+                                      const unsigned int *d_col_idxs,
                                       const cudaStream_t stream) {
 
   if (num_row_idxs.size() != num_col_idxs.size()) {
@@ -92,12 +92,12 @@ void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,
 
 template void set_nonbonded_ixn_potential_idxs<float>(
     std::shared_ptr<Potential<float>> pot, const std::vector<int> &num_row_idxs,
-    const std::vector<int> &num_col_idxs, unsigned int *d_row_idxs,
-    unsigned int *d_col_idxs, const cudaStream_t stream);
+    const std::vector<int> &num_col_idxs, const unsigned int *d_row_idxs,
+    const unsigned int *d_col_idxs, const cudaStream_t stream);
 template void set_nonbonded_ixn_potential_idxs<double>(
     std::shared_ptr<Potential<double>> pot,
     const std::vector<int> &num_row_idxs, const std::vector<int> &num_col_idxs,
-    unsigned int *d_row_idxs, unsigned int *d_col_idxs,
+    const unsigned int *d_row_idxs, const unsigned int *d_col_idxs,
     const cudaStream_t stream);
 
 template <typename RealType>

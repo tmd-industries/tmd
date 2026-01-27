@@ -165,9 +165,9 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
       d_bond_params_(num_systems_ * N_ * 3),
       d_bond_system_idxs_(num_systems_ * N_),
       d_probability_buffer_(num_systems_ * N_), d_arange_(0),
-      d_flags_(num_systems_ * N_), d_partitioned_indices_(0),
-      d_reference_idxs_(num_systems_), d_free_idxs_(num_systems_ * N_),
-      d_temp_storage_buffer_(0),
+      d_nonbonded_idxs_(num_systems_ * N_), d_flags_(num_systems_ * N_),
+      d_partitioned_indices_(0), d_reference_idxs_(num_systems_),
+      d_free_idxs_(num_systems_ * N_), d_temp_storage_buffer_(0),
       idxs_sizes_(get_indices_buffer_sizes_from_bps(bps_)),
       d_scales_buffer_(get_scales_buffer_length_from_bps(bps_)),
       d_idxs_flags_(0), d_idxs_buffer_(0), d_idxs_temp_(0),
@@ -214,6 +214,11 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
   // arange buffer that is constant throughout the lifetime of this class
   k_arange<<<ceil_divide(d_arange_.length, tpb), tpb>>>(d_arange_.length,
                                                         d_arange_.data);
+  gpuErrchk(cudaPeekAtLastError());
+
+  k_segment_arange<unsigned int>
+      <<<dim3(ceil_divide(N_, tpb), num_systems_), tpb>>>(
+          num_systems_, N_, d_nonbonded_idxs_.data);
   gpuErrchk(cudaPeekAtLastError());
 
   // Ensure that we allocate enough space for all potential bonds
@@ -710,9 +715,10 @@ void LocalMDPotentials<RealType>::_truncate_nonbonded_ixn_group(
 template <typename RealType>
 void LocalMDPotentials<RealType>::_reset_nonbonded_ixn_group(
     std::shared_ptr<Potential<RealType>> pot, cudaStream_t stream) {
-  set_nonbonded_ixn_potential_idxs(pot, std::vector<int>(num_systems_, N_),
-                                   std::vector<int>(num_systems_, N_),
-                                   d_arange_.data, d_arange_.data, stream);
+  auto idxs_counts = std::vector<int>(num_systems_, N_);
+  set_nonbonded_ixn_potential_idxs(pot, idxs_counts, idxs_counts,
+                                   d_nonbonded_idxs_.data,
+                                   d_nonbonded_idxs_.data, stream);
   set_nonbonded_ixn_potential_nblist_padding(pot, initial_nblist_padding_);
 }
 

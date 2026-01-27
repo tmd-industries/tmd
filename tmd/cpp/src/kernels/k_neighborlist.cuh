@@ -110,10 +110,6 @@ void __global__ k_find_block_bounds(
     pos_x = coords[system_idx * N * 3 + atom_idx * 3 + 0];
     pos_y = coords[system_idx * N * 3 + atom_idx * 3 + 1];
     pos_z = coords[system_idx * N * 3 + atom_idx * 3 + 2];
-    // if (blockIdx.x * blockDim.x + threadIdx.x < 32) {
-    //   printf("Sys Idx %d Idx %d Atom idx %d\n", system_idx, blockIdx.x *
-    //   blockDim.x + threadIdx.x, atom_idx);
-    // }
 
     min_pos_x = pos_x;
     min_pos_y = pos_y;

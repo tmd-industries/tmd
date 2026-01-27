@@ -95,6 +95,7 @@ private:
 
   // Buffers used to setup the flagged partition
   DeviceBuffer<unsigned int> d_arange_;
+  DeviceBuffer<unsigned int> d_nonbonded_idxs_;
   DeviceBuffer<char>
       d_flags_; // 1 indicates a free atom, 0 indicates a frozen atom
   // The first partition will be the free indices, the rest the frozen.
