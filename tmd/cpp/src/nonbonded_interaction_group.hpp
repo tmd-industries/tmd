@@ -83,8 +83,8 @@ private:
   int *d_system_idxs_;     // [num_systems, NONBONDED_KERNEL_BLOCKS]
   RealType *d_nblist_x_;   // coords which were used to compute the nblist
   RealType *d_nblist_box_; // box which was used to rebuild the nblist
-  int *m_rebuild_nblist_;  // mapped, zero-copy memory
-  int *d_rebuild_nblist_;  // device version
+  // int *m_rebuild_nblist_;  // mapped, zero-copy memory
+  int *d_rebuild_nblist_; // device version
 
   unsigned int *d_perm_; // hilbert curve permutation
 

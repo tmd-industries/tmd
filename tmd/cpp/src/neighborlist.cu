@@ -117,8 +117,11 @@ void Neighborlist<RealType>::compute_block_bounds_host(
   d_coords.copy_from(h_coords);
   d_box.copy_from(h_box);
 
-  this->compute_block_bounds_device(N, D, d_coords.data, d_box.data,
-                                    static_cast<cudaStream_t>(0));
+  DeviceBuffer<int> d_rebuild_flag(1);
+  gpuErrchk(cudaMemset(d_rebuild_flag.data, 1, d_rebuild_flag.size()));
+
+  this->compute_block_bounds_device(N, D, d_rebuild_flag.data, d_coords.data,
+                                    d_box.data, static_cast<cudaStream_t>(0));
   gpuErrchk(cudaDeviceSynchronize());
 
   gpuErrchk(cudaMemcpy(h_bb_ctrs, d_column_block_bounds_ctr_,
@@ -161,8 +164,11 @@ Neighborlist<RealType>::get_nblist_host(const int num_systems, const int N,
   d_coords.copy_from(h_coords);
   d_box.copy_from(h_box);
 
-  this->build_nblist_device(N, d_coords.data, d_box.data, cutoff, padding,
-                            static_cast<cudaStream_t>(0));
+  DeviceBuffer<int> d_rebuild_flag(1);
+  gpuErrchk(cudaMemset(d_rebuild_flag.data, 1, d_rebuild_flag.size()));
+
+  this->build_nblist_device(N, d_rebuild_flag.data, d_coords.data, d_box.data,
+                            cutoff, padding, static_cast<cudaStream_t>(0));
 
   gpuErrchk(cudaDeviceSynchronize());
   const int row_blocks = this->num_row_blocks();
@@ -208,11 +214,13 @@ Neighborlist<RealType>::get_nblist_host(const int num_systems, const int N,
 
 template <typename RealType>
 void Neighborlist<RealType>::build_nblist_device(
-    const int N, const RealType *d_coords, const RealType *d_box,
-    const RealType cutoff, const RealType padding, const cudaStream_t stream) {
+    const int N, const int *d_rebuild_flag, const RealType *d_coords,
+    const RealType *d_box, const RealType cutoff, const RealType padding,
+    const cudaStream_t stream) {
 
   const int D = 3;
-  this->compute_block_bounds_device(N, D, d_coords, d_box, stream);
+  this->compute_block_bounds_device(N, D, d_rebuild_flag, d_coords, d_box,
+                                    stream);
   const int tpb = TILE_SIZE;
   const int row_blocks = ceil_divide(
       *std::max_element(row_idx_counts_.begin(), row_idx_counts_.end()),
@@ -223,16 +231,16 @@ void Neighborlist<RealType>::build_nblist_device(
 
   if (this->compute_upper_triangular()) {
     k_find_blocks_with_ixns<RealType, true><<<dimGrid, tpb, 0, stream>>>(
-        num_systems_, N_, this->max_ixn_count(), d_column_idx_counts_,
-        d_row_idx_counts_, d_column_idxs_, d_row_idxs_,
+        num_systems_, N_, this->max_ixn_count(), d_rebuild_flag,
+        d_column_idx_counts_, d_row_idx_counts_, d_column_idxs_, d_row_idxs_,
         d_column_block_bounds_ctr_, d_column_block_bounds_ext_,
         d_column_block_bounds_ctr_, d_column_block_bounds_ext_, d_coords, d_box,
         d_ixn_count_, d_ixn_tiles_, d_ixn_atoms_, d_trim_atoms_, cutoff,
         padding);
   } else {
     k_find_blocks_with_ixns<RealType, false><<<dimGrid, tpb, 0, stream>>>(
-        num_systems_, N_, this->max_ixn_count(), d_column_idx_counts_,
-        d_row_idx_counts_, d_column_idxs_, d_row_idxs_,
+        num_systems_, N_, this->max_ixn_count(), d_rebuild_flag,
+        d_column_idx_counts_, d_row_idx_counts_, d_column_idxs_, d_row_idxs_,
         d_column_block_bounds_ctr_, d_column_block_bounds_ext_,
         d_row_block_bounds_ctr_, d_row_block_bounds_ext_, d_coords, d_box,
         d_ixn_count_, d_ixn_tiles_, d_ixn_atoms_, d_trim_atoms_, cutoff,
@@ -243,17 +251,19 @@ void Neighborlist<RealType>::build_nblist_device(
   dim3 compactGrid(row_blocks, num_systems_, 1);
 
   k_compact_trim_atoms<<<compactGrid, tpb, 0, stream>>>(
-      num_systems_, N_, this->max_ixn_count(), Y, d_row_idx_counts_,
-      d_trim_atoms_, d_ixn_count_, d_ixn_tiles_, d_ixn_atoms_);
+      num_systems_, N_, this->max_ixn_count(), Y, d_rebuild_flag,
+      d_row_idx_counts_, d_trim_atoms_, d_ixn_count_, d_ixn_tiles_,
+      d_ixn_atoms_);
   gpuErrchk(cudaPeekAtLastError());
 }
 
 template <typename RealType>
 void Neighborlist<RealType>::compute_block_bounds_device(
-    const int N,              // Number of atoms
-    const int D,              // Box dimensions
-    const RealType *d_coords, // [num_systems*N*3]
-    const RealType *d_box,    // [num_systems*D*3]
+    const int N,               // Number of atoms
+    const int D,               // Box dimensions
+    const int *d_rebuild_flag, // [1]
+    const RealType *d_coords,  // [num_systems*N*3]
+    const RealType *d_box,     // [num_systems*D*3]
     const cudaStream_t stream) {
 
   if (D != 3) {
@@ -266,8 +276,9 @@ void Neighborlist<RealType>::compute_block_bounds_device(
   dim3 col_dim_grid(ceil_divide(max_col_idxs, tpb), num_systems_, 1);
 
   k_find_block_bounds<RealType><<<col_dim_grid, tpb, 0, stream>>>(
-      num_systems_, N_, d_column_idx_counts_, d_column_idxs_, d_coords, d_box,
-      d_column_block_bounds_ctr_, d_column_block_bounds_ext_, d_ixn_count_);
+      num_systems_, N_, d_rebuild_flag, d_column_idx_counts_, d_column_idxs_,
+      d_coords, d_box, d_column_block_bounds_ctr_, d_column_block_bounds_ext_,
+      d_ixn_count_);
   gpuErrchk(cudaPeekAtLastError());
   // In the case of upper triangle of the matrix, the column and row indices are
   // the same, so only compute block ixns for both when they are different
@@ -285,8 +296,9 @@ void Neighborlist<RealType>::compute_block_bounds_device(
     dim3 row_dim_grid(ceil_divide(max_row_idxs, tpb), num_systems_, 1);
 
     k_find_block_bounds<RealType><<<row_dim_grid, tpb, 0, stream>>>(
-        num_systems_, N_, d_row_idx_counts_, d_row_idxs_, d_coords, d_box,
-        d_row_block_bounds_ctr_, d_row_block_bounds_ext_, d_ixn_count_);
+        num_systems_, N_, d_rebuild_flag, d_row_idx_counts_, d_row_idxs_,
+        d_coords, d_box, d_row_block_bounds_ctr_, d_row_block_bounds_ext_,
+        d_ixn_count_);
     gpuErrchk(cudaPeekAtLastError());
   }
 };
