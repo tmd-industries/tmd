@@ -139,8 +139,8 @@ public:
 
   void set_atom_idxs_device(const std::vector<int> &row_counts,
                             const std::vector<int> &col_counts,
-                            unsigned int *d_row_idxs,
-                            unsigned int *d_column_idxs,
+                            const unsigned int *d_row_idxs,
+                            const unsigned int *d_column_idxs,
                             const cudaStream_t stream);
 
   void set_atom_idxs(const std::vector<std::vector<int>> &row_atom_idxs,
