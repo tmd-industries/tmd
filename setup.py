@@ -118,7 +118,7 @@ setup(
         "openmm",
     ],
     extras_require={
-        "dev": ["ruff==0.9.3", "mypy==1.14.1", "pre-commit==4.1.0", "tbump==6.11.*", "build"],
+        "dev": ["ruff==0.9.3", "mypy==1.14.1", "pre-commit==4.1.0", "tbump==6.11.*"],
         "test": [
             "pytest",
             "pytest-cov",

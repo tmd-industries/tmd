@@ -58,7 +58,7 @@ In some cases it may be desirable to build a wheel of TMD for installation in en
 cp -P /usr/local/cuda/lib64/libcudart.so* tmd/lib/
 cp -P /usr/local/cuda/lib64/libcurand.so* tmd/lib/
 # Write out a wheel to the dist/ directory
-python -m build --wheel
+python setup.py bdist_wheel
 ```
 
 ### Running Tests
