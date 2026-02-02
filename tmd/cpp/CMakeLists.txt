@@ -35,7 +35,7 @@ else()
 endif()
 
 
-string(APPEND CMAKE_CXX_FLAGS " ${COMMON_COMPILER_FLAGS} -Werror -Wdouble-promotion")
+string(APPEND CMAKE_CXX_FLAGS " ${COMMON_COMPILER_FLAGS} -Werror -Wdouble-promotion -Wno-error=double-promotion -Wno-error=template-id-cdtor")
 string(APPEND CMAKE_CUDA_FLAGS " ${COMMON_COMPILER_FLAGS}")
 
 string(APPEND CMAKE_CUDA_FLAGS
