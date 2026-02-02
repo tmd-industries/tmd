@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,9 +30,9 @@ import pytest
 from common import ARTIFACT_DIR_NAME, hash_file, ligand_from_smiles, temporary_working_dir
 from rdkit import Chem
 
-from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF
+from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF, KCAL_TO_KJ
 from tmd.fe.free_energy import assert_deep_eq
-from tmd.fe.utils import read_sdf, read_sdf_mols_by_name
+from tmd.fe.utils import get_mol_experimental_value, read_sdf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
@@ -125,6 +125,8 @@ def test_run_rbfe_graph_local(
 
         writer.close()
 
+        mols_by_name = read_sdf_mols_by_name(temp_mols.name)
+
         def verify_run(edges: Sequence[dict], output_dir: Path):
             assert output_dir.is_dir()
             leg_names = ["vacuum", "solvent", "complex"]
@@ -133,11 +135,11 @@ def test_run_rbfe_graph_local(
                 mol_b = edge["mol_b"]
                 mol_dir = f"{mol_a}_{mol_b}"
                 edge_dir = output_dir / mol_dir
-                mols_by_name = read_sdf_mols_by_name(edge_dir / "mols.sdf")
+                pair_by_name = read_sdf_mols_by_name(edge_dir / "mols.sdf")
 
-                assert len(mols_by_name) == 2
-                assert mol_a in mols_by_name
-                assert mol_b in mols_by_name
+                assert len(pair_by_name) == 2
+                assert mol_a in pair_by_name
+                assert mol_b in pair_by_name
                 assert (edge_dir / "md_params.pkl").is_file()
                 assert (edge_dir / "atom_mapping.svg").is_file()
                 assert (edge_dir / "core.pkl").is_file()
@@ -185,6 +187,7 @@ def test_run_rbfe_graph_local(
                     assert all(isinstance(overlap, float) for overlap in results["overlaps"])
             assert (output_dir / "dg_results.csv").is_file()
             dg_rows = list(DictReader(open(output_dir / "dg_results.csv")))
+            assert len(dg_rows) == num_mols
             expected_dg_keys = {"mol", "smiles", "pred_dg (kcal/mol)", "pred_dg_err (kcal/mol)", "exp_dg (kcal/mol)"}
             for row in dg_rows:
                 assert set(row.keys()) == expected_dg_keys
@@ -193,6 +196,12 @@ def test_run_rbfe_graph_local(
                 exp_dg = row["exp_dg (kcal/mol)"]
                 if exp_dg != "":
                     assert np.isfinite(float(exp_dg))
+                    mol = mols_by_name[row["mol"]]
+                    ref_exp = (
+                        get_mol_experimental_value(mol, config["experimental_field"], config["experimental_units"])
+                        / KCAL_TO_KJ
+                    )
+                    np.testing.assert_almost_equal(float(exp_dg), ref_exp)
 
             assert (output_dir / "ddg_results.csv").is_file()
             ddg_rows = list(DictReader(open(output_dir / "ddg_results.csv")))
