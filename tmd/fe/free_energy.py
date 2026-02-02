@@ -1946,12 +1946,12 @@ def run_sims_hrex_batched(
     )
 
     for current_frame in range(md_params.n_frames):
-        for i, bp in enumerate(context_bps):
-            params = np.stack(
-                [initial_states[replica_idx].potentials[i].params for replica_idx in hrex.replica_idx_by_state],
-                dtype=np.float32,
-            )
-            bp.set_params(params)
+        # for i, bp in enumerate(context_bps):
+        #     params = np.stack(
+        #         [initial_states[replica_idx].potentials[i].params for replica_idx in hrex.replica_idx_by_state],
+        #         dtype=np.float32,
+        #     )
+        #     bp.set_params(params)
 
         water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(initial_states))]
 
