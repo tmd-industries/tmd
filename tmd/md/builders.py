@@ -583,19 +583,6 @@ def build_protein_system(
         raise TypeError("host_pdbfile must be a string or an openmm PDBFile object")
 
     modeller = app.Modeller(host_pdb.topology, host_pdb.positions)
-    host_coords = strip_units(host_pdb.positions)
-
-    water_residues_in_pdb = [residue for residue in host_pdb.topology.residues() if residue.name == WATER_RESIDUE_NAME]
-    num_host_atoms = host_coords.shape[0]
-    if len(water_residues_in_pdb) > 0:
-        host_water_atoms = len(water_residues_in_pdb) * 3
-        # Only consider non-water atoms as the host, does count excipients as the host
-        num_host_atoms = num_host_atoms - host_water_atoms
-        water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_residues_in_pdb])
-        expected_water_indices = np.arange(host_water_atoms) + num_host_atoms
-        np.testing.assert_equal(
-            water_indices, expected_water_indices, err_msg="Waters in PDB must be at the end of the file"
-        )
 
     return build_host_config_from_omm(
         modeller,
@@ -663,19 +650,6 @@ def build_membrane_system(
         raise TypeError("host_pdbfile must be a string or an openmm PDBFile object")
 
     modeller = app.Modeller(host_pdb.topology, host_pdb.positions)
-    host_coords = strip_units(host_pdb.positions)
-
-    water_residues_in_pdb = [residue for residue in host_pdb.topology.residues() if residue.name == WATER_RESIDUE_NAME]
-    num_host_atoms = host_coords.shape[0]
-    if len(water_residues_in_pdb) > 0:
-        host_water_atoms = len(water_residues_in_pdb) * 3
-        # Only consider non-water atoms as the host, does count excipients as the host
-        num_host_atoms = num_host_atoms - host_water_atoms
-        water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_residues_in_pdb])
-        expected_water_indices = np.arange(host_water_atoms) + num_host_atoms
-        np.testing.assert_equal(
-            water_indices, expected_water_indices, err_msg="Waters in PDB must be at the end of the file"
-        )
 
     return build_host_config_from_omm(
         modeller,

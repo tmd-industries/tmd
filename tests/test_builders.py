@@ -362,7 +362,7 @@ def test_deserialize_protein_system_1_4_exclusions():
 @pytest.mark.nocuda
 def test_build_protein_system_waters_before_protein():
     num_waters = 100
-    # Construct a PDB file with the waters before the protein, should raise an exception
+    # Construct a PDB file with the waters before the protein, to verify that the code correctly handles it.
     with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = app.PDBFile(str(pdb_path))
 
@@ -380,8 +380,7 @@ def test_build_protein_system_waters_before_protein():
         with open(temp.name, "w") as ofs:
             app.PDBFile.writeFile(modeller.getTopology(), modeller.getPositions(), file=ofs)
 
-        with pytest.raises(AssertionError, match="Waters in PDB must be at the end of the file"):
-            build_protein_system(temp.name, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
+        build_protein_system(temp.name, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
 
 
 def test_build_protein_system():
