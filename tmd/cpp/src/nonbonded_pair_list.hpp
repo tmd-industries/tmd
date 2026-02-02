@@ -87,9 +87,14 @@ public:
   void set_scales_device(const int num_idxs, const RealType *d_scales,
                          cudaStream_t stream);
 
+  void set_system_idxs_device(const int num_idxs, const int *d_system_idxs,
+                              cudaStream_t stream);
+
   int get_num_idxs() const;
 
   int *get_idxs_device();
+
+  int *get_system_idxs_device();
 
   RealType *get_scales_device();
 

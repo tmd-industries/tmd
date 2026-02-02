@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -154,7 +154,7 @@ void Context<RealType>::setup_local_md(RealType temperature,
     return;
   }
   this->local_md_pots_.reset(new LocalMDPotentials<RealType>(
-      N_, bps_, nonbonded_pots_, freeze_reference, temperature,
+      num_systems_, N_, bps_, nonbonded_pots_, freeze_reference, temperature,
       nblist_padding));
 }
 
@@ -231,8 +231,8 @@ Context<RealType>::truncate_potentials_local_selection(
 
   this->_ensure_local_md_intialized();
 
-  local_md_pots_->setup_from_selection(reference_idx, selection_idxs, radius, k,
-                                       stream_);
+  local_md_pots_->setup_from_selection(std::vector<int>({reference_idx}),
+                                       selection_idxs, radius, k, stream_);
 
   gpuErrchk(cudaStreamSynchronize(stream_));
 
@@ -258,8 +258,8 @@ void Context<RealType>::multiple_steps_local_selection(
 
   try {
 
-    local_md_pots_->setup_from_selection(reference_idx, selection_idxs, radius,
-                                         k, stream_);
+    local_md_pots_->setup_from_selection(std::vector<int>({reference_idx}),
+                                         selection_idxs, radius, k, stream_);
 
     unsigned int *d_free_idxs = local_md_pots_->get_free_idxs();
 

@@ -136,12 +136,28 @@ void HarmonicAngle<RealType>::set_idxs_device(const int num_idxs,
   cur_num_idxs_ = num_idxs;
 }
 
+template <typename RealType>
+void HarmonicAngle<RealType>::set_system_idxs_device(
+    const int num_idxs, const int *d_new_system_idxs, cudaStream_t stream) {
+  if (cur_num_idxs_ != num_idxs) {
+    throw std::runtime_error("set_system_idxs_device(): num idxs must match");
+  }
+  gpuErrchk(cudaMemcpyAsync(d_system_idxs_, d_new_system_idxs,
+                            num_idxs * sizeof(*d_system_idxs_),
+                            cudaMemcpyDeviceToDevice, stream));
+}
+
 template <typename RealType> int HarmonicAngle<RealType>::get_num_idxs() const {
   return cur_num_idxs_;
 }
 
 template <typename RealType> int *HarmonicAngle<RealType>::get_idxs_device() {
   return d_angle_idxs_;
+}
+
+template <typename RealType>
+int *HarmonicAngle<RealType>::get_system_idxs_device() {
+  return d_system_idxs_;
 }
 
 template <typename RealType>

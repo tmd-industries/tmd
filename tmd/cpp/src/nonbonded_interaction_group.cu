@@ -638,7 +638,7 @@ std::vector<int> NonbondedInteractionGroup<RealType>::get_col_idxs() const {
 template <typename RealType>
 void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
     const std::vector<int> &row_counts, const std::vector<int> &col_counts,
-    unsigned int *d_in_row_idxs, unsigned int *d_in_column_idxs,
+    const unsigned int *d_in_row_idxs, const unsigned int *d_in_column_idxs,
     const cudaStream_t stream) {
 
   if (row_counts.size() != num_systems_ || col_counts.size() != num_systems_) {
@@ -669,10 +669,10 @@ void NonbondedInteractionGroup<RealType>::set_atom_idxs_device(
 
     // TBD: Figure out a way to handle this more gracefully
     gpuErrchk(cudaMemcpyAsync(d_row_atom_idxs_counts_, &row_counts[0],
-                              num_systems_ * sizeof(int),
+                              num_systems_ * sizeof(*d_row_atom_idxs_counts_),
                               cudaMemcpyHostToDevice, stream));
     gpuErrchk(cudaMemcpyAsync(d_col_atom_idxs_counts_, &col_counts[0],
-                              num_systems_ * sizeof(int),
+                              num_systems_ * sizeof(*d_col_atom_idxs_counts_),
                               cudaMemcpyHostToDevice, stream));
 
     // Resize the nblist

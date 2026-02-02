@@ -67,9 +67,13 @@ public:
   void set_idxs_device(const int num_idxs, const int *d_idxs,
                        cudaStream_t stream);
 
+  void set_system_idxs_device(const int num_idxs, const int *d_system_idxs,
+                              cudaStream_t stream);
+
   int get_num_idxs() const;
 
   int *get_idxs_device();
+  int *get_system_idxs_device();
 
   std::vector<int> get_idxs_host() const;
 };
