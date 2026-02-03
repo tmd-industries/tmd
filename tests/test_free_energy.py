@@ -514,7 +514,7 @@ def test_get_water_sampler_params_complex():
     np.testing.assert_array_equal(orig_prot_nb_params, water_sampler_nb_params[state.protein_idxs])
 
 
-def test_get_context_with_non_contigious_waters():
+def test_get_context_with_non_contiguous_waters():
     """Verify that the build_protein_system ensures waters are contiguous and that the water sampler can be
     configured successfully."""
     cdk8_system = Path(__file__).parent / "data" / "cdk8_incorrectly_ordered_waters.pdb"
@@ -537,7 +537,6 @@ def test_get_context_with_non_contigious_waters():
     # Water sampling parameters required
     md_params = MDParams(10, 0, 10, seed, water_sampling_params=WaterSamplingParams())
 
-    # original params
     state = setup_initial_state(st, lamb, host_config, DEFAULT_TEMP, 2026, False)
     ctxt = get_context(state, md_params=md_params)
     movers = ctxt.get_movers()
