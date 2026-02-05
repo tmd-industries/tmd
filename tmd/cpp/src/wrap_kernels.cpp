@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@
 #include "fanout_summed_potential.hpp"
 #include "fixed_point.hpp"
 #include "flat_bottom_bond.hpp"
+#include "flat_bottom_restraint.hpp"
 #include "harmonic_angle.hpp"
 #include "harmonic_bond.hpp"
 #include "langevin_integrator.hpp"
@@ -2064,6 +2065,22 @@ void declare_flat_bottom_bond(py::module &m, const char *typestr) {
 }
 
 template <typename RealType>
+void declare_flat_bottom_restraint(py::module &m, const char *typestr) {
+  using Class = FlatBottomRestraint<RealType>;
+  std::string pyclass_name = std::string("FlatBottomRestraint_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def(py::init([](const py::array_t<int, py::array::c_style> &atom_idxs,
+                       const py::array_t<RealType, py::array::c_style>
+                           &restraint_coords) {
+             return new Class(py_array_to_vector(atom_idxs),
+                              py_array_to_vector(restraint_coords));
+           }),
+           py::arg("atom_idxs"), py::arg("restraint_coords"))
+      .def("get_num_atoms", &Class::num_atoms);
+}
+
+template <typename RealType>
 void declare_log_flat_bottom_bond(py::module &m, const char *typestr) {
 
   using Class = LogFlatBottomBond<RealType>;
@@ -2944,6 +2961,9 @@ PYBIND11_MODULE(custom_ops, m) {
 
   declare_flat_bottom_bond<double>(m, "f64");
   declare_flat_bottom_bond<float>(m, "f32");
+
+  declare_flat_bottom_restraint<double>(m, "f64");
+  declare_flat_bottom_restraint<float>(m, "f32");
 
   declare_log_flat_bottom_bond<double>(m, "f64");
   declare_log_flat_bottom_bond<float>(m, "f32");
