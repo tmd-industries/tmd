@@ -22,6 +22,7 @@ from tmd.potentials import (
     ChiralAtomRestraint,
     ChiralBondRestraint,
     FlatBottomBond,
+    FlatBottomRestraint,
     HarmonicAngle,
     HarmonicBond,
     LogFlatBottomBond,
@@ -202,6 +203,43 @@ def test_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     np.testing.assert_array_equal(test_u, test_u_rev)
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
+
+
+@pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
+def test_flat_bottom_restraint(precision, rtol, n_particles=64, n_atoms=35, dim=3):
+    """Randomly connect pairs of particles, then validate the resulting FlatBottomRestraint force"""
+    np.random.seed(2022)
+
+    box = np.eye(3) * 100
+    x = GradientTest().get_random_coords(n_particles, dim)
+
+    atom_idxs = np.arange(n_particles)
+
+    k = np.random.rand(n_atoms) * 1000  # k large
+    r_min = np.random.rand(n_atoms)  # r_min non-negative
+    r_max = r_min + np.random.rand(n_atoms)  # r_max >= r_min
+    params = np.array([k, r_min, r_max]).astype(np.float64).T
+    assert params.shape == (n_atoms, 3)
+
+    if n_atoms > 0:
+        atom_idxs = np.random.choice(np.arange(n_particles, dtype=np.int32), size=n_atoms)
+    else:
+        atom_idxs = np.zeros((0, 2), dtype=np.int32)
+
+    # Shift half of the bond indices by a single box dimension to ensure testing PBCs
+    x[atom_idxs[: n_atoms // 2]] += np.diagonal(box)
+
+    restrained_coords = GradientTest().get_random_coords(n_atoms, dim)
+
+    potential = FlatBottomRestraint(atom_idxs, restrained_coords.astype(precision))
+    test_impl = potential.to_gpu(precision)
+
+    x = x.astype(precision)
+    params = params.astype(precision)
+    box = box.astype(precision)
+
+    GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
+    GradientTest().assert_differentiable_interface_consistency(x, params, box, test_impl)
 
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
