@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ endif()
 
 
 string(APPEND CMAKE_CXX_FLAGS "${COMMON_COMPILER_FLAGS} -Werror -Wdouble-promotion")
-string(APPEND CMAKE_CUDA_FLAGS "${COMMON_COMPILER_FLAGS}")
+string(APPEND CMAKE_CUDA_FLAGS ${COMMON_COMPILER_FLAGS})
 
 string(APPEND CMAKE_CUDA_FLAGS
   " -lineinfo"  # Disabling lineinfo reduces .so file by ~40MB
@@ -60,6 +60,9 @@ if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 	get_filename_component(PARENT_DIR ${CMAKE_CURRENT_SOURCE_DIR} DIRECTORY)
 	set(CMAKE_INSTALL_PREFIX ${PARENT_DIR} CACHE PATH "Default Install Path" FORCE)
 endif()
+
+list(APPEND CMAKE_INSTALL_RPATH "\$ORIGIN")
+list(APPEND CMAKE_BUILD_RPATH "\$ORIGIN")
 
 set(LIBRARY_NAME custom_ops)
 set(PYBIND_SRC_DIR pybind11)
@@ -152,7 +155,7 @@ pybind11_add_module(${LIBRARY_NAME} SHARED NO_EXTRAS
 
 include_directories(src/kernels)
 include_directories(SYSTEM ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
-# To handle inporting CCCL library headers in the host code (ie compiled by GCC), need to include CCCL directory
+# To handle importing CCCL library headers in the host code (ie compiled by GCC), need to include CCCL directory
 # See https://nvidia.github.io/cccl/cccl/3.0_migration_guide.html#cuda-toolkit-changes
 if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "13.0")
   include_directories(SYSTEM ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}/cccl/)
@@ -165,7 +168,7 @@ if (NOT CUDA_ARCH)
   set(CUDA_ARCH "native")
 endif()
 message("Cuda Arch: " ${CUDA_ARCH})
-set_property(TARGET ${LIBRARY_NAME} PROPERTY CUDA_ARCHITECTURES "${CUDA_ARCH}")
+set_property(TARGET ${LIBRARY_NAME} PROPERTY CUDA_ARCHITECTURES ${CUDA_ARCH})
 unset(CUDA_ARCH CACHE)
 
 target_link_libraries(${LIBRARY_NAME} PRIVATE -lcurand)
