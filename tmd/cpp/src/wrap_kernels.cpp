@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@
 #include "fanout_summed_potential.hpp"
 #include "fixed_point.hpp"
 #include "flat_bottom_bond.hpp"
+#include "flat_bottom_restraint.hpp"
 #include "harmonic_angle.hpp"
 #include "harmonic_bond.hpp"
 #include "langevin_integrator.hpp"
@@ -2471,6 +2472,70 @@ void declare_flat_bottom_bond(py::module &m, const char *typestr) {
 }
 
 template <typename RealType>
+void declare_flat_bottom_restraint(py::module &m, const char *typestr) {
+  using Class = FlatBottomRestraint<RealType>;
+  std::string pyclass_name = std::string("FlatBottomRestraint_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &atom_idxs,
+                       const py::array_t<RealType, py::array::c_style>
+                           &restraint_coords) {
+             std::vector<int> system_idxs(atom_idxs.shape(0), 0);
+             return new Class(1, num_atoms, py_array_to_vector(atom_idxs),
+                              py_array_to_vector(restraint_coords),
+                              system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("atom_idxs"),
+           py::arg("restraint_coords"))
+      .def(py::init(
+               [](const int num_atoms,
+                  const std::vector<py::array_t<int, py::array::c_style>>
+                      &atom_idxs,
+                  const std::vector<py::array_t<RealType, py::array::c_style>>
+                      &restraint_coords) {
+                 const int num_systems = atom_idxs.size();
+                 std::vector<int> combined_atom_vec;
+                 std::vector<RealType> combined_coords;
+                 std::vector<int> atom_system_indices;
+                 int atom_offset = 0;
+                 int coord_offset = 0;
+                 for (int i = 0; i < num_systems; i++) {
+                   const auto atom_arr_size = atom_idxs[i].size();
+                   const auto coord_arr_size = restraint_coords[i].size();
+                   if (restraint_coords[i].shape(0) != atom_arr_size) {
+                     throw std::runtime_error(
+                         "Restraint coords and atom indices must be same size, "
+                         "mismatch in batch " +
+                         std::to_string(i));
+                   }
+                   combined_atom_vec.resize(combined_atom_vec.size() +
+                                            atom_arr_size);
+                   combined_coords.resize(combined_coords.size() +
+                                          restraint_coords[i].size());
+                   std::memcpy(combined_atom_vec.data() + atom_offset,
+                               atom_idxs[i].data(),
+                               atom_arr_size * sizeof(int));
+                   std::memcpy(combined_coords.data() + coord_offset,
+                               restraint_coords[i].data(),
+                               coord_arr_size * sizeof(RealType));
+                   atom_offset += atom_arr_size;
+                   coord_offset += coord_arr_size;
+
+                   atom_system_indices.resize(atom_system_indices.size() +
+                                              atom_idxs[i].size());
+                   std::fill(atom_system_indices.end() - atom_arr_size,
+                             atom_system_indices.end(), i);
+                 }
+                 return new Class(num_systems, num_atoms, combined_atom_vec,
+                                  combined_coords, atom_system_indices);
+               }),
+           py::arg("num_atoms"), py::arg("atom_idxs"),
+           py::arg("restraint_coords"))
+      .def("get_num_atoms", &Class::num_atoms);
+}
+
+template <typename RealType>
 void declare_log_flat_bottom_bond(py::module &m, const char *typestr) {
 
   using Class = LogFlatBottomBond<RealType>;
@@ -3715,6 +3780,9 @@ PYBIND11_MODULE(custom_ops, m) {
 
   declare_flat_bottom_bond<double>(m, "f64");
   declare_flat_bottom_bond<float>(m, "f32");
+
+  declare_flat_bottom_restraint<double>(m, "f64");
+  declare_flat_bottom_restraint<float>(m, "f32");
 
   declare_log_flat_bottom_bond<double>(m, "f64");
   declare_log_flat_bottom_bond<float>(m, "f32");

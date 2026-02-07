@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -104,7 +104,28 @@ class FlatBottomBond(_BondBase):
 
 
 @dataclass
+class FlatBottomRestraint(_BondBase):
+    idxs: NDArray[np.int32]
+    restraint_coords: NDArray
+
+    def __call__(self, conf: Conf, params: Params, box: Optional[Box]) -> float | Array:
+        return bonded.flat_bottom_restraint(conf, params, box, self.idxs, self.restraint_coords)
+
+    def combine(self, other_pot):
+        if not isinstance(other_pot, self.__class__):
+            raise TypeError("Other potential does not match type")
+        if self.num_atoms != other_pot.num_atoms:
+            raise ValueError(f"Potentials must have same number of atoms: {self.num_atoms} != {other_pot.num_atoms}")
+        return self.__class__(
+            self.num_atoms,
+            combine_pot_params(self.idxs, other_pot.idxs),
+            combine_pot_params(self.restraint_coords, other_pot.restraint_coords),
+        )
+
+
+@dataclass
 class LogFlatBottomBond(_BondBase):
+    idxs: NDArray[np.int32]
     beta: float
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
