@@ -1636,7 +1636,7 @@ def run_sims_hrex(
     if md_params.water_sampling_params is not None:
         water_params_by_state = np.array([get_water_sampler_params(initial_state) for initial_state in initial_states])
 
-    state_idxs = [StateIdx(i) for i, _ in enumerate(initial_states)]
+    state_idxs = [StateIdx(i) for i in range(len(initial_states))]
     neighbor_pairs = list(zip(state_idxs, state_idxs[1:]))
 
     if len(initial_states) == 2:
@@ -1892,6 +1892,7 @@ def run_sims_hrex_batched(
     bound_potentials = jank_context.get_potentials()
     del jank_context
     assert len(bound_potentials) == len(initial_states[0].potentials)
+    assert len(context_bps) == len(bound_potentials)
     temperature = initial_states[0].integrator.temperature
     ligand_idxs = initial_states[0].ligand_idxs
 
@@ -1908,7 +1909,7 @@ def run_sims_hrex_batched(
     if md_params.water_sampling_params is not None:
         water_params_by_state = np.array([get_water_sampler_params(initial_state) for initial_state in initial_states])
 
-    state_idxs = [StateIdx(i) for i, _ in enumerate(initial_states)]
+    state_idxs = [StateIdx(i) for i in range(len(initial_states))]
     neighbor_pairs = list(zip(state_idxs, state_idxs[1:]))
 
     if len(initial_states) == 2:
@@ -1944,31 +1945,23 @@ def run_sims_hrex_batched(
     iterated_u_kln = np.full(
         (len(bound_potentials), len(initial_states), len(initial_states), md_params.n_frames), np.inf, dtype=np.float32
     )
+    water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(initial_states))]
 
     for current_frame in range(md_params.n_frames):
-        # for i, bp in enumerate(context_bps):
-        #     params = np.stack(
-        #         [initial_states[replica_idx].potentials[i].params for replica_idx in hrex.replica_idx_by_state],
-        #         dtype=np.float32,
-        #     )
-        #     bp.set_params(params)
+        replica_to_state = np.argsort(hrex.replica_idx_by_state).tolist()
 
-        water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(initial_states))]
+        # Note that the index of the frames is the replica index, the params need to be permuted accordingly
+        if current_frame > 0:
+            for i, bp in enumerate(context_bps):
+                params = np.stack(
+                    params_by_state_by_pot[i],
+                    dtype=np.float32,
+                )[replica_to_state]
+                bp.set_params(params)
 
-        # Movers are not called during local steps, so if local moves are mixed in need to account only for global steps
-        current_mover_step = current_frame * md_params.steps_per_frame
-        if md_params.local_md_params is not None:
-            current_mover_step = current_frame * (md_params.steps_per_frame - md_params.local_md_params.local_steps)
         # Setup the MC movers of the Context
-        starting_water_acceptances = np.zeros(len(initial_states))
-        starting_water_proposals = np.zeros(len(initial_states))
-        # if water_sampler is not None:
-        #     assert water_params_by_state is not None
-        #     water_sampler.set_params(water_params_by_state[state_idx])
-        #     water_sampler.set_step(current_mover_step)
-        #     assert water_sampler.num_systems() == 1
-        #     starting_water_proposals = np.asarray(water_sampler.n_proposed())
-        #     starting_water_acceptances = np.asarray(water_sampler.n_accepted())
+        if water_sampler is not None:
+            water_sampler.set_params(water_params_by_state[replica_to_state])
 
         md_params_replica = replace(
             md_params,
@@ -1988,43 +1981,43 @@ def run_sims_hrex_batched(
         assert frame.shape[1] == len(initial_states)
 
         if water_sampler is not None:
-            final_water_proposals = np.asarray(water_sampler.n_proposed()) - starting_water_proposals
-            final_water_acceptances = np.asarray(water_sampler.n_accepted()) - starting_water_acceptances
-            water_sampling_acceptance_proposal_counts_by_state = (
-                final_water_acceptances.tolist(),
-                final_water_proposals.tolist(),
-            )
+            water_sampling_acceptance_proposal_counts_by_state = list(zip(
+                water_sampler.n_accepted(),
+                fwater_sampler.n_proposed(),
+            ))
 
         final_barostat_volume_scale_factors = barostat.get_volume_scale_factor() if barostat is not None else None
 
-        def sample_replica(xvb: CoordsVelBox, state_idx: StateIdx) -> tuple[NDArray, NDArray, NDArray, Optional[float]]:
-            return frame[-1], box[-1], final_velos, final_barostat_volume_scale_factor
-
         def sample_replica_wrapper(xvb: CoordsVelBox, state_idx: StateIdx):
+            replica_idx = replica_to_state.index(state_idx)
+            # print(state_idx, replica_idx)
+            # print(replica_idx, state_idx)
+            # print(final_velos.shape)
+            # print("Post", state_idx, frame[-1, replica_idx].dtype, np.linalg.norm(frame[-1, replica_idx]), np.linalg.norm(frame[-1, state_idx]))
             return (
-                frame[-1, state_idx],
-                box[-1, state_idx],
-                final_velos[state_idx],
-                final_barostat_volume_scale_factors[state_idx],
+                frame[-1, replica_idx],
+                box[-1, replica_idx],
+                final_velos[replica_idx],
+                None if final_barostat_volume_scale_factors is None else final_barostat_volume_scale_factors[replica_idx],
             )
 
         def replica_from_samples(last_sample: tuple[NDArray, NDArray, NDArray, Optional[float]]) -> CoordsVelBox:
-            frame, box, velos, _ = last_sample
-            return CoordsVelBox(frame, velos, box)
+            x, b, v, _ = last_sample
+            # print(b.shape)
+            # print(np.linalg.norm(x))
+            return CoordsVelBox(x, v, b)
 
-        # JANK
         hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica_wrapper, replica_from_samples)
-        # water_sampler_proposals_by_state_by_iter.append(water_sampling_acceptance_proposal_counts_by_state)
-        # Generate the per-potential U_kl, avoids the need to re-compute the U_kln at the end
+
         U_kl_raw = batch_compute_potential_matrix(
             [bp.get_potential() for bp in bound_potentials],
             hrex,
             params_by_state_by_pot,
             md_params.hrex_params.max_delta_states,
         )
-        # Sum the per-potential components for performing swaps
-        U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 
+        U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
+  
         # Re-order energies by state
         iterated_u_kln[:, :, :, current_frame] = (
             sanitize_energies_for_bar(np.array(U_kl_raw[:, hrex.replica_idx_by_state])) / kBT

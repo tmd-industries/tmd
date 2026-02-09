@@ -1624,14 +1624,10 @@ void declare_bound_potential(py::module &m, const char *typestr) {
             } else if (coords.ndim() == 3) {
               N = coords.shape(1);
               D = coords.shape(2);
-              // for (int i = 0; i  < coords.shape(0); i++) {
-              //   verify_coords_and_box(coords[i], box[i]);
-              // }
             } else {
-              // Should always fail at this stage
-              verify_coords_and_box(coords, box);
+              // Should always fail at this stage;
               throw std::runtime_error(
-                  "BoundPotential::execute failed for unknown reason");
+                  "BoundPotential::execute got unexpected dimensions, ndim=" + std::to_string(coords.ndim()));
             }
             const int num_systems = bp.potential->num_systems();
             // initialize with fixed garbage values for debugging convenience
