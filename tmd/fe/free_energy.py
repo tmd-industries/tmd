@@ -653,7 +653,7 @@ def get_summed_potential_from_bps(bps: Sequence[BoundPotential_f32]) -> SummedPo
     return SummedPotential_f32([bp.get_potential() for bp in bps], [bp.size() for bp in bps])
 
 
-def get_batched_context(initial_states: list[InitialState], md_params: Optional[MDParams] = None) -> Context_f32:
+def get_batched_context(initial_states: Sequence[InitialState], md_params: Optional[MDParams] = None) -> Context_f32:
     for s in initial_states[1:]:
         assert_ensembles_compatible(initial_states[0], s)
 
@@ -671,7 +671,7 @@ def get_batched_context(initial_states: list[InitialState], md_params: Optional[
         initial_states[0].integrator.temperature,
         initial_states[0].integrator.dt,
         initial_states[0].integrator.friction,
-        [initial_states[0].integrator.masses for _ in range(len(initial_states))],
+        np.array([initial_states[0].integrator.masses for _ in range(len(initial_states))]),
         initial_states[0].integrator.seed,
     )
     intg_impl = intg.impl(np.float32)
@@ -1634,7 +1634,7 @@ def run_sims_hrex(
 
     water_params_by_state: Optional[NDArray] = None
     if md_params.water_sampling_params is not None:
-        water_params_by_state = np.array([get_water_sampler_params(initial_state) for initial_state in initial_states])
+        water_params_by_state = np.array([(initial_state) for initial_state in initial_states])
 
     state_idxs = [StateIdx(i) for i in range(len(initial_states))]
     neighbor_pairs = list(zip(state_idxs, state_idxs[1:]))
@@ -1928,7 +1928,7 @@ def run_sims_hrex_batched(
 
     samples_by_state: list[Trajectory] = [Trajectory.empty() for _ in initial_states]
     replica_idx_by_state_by_iter: list[list[ReplicaIdx]] = []
-    water_sampler_proposals_by_state_by_iter: list[tuple[list[int], list[int]]] = []
+    water_sampler_proposals_by_state_by_iter: list[list[tuple[int, int]]] = []
     fraction_accepted_by_pair_by_iter: list[list[tuple[int, int]]] = []
 
     if (
@@ -1945,23 +1945,21 @@ def run_sims_hrex_batched(
     iterated_u_kln = np.full(
         (len(bound_potentials), len(initial_states), len(initial_states), md_params.n_frames), np.inf, dtype=np.float32
     )
-    water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(initial_states))]
+    last_water_sampling_acceptance_by_state = [(0, 0) for _ in range(len(initial_states))]
 
     for current_frame in range(md_params.n_frames):
-        replica_to_state = np.argsort(hrex.replica_idx_by_state).tolist()
+        state_to_replica = np.argsort(hrex.replica_idx_by_state).tolist()
 
         # Note that the index of the frames is the replica index, the params need to be permuted accordingly
         if current_frame > 0:
             for i, bp in enumerate(context_bps):
-                params = np.stack(
-                    params_by_state_by_pot[i],
-                    dtype=np.float32,
-                )[replica_to_state]
+                params = np.stack(params_by_state_by_pot[i])[state_to_replica]  # type: ignore
                 bp.set_params(params)
 
         # Setup the MC movers of the Context
         if water_sampler is not None:
-            water_sampler.set_params(water_params_by_state[replica_to_state])
+            assert water_params_by_state is not None
+            water_sampler.set_params(water_params_by_state[state_to_replica])
 
         md_params_replica = replace(
             md_params,
@@ -1981,33 +1979,32 @@ def run_sims_hrex_batched(
         assert frame.shape[1] == len(initial_states)
 
         if water_sampler is not None:
-            water_sampling_acceptance_proposal_counts_by_state = list(zip(
-                water_sampler.n_accepted(),
-                fwater_sampler.n_proposed(),
-            ))
+            accepted = np.asarray(water_sampler.n_accepted())[state_to_replica]
+            proposed = np.asarray(water_sampler.n_proposed())[state_to_replica]
+            for i, (acc, prop) in zip(accepted, proposed):
+                last_acc, last_prop = last_water_sampling_acceptance_by_state[i]
+                last_water_sampling_acceptance_by_state[i] = (acc - last_acc, prop - last_prop)
 
         final_barostat_volume_scale_factors = barostat.get_volume_scale_factor() if barostat is not None else None
 
         def sample_replica_wrapper(xvb: CoordsVelBox, state_idx: StateIdx):
-            replica_idx = replica_to_state.index(state_idx)
-            # print(state_idx, replica_idx)
-            # print(replica_idx, state_idx)
-            # print(final_velos.shape)
-            # print("Post", state_idx, frame[-1, replica_idx].dtype, np.linalg.norm(frame[-1, replica_idx]), np.linalg.norm(frame[-1, state_idx]))
+            replica_idx = state_to_replica.index(state_idx)  # type: ignore
+
             return (
                 frame[-1, replica_idx],
                 box[-1, replica_idx],
                 final_velos[replica_idx],
-                None if final_barostat_volume_scale_factors is None else final_barostat_volume_scale_factors[replica_idx],
+                None
+                if final_barostat_volume_scale_factors is None
+                else final_barostat_volume_scale_factors[replica_idx],
             )
 
         def replica_from_samples(last_sample: tuple[NDArray, NDArray, NDArray, Optional[float]]) -> CoordsVelBox:
             x, b, v, _ = last_sample
-            # print(b.shape)
-            # print(np.linalg.norm(x))
             return CoordsVelBox(x, v, b)
 
         hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica_wrapper, replica_from_samples)
+        water_sampler_proposals_by_state_by_iter.append(last_water_sampling_acceptance_by_state)
 
         U_kl_raw = batch_compute_potential_matrix(
             [bp.get_potential() for bp in bound_potentials],
@@ -2017,7 +2014,7 @@ def run_sims_hrex_batched(
         )
 
         U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
-  
+
         # Re-order energies by state
         iterated_u_kln[:, :, :, current_frame] = (
             sanitize_energies_for_bar(np.array(U_kl_raw[:, hrex.replica_idx_by_state])) / kBT
@@ -2095,7 +2092,7 @@ def run_sims_hrex_batched(
 
     hrex_diagnostics = HREXDiagnostics(replica_idx_by_state_by_iter, fraction_accepted_by_pair_by_iter)
     ws_diagnostics: WaterSamplingDiagnostics | None = None
-    # if md_params.water_sampling_params is not None:
-    #     ws_diagnostics = WaterSamplingDiagnostics(np.array(water_sampler_proposals_by_state_by_iter, dtype=np.int32))
+    if md_params.water_sampling_params is not None:
+        ws_diagnostics = WaterSamplingDiagnostics(np.array(water_sampler_proposals_by_state_by_iter, dtype=np.int32))
 
     return PairBarResult(list(initial_states), pair_bar_results), samples_by_state, hrex_diagnostics, ws_diagnostics

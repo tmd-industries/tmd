@@ -1627,7 +1627,8 @@ void declare_bound_potential(py::module &m, const char *typestr) {
             } else {
               // Should always fail at this stage;
               throw std::runtime_error(
-                  "BoundPotential::execute got unexpected dimensions, ndim=" + std::to_string(coords.ndim()));
+                  "BoundPotential::execute got unexpected dimensions, ndim=" +
+                  std::to_string(coords.ndim()));
             }
             const int num_systems = bp.potential->num_systems();
             // initialize with fixed garbage values for debugging convenience
