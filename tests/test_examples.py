@@ -443,13 +443,15 @@ def verify_leg_results_hashes(leg_dir: Path, expected_hash: str):
 
 
 @pytest.mark.fixed_output
+@pytest.mark.parametrize("enable_batching", [False, True])
 @pytest.mark.parametrize(
     "leg, n_windows, n_frames, n_eq_steps",
-    [("vacuum", 6, 50, 1000), ("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
+    [("vacuum", 24, 50, 1000), ("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
 )
 @pytest.mark.parametrize("mol_a, mol_b", [("15", "30")])
 @pytest.mark.parametrize("seed", [2025])
 def test_run_rbfe_legs(
+    enable_batching,
     leg,
     n_windows,
     n_frames,
@@ -464,17 +466,32 @@ def test_run_rbfe_legs(
     # which can be used to investigate the results that generated the hashes.
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
-        "vacuum": (
+        (False, "vacuum"): (
             "685a2dc7535b6de06931be3151336186766350c10fe86bb13c56d09f4151183f",
             "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
             "7f84f079fd7829941989dfe757df77bc28bb0f634147879720dc556881dd4195",
         ),
-        "solvent": (
+        (False, "solvent"): (
             "102a9cb62df09104e7ad18818af999a414121f02ceb87d5c1a39225480e60b33",
             "a839526092dce8883e246ba43bde84d644d12c04dddbde935e90c3c6cd906563",
             "e0ed87de3b6f4040999bbe2a19313b35e0afffc4a1addfba72ab61bdce80546c",
         ),
-        "complex": (
+        (False, "complex"): (
+            "e9a4de4eaaa48eaf7aa49b8eb41378df27ac91157747c9f6c4888cdeae263f6d",
+            "b6634c8f3bb6f6b07bc8b3b69f7862138979619e340b2d2903298e230643081a",
+            "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
+        ),
+        (True, "vacuum"): (
+            "685a2dc7535b6de06931be3151336186766350c10fe86bb13c56d09f4151183f",
+            "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
+            "7f84f079fd7829941989dfe757df77bc28bb0f634147879720dc556881dd4195",
+        ),
+        (True, "solvent"): (
+            "102a9cb62df09104e7ad18818af999a414121f02ceb87d5c1a39225480e60b33",
+            "a839526092dce8883e246ba43bde84d644d12c04dddbde935e90c3c6cd906563",
+            "e0ed87de3b6f4040999bbe2a19313b35e0afffc4a1addfba72ab61bdce80546c",
+        ),
+        (True, "complex"): (
             "e9a4de4eaaa48eaf7aa49b8eb41378df27ac91157747c9f6c4888cdeae263f6d",
             "b6634c8f3bb6f6b07bc8b3b69f7862138979619e340b2d2903298e230643081a",
             "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
@@ -567,17 +584,19 @@ def test_run_rbfe_legs(
             assert ddg_rows[0]["mol_a"] == mol_a
             assert ddg_rows[0]["mol_b"] == mol_b
 
+        env = {"TMD_BATCHING_MODE": "on" if enable_batching else "off"}
+
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[leg])
+        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(enable_batching, leg)])
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
         assert config_b["output_dir"] != config_a["output_dir"], "Runs are writing to the same output directory"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_b["output_dir"]))
 

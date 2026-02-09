@@ -1694,7 +1694,7 @@ def run_batched_hrex_step(
     if water_sampler is not None:
         accepted = np.asarray(water_sampler.n_accepted())[state_to_replica]
         proposed = np.asarray(water_sampler.n_proposed())[state_to_replica]
-        for i, (acc, prop) in zip(accepted, proposed):
+        for i, (acc, prop) in enumerate(zip(accepted, proposed)):
             water_sampling_acceptance_proposal_counts_by_state[i] = (acc, prop)
 
         assert water_params_by_state is not None
@@ -1720,7 +1720,7 @@ def run_batched_hrex_step(
     if water_sampler is not None:
         accepted = np.asarray(water_sampler.n_accepted())[state_to_replica]
         proposed = np.asarray(water_sampler.n_proposed())[state_to_replica]
-        for i, (acc, prop) in zip(accepted, proposed):
+        for i, (acc, prop) in enumerate(zip(accepted, proposed)):
             last_acc, last_prop = water_sampling_acceptance_proposal_counts_by_state[i]
             water_sampling_acceptance_proposal_counts_by_state[i] = (acc - last_acc, prop - last_prop)
 
@@ -1833,7 +1833,7 @@ def run_sims_hrex(
 
     water_params_by_state: Optional[NDArray] = None
     if md_params.water_sampling_params is not None:
-        water_params_by_state = np.array([(initial_state) for initial_state in initial_states])
+        water_params_by_state = np.array([get_water_sampler_params(initial_state) for initial_state in initial_states])
 
     state_idxs = [StateIdx(i) for i in range(len(initial_states))]
     neighbor_pairs = list(zip(state_idxs, state_idxs[1:]))
