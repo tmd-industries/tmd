@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -3386,10 +3386,11 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
       .def("get_params",
            [](Class &mover) -> py::array_t<RealType, py::array::c_style> {
              std::vector<RealType> flat_params = mover.get_params();
+             const int num_systems = mover.num_systems();
              const int D = PARAMS_PER_ATOM;
-             const int N = flat_params.size() / D;
+             const int N = flat_params.size() / D * num_systems;
              py::array_t<RealType, py::array::c_style> out_params(
-                 {N, D}, flat_params.data());
+                 {num_systems, N, D}, flat_params.data());
              return out_params;
            })
       .def(

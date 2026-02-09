@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 from copy import deepcopy
 from dataclasses import replace
 from functools import partial
-from typing import Optional
 from unittest.mock import Mock, patch
 
 import jax.numpy as jnp
@@ -50,11 +49,12 @@ from tmd.fe.free_energy import (
     get_water_sampler_params,
     make_pair_bar_plots,
     run_sims_bisection,
+    run_sims_hrex,
     sample,
     trajectories_by_replica_to_by_state,
     verify_and_sanitize_potential_matrix,
 )
-from tmd.fe.rbfe import run_vacuum, setup_initial_state, setup_initial_states, setup_optimized_host
+from tmd.fe.rbfe import DEFAULT_HREX_PARAMS, run_vacuum, setup_initial_state, setup_initial_states, setup_optimized_host
 from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.single_topology import AtomMapFlags, SingleTopology
 from tmd.fe.stored_arrays import StoredArrays
@@ -362,6 +362,56 @@ def hif2a_ligand_pair_single_topology_lam0_state():
     return state
 
 
+@pytest.mark.parametrize("seed", [2026])
+def test_hrex_batching_determinism(seed):
+    # Lambdas should be close to ensure a high swap rate
+    lambdas = np.linspace(0.0, 0.1, 4)
+    forcefield = Forcefield.load_default()
+
+    mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
+
+    single_topology = SingleTopology(mol_a, mol_b, core, forcefield)
+
+    initial_states = setup_initial_states(
+        single_topology,
+        None,  # Can only test determinism in vacuum since the barostat randomness to each batch
+        DEFAULT_TEMP,
+        lambdas,
+        seed=seed,
+        verify_constraints=False,
+        min_cutoff=None,
+    )
+    # Set friction to be zero to ensure determinism between batched and sequential modes
+    initial_states = [
+        replace(initial_state, integrator=replace(initial_state.integrator, friction=0.0))
+        for initial_state in initial_states
+    ]
+
+    md_params = replace(DEFAULT_HREX_PARAMS, n_frames=100)
+    ref_pair_bar_result, ref_samples_by_state, ref_hrex_diagnostics, ref_ws_diagnostics = run_sims_hrex(
+        initial_states,
+        md_params,
+    )
+
+    # Verify that the swap rates are relatively high
+    final_swap_acceptance_rates = ref_hrex_diagnostics.cumulative_swap_acceptance_rates[-1]
+    assert np.all(final_swap_acceptance_rates > 0.1)
+
+    batch_pair_bar_result, batch_samples_by_state, batch_hrex_diagnostics, batch_ws_diagnostics = run_sims_hrex(
+        initial_states, md_params, batch_simulations=True
+    )
+    np.testing.assert_equal(batch_pair_bar_result.dGs, ref_pair_bar_result.dGs)
+    np.testing.assert_equal(
+        batch_hrex_diagnostics.replica_idx_by_state_by_iter, ref_hrex_diagnostics.replica_idx_by_state_by_iter
+    )
+    np.testing.assert_equal(
+        batch_hrex_diagnostics.fraction_accepted_by_pair_by_iter, ref_hrex_diagnostics.fraction_accepted_by_pair_by_iter
+    )
+    for batch_sample, ref_sample in zip(batch_samples_by_state, ref_samples_by_state):
+        np.testing.assert_equal(np.array(batch_sample.frames), np.array(ref_sample.frames))
+        np.testing.assert_equal(np.array(batch_sample.boxes), np.array(ref_sample.boxes))
+
+
 @pytest.mark.parametrize("seed", [2024])
 @pytest.mark.parametrize(
     "host_name",
@@ -374,8 +424,7 @@ def hif2a_ligand_pair_single_topology_lam0_state():
 def test_initial_state_interacting_ligand_atoms(host_name, seed):
     lambdas = np.linspace(0.0, 1.0, 4)
     forcefield = Forcefield.load_default()
-    host_config: Optional[builders.HostConfig] = None
-    host: Optional[builders.HostConfig] = None
+    host_config: builders.HostConfig | None = None
 
     mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
     if host_name == "complex":
@@ -387,18 +436,18 @@ def test_initial_state_interacting_ligand_atoms(host_name, seed):
         host_config = builders.build_water_system(4.0, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1)
     else:
         # vacuum
-        pass
+        assert host_name is None
 
     single_topology = SingleTopology(mol_a, mol_b, core, forcefield)
 
     host_atoms = 0
     if host_config is not None:
-        host = setup_optimized_host(host_config, [mol_a, mol_b], forcefield)
+        host_config = setup_optimized_host(host_config, [mol_a, mol_b], forcefield)
         host_atoms += len(host_config.conf)
 
     initial_states = setup_initial_states(
         single_topology,
-        host,
+        host_config,
         DEFAULT_TEMP,
         lambdas,
         seed=seed,
