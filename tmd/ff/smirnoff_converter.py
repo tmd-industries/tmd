@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,9 +24,10 @@ from xml.dom import minidom
 import numpy as np
 from openmm import unit
 
-from tmd.ff.charges import AM1BCC_CHARGES, AM1CCC_CHARGES, PRECOMPUTED_CHARGES, SIMPLE_CHARGES
+from tmd.ff.charges import AM1BCC_CHARGES, AM1CCC_CHARGES, AMBER_AM1_CCC_CHARGES, PRECOMPUTED_CHARGES, SIMPLE_CHARGES
 
 CHARGE_TYPE_AMBER_AM1BCC = "AMBER-BCC"
+CHARGE_TYPE_AMBER_AM1CCC = "AMBER-CCC"
 CHARGE_TYPE_AM1BCC = "BCC"
 CHARGE_TYPE_AM1CCC = "CCC"
 CHARGE_TYPE_SIMPLE = "SC"
@@ -117,9 +119,10 @@ if __name__ == "__main__":
     parser.add_argument("input_path", help="Path to XML ff")
     parser.add_argument(
         "--charge_type",
-        default=CHARGE_TYPE_AMBER_AM1BCC,
+        default=CHARGE_TYPE_AMBER_AM1CCC,
         choices=[
             CHARGE_TYPE_AMBER_AM1BCC,
+            CHARGE_TYPE_AMBER_AM1CCC,
             CHARGE_TYPE_SIMPLE,
             CHARGE_TYPE_AM1CCC,
             CHARGE_TYPE_AM1BCC,
@@ -224,6 +227,8 @@ if __name__ == "__main__":
         forcefield["SimpleCharge"] = SIMPLE_CHARGES
     elif args.charge_type == CHARGE_TYPE_AM1BCC:
         forcefield["AM1BCC"] = AM1BCC_CHARGES
+    elif args.charge_type == CHARGE_TYPE_AMBER_AM1CCC:
+        forcefield["AmberAM1CCC"] = AMBER_AM1_CCC_CHARGES
     elif args.charge_type == CHARGE_TYPE_AMBER_AM1BCC:
         forcefield["AmberAM1BCC"] = AM1BCC_CHARGES
     elif args.charge_type == CHARGE_TYPE_PRECOMPUTED:
