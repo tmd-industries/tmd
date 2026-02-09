@@ -53,17 +53,21 @@ def write_result_csvs(
         exp_a = None
         exp_b = None
         try:
-            exp_a = get_mol_experimental_value(mols_by_name[name_a], experimental_field, experimental_units)
+            exp_a = (
+                get_mol_experimental_value(mols_by_name[name_a], experimental_field, experimental_units) / KCAL_TO_KJ
+            )
             g.add_node(name_a, node_exp=exp_a)
         except KeyError:
             pass
         try:
-            exp_b = get_mol_experimental_value(mols_by_name[name_b], experimental_field, experimental_units)
+            exp_b = (
+                get_mol_experimental_value(mols_by_name[name_b], experimental_field, experimental_units) / KCAL_TO_KJ
+            )
             g.add_node(name_b, node_exp=exp_b)
         except KeyError:
             pass
         if exp_a is not None and exp_b is not None:
-            edge["exp_ddg (kcal/mol)"] = (exp_b - exp_a) / KCAL_TO_KJ
+            edge["exp_ddg (kcal/mol)"] = exp_b - exp_a
 
         if COMPLEX_LEG in leg_summaries and SOLVENT_LEG in leg_summaries:
             edge["pred_ddg (kcal/mol)"] = (
@@ -104,9 +108,9 @@ def write_result_csvs(
                     [
                         n,
                         Chem.MolToSmiles(Chem.RemoveHs(mols_by_name[n])),
-                        data["inferred_dg"] / KCAL_TO_KJ if "inferred_dg" in data else "",
-                        data["inferred_dg_stddev"] / KCAL_TO_KJ if "inferred_dg" in data else "",
-                        data["node_exp"] / KCAL_TO_KJ if "node_exp" in data else "",
+                        data["inferred_dg"] if "inferred_dg" in data else "",
+                        data["inferred_dg_stddev"] if "inferred_dg" in data else "",
+                        data["node_exp"] if "node_exp" in data else "",
                     ]
                 )
         for edge in edge_records.values():

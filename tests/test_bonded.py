@@ -23,6 +23,7 @@ from tmd.potentials import (
     ChiralAtomRestraint,
     ChiralBondRestraint,
     FlatBottomBond,
+    FlatBottomRestraint,
     HarmonicAngle,
     HarmonicBond,
     LogFlatBottomBond,
@@ -263,6 +264,83 @@ def test_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
     for i, (idxs, x, box, params) in enumerate(zip(batch_bond_idxs, coords, batch_boxes, batch_params)):
         potential = FlatBottomBond(n_particles, idxs)
+        ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
+
+
+@pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
+def test_flat_bottom_restraint(precision, rtol, n_particles=5, n_atoms=3, dim=3):
+    """Randomly connect pairs of particles, then validate the resulting FlatBottomRestraint force"""
+    seed = 2026
+    np.random.seed(seed)
+
+    box = np.eye(3) * 100
+    x = GradientTest().get_random_coords(n_particles, dim)
+
+    atom_idxs = np.arange(n_particles)
+
+    k = np.random.rand(n_atoms) * 1000  # k large
+    r_min = np.random.rand(n_atoms)  # r_min non-negative
+    r_max = r_min + np.random.rand(n_atoms)  # r_max >= r_min
+    params = np.array([k, r_min, r_max]).astype(np.float64).T
+    assert params.shape == (n_atoms, 3)
+
+    if n_atoms > 0:
+        atom_idxs = np.random.choice(np.arange(n_particles, dtype=np.int32), size=n_atoms)
+    else:
+        atom_idxs = np.zeros((0, 2), dtype=np.int32)
+
+    # Shift half of the bond indices by a single box dimension to ensure testing PBCs
+    x[atom_idxs[: n_atoms // 2]] += np.diagonal(box)
+
+    restrained_coords = GradientTest().get_random_coords(n_atoms, dim)
+
+    potential = FlatBottomRestraint(n_particles, atom_idxs, restrained_coords.astype(precision))
+    test_impl = potential.to_gpu(precision)
+
+    x = x.astype(precision)
+    params = params.astype(precision)
+    box = box.astype(precision)
+
+    GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
+    GradientTest().assert_differentiable_interface_consistency(x, params, box, test_impl)
+
+    # Testing batching across multiple coords/params
+    num_systems = 3
+
+    rng = np.random.default_rng(seed)
+
+    coords = np.array(
+        [
+            shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+            for i in range(num_systems)
+        ],
+        dtype=precision,
+    )
+    batch_atom_indices = [rng.choice(atom_idxs, size=rng.integers(1, n_atoms)) for _ in range(num_systems)]
+    batch_atom_coords = [
+        GradientTest().get_random_coords(len(idxs), dim).astype(precision) for idxs in batch_atom_indices
+    ]
+
+    batch_params = [rng.choice(params, size=len(idxs), replace=True).astype(precision) for idxs in batch_atom_indices]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
+
+    batch_pot = FlatBottomRestraint(n_particles, batch_atom_indices, batch_atom_coords)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.num_systems() == num_systems
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_systems
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+
+    for i, (idxs, atom_coords, x, box, params) in enumerate(
+        zip(batch_atom_indices, batch_atom_coords, coords, batch_boxes, batch_params)
+    ):
+        potential = FlatBottomRestraint(n_particles, idxs, atom_coords)
+
         ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
         np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
         np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
