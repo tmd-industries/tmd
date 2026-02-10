@@ -93,10 +93,9 @@ public:
                   const RealType *h_box, const RealType cutoff,
                   const RealType padding);
 
-  void build_nblist_device(const int N, const int *d_rebuild_flag,
-                           const RealType *d_coords, const RealType *d_box,
-                           const RealType cutoff, const RealType padding,
-                           const cudaStream_t stream);
+  void build_nblist_device(const int N, const RealType *d_coords,
+                           const RealType *d_box, const RealType cutoff,
+                           const RealType padding, const cudaStream_t stream);
 
   void compute_block_bounds_host(const int num_systems, const int N,
                                  const RealType *h_coords,
@@ -141,7 +140,6 @@ private:
   int Y() const;
 
   void compute_block_bounds_device(const int N, const int D,
-                                   const int *d_rebuild_flag, // [1]
                                    const RealType *d_coords,
                                    const RealType *d_box, cudaStream_t stream);
 };

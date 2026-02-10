@@ -23,31 +23,6 @@
 
 namespace tmd {
 
-template <typename RealType>
-void __global__ k_update_neighborlist_state(
-    const size_t num_systems, const size_t N,
-    const int *__restrict__ rebuild_flag, // [1]
-    const RealType *__restrict__ coords,  // [num_systems, N, 3]
-    const RealType *__restrict__ box,     // [num_systems, 3, 3]
-    RealType *__restrict__ nblist_coords, // [num_systems, N, 3]
-    RealType *__restrict__ nblist_box     // [num_systems, 3, 3]
-) {
-  if (*rebuild_flag == 0) {
-    return;
-  }
-  constexpr int D = 3;
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-  while (idx < num_systems * N * D) {
-    if (idx < num_systems * D * D) {
-      nblist_box[idx] = box[idx];
-    }
-    nblist_coords[idx] = coords[idx];
-
-    idx += gridDim.x * blockDim.x;
-  }
-}
-
 void __global__ k_setup_nblist_row_and_column_indices(
     const int num_systems, const int N, const int *__restrict__ row_idx_counts,
     const int *__restrict__ col_idx_counts, const bool is_disjoint,

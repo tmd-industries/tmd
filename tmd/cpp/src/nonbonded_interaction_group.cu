@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025-2026 Forrest York
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -112,7 +112,7 @@ bool is_upper_triangular(NonbondedInteractionType ixn_type) {
 }
 
 static int max_vector_int(const std::vector<int> &vec) {
-  return *std::min_element(vec.begin(), vec.end());
+  return *std::max_element(vec.begin(), vec.end());
 }
 
 // max_vector_int_sum finds maximum sum between two vectors at each index.
@@ -283,15 +283,10 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
   cudaSafeMalloc(&d_nblist_box_, num_systems_ * 3 * 3 * sizeof(*d_nblist_box_));
   gpuErrchk(cudaMemset(d_nblist_box_, 0,
                        num_systems_ * 3 * 3 * sizeof(*d_nblist_box_)));
-  cudaSafeMalloc(&d_rebuild_nblist_, sizeof(*d_rebuild_nblist_));
-  // gpuErrchk(cudaHostAlloc(&m_rebuild_nblist_, 1 * sizeof(*m_rebuild_nblist_),
-  //                         cudaHostAllocMapped));
-  // m_rebuild_nblist_[0] = 0;
-  // gpuErrchk(cudaHostGetDevicePointer(&d_rebuild_nblist_, m_rebuild_nblist_,
-  // 0));
-
-  // Indicate that we need to rebuild the nblist right away
-  gpuErrchk(cudaMemset(d_rebuild_nblist_, 1, sizeof(*d_rebuild_nblist_)));
+  gpuErrchk(cudaHostAlloc(&m_rebuild_nblist_, 1 * sizeof(*m_rebuild_nblist_),
+                          cudaHostAllocMapped));
+  m_rebuild_nblist_[0] = 0;
+  gpuErrchk(cudaHostGetDevicePointer(&d_rebuild_nblist_, m_rebuild_nblist_, 0));
 
   if (!disable_hilbert_) {
     this->hilbert_sort_.reset(new HilbertSort<RealType>(N_));
@@ -323,8 +318,7 @@ NonbondedInteractionGroup<RealType>::~NonbondedInteractionGroup() {
 
   gpuErrchk(cudaFree(d_nblist_x_));
   gpuErrchk(cudaFree(d_nblist_box_));
-  gpuErrchk(cudaFree(d_rebuild_nblist_));
-  // gpuErrchk(cudaFreeHost(m_rebuild_nblist_));
+  gpuErrchk(cudaFreeHost(m_rebuild_nblist_));
 
   gpuErrchk(cudaEventDestroy(nblist_flag_sync_event_));
 };
@@ -414,10 +408,9 @@ void NonbondedInteractionGroup<RealType>::sort(const RealType *d_coords,
       }
     }
   }
-  gpuErrchk(cudaMemsetAsync(d_rebuild_nblist_, 1, sizeof(*d_rebuild_nblist_),
-                            stream));
-  // // Set the mapped memory to indicate that we need to rebuild
-  // m_rebuild_nblist_[0] = 1;
+
+  // Set the mapped memory to indicate that we need to rebuild
+  m_rebuild_nblist_[0] = 1;
 }
 
 template <typename RealType>
@@ -446,7 +439,6 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   // e. inverse permute the forces, du/dps into the original index.
   // f. u is buffered into a per-particle array, and then reduced.
 
-  // printf("Running!\n");
   if (num_systems != num_systems_) {
     throw std::runtime_error(
         "NonbondedInteractionGroup::execute_device():"
@@ -495,7 +487,7 @@ void NonbondedInteractionGroup<RealType>::execute_device(
                                       nblist_padding_, d_rebuild_nblist_);
     gpuErrchk(cudaPeekAtLastError());
     // we can optimize this away by doing the check on the GPU directly.
-    // gpuErrchk(cudaEventRecord(nblist_flag_sync_event_, stream));
+    gpuErrchk(cudaEventRecord(nblist_flag_sync_event_, stream));
   }
 
   k_gather_coords_and_params<RealType, 3, PARAMS_PER_ATOM>
@@ -517,39 +509,33 @@ void NonbondedInteractionGroup<RealType>::execute_device(
   // Zero out the energy buffer
   if (d_u) {
     // TBD: Test nkb instead of mnkb
-    gpuErrchk(cudaMemsetAsync(
-        d_u_buffer_, 0, num_systems_ * mnkb * sizeof(*d_u_buffer_), stream));
+    cudaMemsetAsync(d_u_buffer_, 0, num_systems_ * mnkb * sizeof(*d_u_buffer_),
+                    stream);
   }
 
   // Syncing to an event allows kernels put into the queue after the event was
   // recorded to keep running during the sync Note that if no event is recorded,
   // this is effectively a no-op, such as in the case of sorting.
-  // gpuErrchk(cudaEventSynchronize(nblist_flag_sync_event_));
-  // if (m_rebuild_nblist_[0] > 0) {
-  nblist_.build_nblist_device(K, d_rebuild_nblist_, d_sorted_x_, d_box, cutoff_,
-                              nblist_padding_, stream);
-  // m_rebuild_nblist_[0] = 0;
+  gpuErrchk(cudaEventSynchronize(nblist_flag_sync_event_));
+  if (m_rebuild_nblist_[0] > 0) {
+    nblist_.build_nblist_device(K, d_sorted_x_, d_box, cutoff_, nblist_padding_,
+                                stream);
+    m_rebuild_nblist_[0] = 0;
+    gpuErrchk(cudaMemcpyAsync(d_nblist_x_, d_x,
+                              num_systems_ * N * 3 * sizeof(*d_x),
+                              cudaMemcpyDeviceToDevice, stream));
+    gpuErrchk(cudaMemcpyAsync(d_nblist_box_, d_box,
+                              num_systems_ * 3 * 3 * sizeof(*d_box),
+                              cudaMemcpyDeviceToDevice, stream));
 
-  k_update_neighborlist_state<<<ceil_divide(N_ * num_systems_, tpb), tpb, 0,
-                                stream>>>(num_systems_, N_, d_rebuild_nblist_,
-                                          d_x, d_box, d_nblist_x_,
-                                          d_nblist_box_);
-  gpuErrchk(cudaPeekAtLastError());
-  // gpuErrchk(cudaMemcpyAsync(d_nblist_x_, d_x,
-  //                           num_systems_ * N * 3 * sizeof(*d_x),
-  //                           cudaMemcpyDeviceToDevice, stream));
-  // gpuErrchk(cudaMemcpyAsync(d_nblist_box_, d_box,
-  //                           num_systems_ * 3 * 3 * sizeof(*d_box),
-  //                           cudaMemcpyDeviceToDevice, stream));
+    // Useful diagnostic code (and doesn't seem to affect wall-clock time very
+    // much), leave this here for easy access. unsigned int ixn_count;
+    // cudaMemcpy(&ixn_count, nblist_.get_ixn_count(), sizeof(ixn_count),
+    // cudaMemcpyDeviceToHost); std::cout << "ixn_count: " << ixn_count <<
+    // std::endl;
+  }
 
-  // Useful diagnostic code (and doesn't seem to affect wall-clock time very
-  // much), leave this here for easy access. unsigned int ixn_count;
-  // cudaMemcpy(&ixn_count, nblist_.get_ixn_count(), sizeof(ixn_count),
-  // cudaMemcpyDeviceToHost); std::cout << "ixn_count: " << ixn_count <<
-  // std::endl;
-  // }
-
-  kernel_ptrs_[kernel_idx]<<<dim3(nkb, num_systems_),
+  kernel_ptrs_[kernel_idx]<<<dim3(nkb, num_systems_, 1),
                              NONBONDED_KERNEL_THREADS_PER_BLOCK, 0, stream>>>(
       num_systems_, N_, K, mnkb, nblist_.max_ixn_count(),
       nblist_.get_num_row_idxs(), nblist_.get_ixn_count(), d_perm_, d_sorted_x_,

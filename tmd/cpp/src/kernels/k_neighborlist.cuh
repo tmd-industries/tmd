@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025-2026 Forrest York
+// Modifications Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -43,9 +43,8 @@ k_reset_system_idxs(const size_t num_systems, const size_t N,
 
 template <typename RealType>
 void __global__ k_find_block_bounds(
-    const int num_systems,                  // Number of systems
-    const int N,                            // Number of atoms/rows per system
-    const int *__restrict__ d_rebuild_flag, // [1]
+    const int num_systems, // Number of systems
+    const int N,           // Number of atoms/rows per system
     const unsigned int
         *__restrict__ system_row_indice_counts, // [num_systems] Number of
                                                 // indices per system
@@ -62,9 +61,6 @@ void __global__ k_find_block_bounds(
   // Computes smaller bounding boxes than simpler form by accounting for
   // periodic box conditions
 
-  if (*d_rebuild_flag == 0) {
-    return;
-  }
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
     return;
@@ -180,18 +176,12 @@ void __global__ k_find_block_bounds(
 void __global__ k_compact_trim_atoms(
     const int num_systems, const int N, const int atom_buffer_size_per_system,
     const int Y,
-    const int *__restrict__ d_rebuild_flag, // [1]
     const unsigned int
-        *__restrict__ system_row_counts, // [num_systems] Number of rows idxs
-                                         // for each system
+        *system_row_counts, // [num_systems] Number of rows idxs for each system
     const unsigned int *__restrict__ trim_atoms,
     unsigned int *__restrict__ interactionCount,
     int *__restrict__ interactingTiles,
     unsigned int *__restrict__ interactingAtoms) {
-
-  if (*d_rebuild_flag == 0) {
-    return;
-  }
 
   // we can probably get away with using only 32 if we do some fancier remainder
   // tricks, but this isn't a huge save
@@ -296,17 +286,14 @@ against each col block atom.
 // and column_idxs to be identical and be the values of np.arange(0, N).
 template <typename RealType, bool UPPER_TRIAG>
 void __global__ k_find_blocks_with_ixns(
-    const int num_systems,                  // Number of systems
-    const int N,                            // Total number of atoms
-    const int atom_buffer_size_per_system,  // Number of interactions in each
-                                            // atom buffer for each system
-    const int *__restrict__ d_rebuild_flag, // [1]
+    const int num_systems,                    // Number of systems
+    const int N,                              // Total number of atoms
+    const int atom_buffer_size_per_system,    // Number of interactions in each
+                                              // atom buffer for each system
+    const unsigned int *system_column_counts, // [num_systems] Number of columns
+                                              // idxs for each system
     const unsigned int
-        *__restrict__ system_column_counts, // [num_systems] Number of columns
-                                            // idxs for each system
-    const unsigned int
-        *__restrict__ system_row_counts, // [num_systems] Number of rows idxs
-                                         // for each system
+        *system_row_counts, // [num_systems] Number of rows idxs for each system
     const unsigned int *__restrict__ column_idxs, // [num_systems, NC]
     const unsigned int *__restrict__ row_idxs,    // [num_systems, NR]
     const RealType
@@ -330,10 +317,6 @@ void __global__ k_find_blocks_with_ixns(
     unsigned int *__restrict__ trim_atoms, // the left-over trims that will
                                            // later be compacted
     const RealType base_cutoff, const RealType padding) {
-
-  if (*d_rebuild_flag == 0) {
-    return;
-  }
 
   static_assert(TILE_SIZE == WARP_SIZE,
                 "TILE_SIZE != WARP_SIZE is not currently supported");
