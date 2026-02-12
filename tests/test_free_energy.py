@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 from copy import deepcopy
 from dataclasses import replace
 from functools import partial
+from pathlib import Path
 from typing import Optional
 from unittest.mock import Mock, patch
 
@@ -28,8 +29,9 @@ from jax import grad, jacfwd, jacrev, value_and_grad
 from scipy.optimize import check_grad, minimize
 
 import tmd._vendored.pymbar as pymbar
-from tmd.constants import BOLTZ, DEFAULT_TEMP, NBParamIdx
+from tmd.constants import BOLTZ, DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_TEMP, NBParamIdx
 from tmd.fe import free_energy, topology, utils
+from tmd.fe.atom_mapping import get_cores
 from tmd.fe.bar import DEFAULT_SOLVER_PROTOCOL, IndeterminateEnergyWarning, df_from_u_kln, ukln_to_ukn
 from tmd.fe.free_energy import (
     BarResult,
@@ -47,6 +49,7 @@ from tmd.fe.free_energy import (
     batches,
     compute_potential_matrix,
     estimate_free_energy_bar,
+    get_context,
     get_water_sampler_params,
     make_pair_bar_plots,
     run_sims_bisection,
@@ -59,7 +62,7 @@ from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.single_topology import AtomMapFlags, SingleTopology
 from tmd.fe.stored_arrays import StoredArrays
 from tmd.ff import Forcefield
-from tmd.lib import LangevinIntegrator
+from tmd.lib import LangevinIntegrator, custom_ops
 from tmd.md import builders
 from tmd.md.hrex import HREX, HREXDiagnostics, ReplicaIdx
 from tmd.md.states import CoordsVelBox
@@ -509,6 +512,37 @@ def test_get_water_sampler_params_complex():
     orig_prot_nb_params = nb_bp.params[state.protein_idxs][:]
 
     np.testing.assert_array_equal(orig_prot_nb_params, water_sampler_nb_params[state.protein_idxs])
+
+
+def test_get_context_with_non_contiguous_waters():
+    """Verify that the build_protein_system ensures waters are contiguous and that the water sampler can be
+    configured successfully."""
+    cdk8_system = Path(__file__).parent / "data" / "cdk8_incorrectly_ordered_waters.pdb"
+
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "ligands.sdf") as sdf_path:
+        mols_by_name = utils.read_sdf_mols_by_name(sdf_path)
+    mol_a = mols_by_name["43"]
+    mol_b = mols_by_name["44"]
+
+    forcefield = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    core = get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+    st = SingleTopology(mol_a, mol_b, core, forcefield)
+
+    host_config = builders.build_protein_system(
+        str(cdk8_system), forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
+    )
+
+    lamb = 0.5  # arbitrary
+
+    # Water sampling parameters required
+    md_params = MDParams(10, 0, 10, seed, water_sampling_params=WaterSamplingParams())
+
+    state = setup_initial_state(st, lamb, host_config, DEFAULT_TEMP, 2026, False)
+    ctxt = get_context(state, md_params=md_params)
+    movers = ctxt.get_movers()
+    assert len(movers) == 2
+    assert isinstance(movers[0], custom_ops.MonteCarloBarostat_f32)
+    assert isinstance(movers[1], custom_ops.TIBDExchangeMove_f32)
 
 
 def test_run_sims_bisection_early_stopping(hif2a_ligand_pair_single_topology_lam0_state):

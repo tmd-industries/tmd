@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -115,6 +115,8 @@ def replace_clashy_waters(
     with path_to_internal_file("tmd.ff.params", "openmm_custom_templates.xml") as custom_templates_path:
         host_ff.loadFile(str(custom_templates_path))
 
+    ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
+
     def get_clashy_idxs() -> NDArray[np.int32]:
         # Hard coded value for the maximum number of ligand atoms to consider when evaluating water idxs
         # Without this setting up a system with thousands of molecules can lead to JAX failures
@@ -124,7 +126,6 @@ def replace_clashy_waters(
             [[a.index for a in res.atoms()] for res in modeller.topology.residues() if res.name == WATER_RESIDUE_NAME]
         )
         water_coords = strip_units(modeller.positions)[water_idxs]
-        ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
         idxs_set = set()
         for batch_offset in range(0, len(ligand_coords), batch_size):
             idxs_batch = idxs_within_cutoff(
@@ -158,7 +159,6 @@ def replace_clashy_waters(
 
     topology = app.Topology()
     dummy_chain = topology.addChain(dummy_chain_id)
-    ligand_coords = np.concatenate([get_romol_conf(mol) for mol in mols])
     for mol in mols:
         # Add a bunch of dummy Argon atoms in place of the ligand atoms. This will prevent OpenMM from
         # placing atoms in the binding pocket. OpenMM only looks at the parameters of waters, not the solute
@@ -186,6 +186,42 @@ def replace_clashy_waters(
     ligand_chain = [chain for chain in modeller.topology.chains() if chain.id == dummy_chain_id]
     modeller.delete(ligand_chain)
     assert num_system_atoms == modeller.topology.getNumAtoms(), "replace_clashy_waters changed the number of atoms"
+
+
+def make_waters_contiguous(modeller):
+    """Modifies the OpenMM modeller and topology such that waters are contiguous. Done to ensure that water
+    sampling is possible in downstream code.
+
+    If the waters are contiguous the modeller is not modified.
+
+    Parameters
+    ----------
+    modeller: app.Modeller
+        Modeller to update in place
+    """
+    water_residues = [residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]
+    water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_residues])
+    if np.all(np.diff(water_indices) == 1):
+        return
+
+    num_system_atoms = modeller.topology.getNumAtoms()
+
+    water_positions = strip_units(modeller.positions)[water_indices]
+    modeller.delete([atom for res in water_residues for atom in res.atoms()])
+    topology = app.Topology()
+    water_chain = topology.addChain("W")
+    for res in water_residues:
+        water_res = topology.addResidue(res.name, water_chain)
+        old_atom_to_new = {}
+        for atom in res.atoms():
+            new_atom = topology.addAtom(atom.name, atom.element, water_res)
+            old_atom_to_new[atom.id] = new_atom
+        for bond in res.bonds():
+            atom_a = old_atom_to_new[bond.atom1.id]
+            atom_b = old_atom_to_new[bond.atom2.id]
+            topology.addBond(atom_a, atom_b, type=bond.type, order=bond.order)
+    modeller.add(topology, water_positions * unit.nanometers)
+    assert num_system_atoms == modeller.topology.getNumAtoms(), "make_waters_contiguous changed the number of atoms"
 
 
 def solvate_modeller(
@@ -463,6 +499,10 @@ def build_host_config_from_omm(
     starting_water_atoms = (
         len([residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]) * 3
     )
+    if starting_water_atoms > 0 and mols is not None:
+        # Called twice because it is faster to adjust a smaller part of the system
+        make_waters_contiguous(modeller)
+
     num_host_atoms = len(host_coords) - starting_water_atoms
 
     solvate_modeller(
@@ -481,7 +521,10 @@ def build_host_config_from_omm(
     solvated_host_coords = strip_units(modeller.positions)
 
     ion_res_templates = get_ion_residue_templates(modeller)
+
     solvated_omm_host_system = construct_system_func(host_ff, modeller, ion_res_templates)
+
+    make_waters_contiguous(modeller)
 
     assert modeller.topology.getNumAtoms() == solvated_host_coords.shape[0], (
         "Modeller no longer matches number of atoms in the system"
@@ -583,19 +626,6 @@ def build_protein_system(
         raise TypeError("host_pdbfile must be a string or an openmm PDBFile object")
 
     modeller = app.Modeller(host_pdb.topology, host_pdb.positions)
-    host_coords = strip_units(host_pdb.positions)
-
-    water_residues_in_pdb = [residue for residue in host_pdb.topology.residues() if residue.name == WATER_RESIDUE_NAME]
-    num_host_atoms = host_coords.shape[0]
-    if len(water_residues_in_pdb) > 0:
-        host_water_atoms = len(water_residues_in_pdb) * 3
-        # Only consider non-water atoms as the host, does count excipients as the host
-        num_host_atoms = num_host_atoms - host_water_atoms
-        water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_residues_in_pdb])
-        expected_water_indices = np.arange(host_water_atoms) + num_host_atoms
-        np.testing.assert_equal(
-            water_indices, expected_water_indices, err_msg="Waters in PDB must be at the end of the file"
-        )
 
     return build_host_config_from_omm(
         modeller,
@@ -663,19 +693,6 @@ def build_membrane_system(
         raise TypeError("host_pdbfile must be a string or an openmm PDBFile object")
 
     modeller = app.Modeller(host_pdb.topology, host_pdb.positions)
-    host_coords = strip_units(host_pdb.positions)
-
-    water_residues_in_pdb = [residue for residue in host_pdb.topology.residues() if residue.name == WATER_RESIDUE_NAME]
-    num_host_atoms = host_coords.shape[0]
-    if len(water_residues_in_pdb) > 0:
-        host_water_atoms = len(water_residues_in_pdb) * 3
-        # Only consider non-water atoms as the host, does count excipients as the host
-        num_host_atoms = num_host_atoms - host_water_atoms
-        water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_residues_in_pdb])
-        expected_water_indices = np.arange(host_water_atoms) + num_host_atoms
-        np.testing.assert_equal(
-            water_indices, expected_water_indices, err_msg="Waters in PDB must be at the end of the file"
-        )
 
     return build_host_config_from_omm(
         modeller,

@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,6 +28,7 @@ from openmm import openmm as mm
 from rdkit import Chem
 
 from tmd import constants
+from tmd.fe.utils import read_sdf
 from tmd.ff import Forcefield, combine_params
 from tmd.ff.handlers import nonbonded
 from tmd.ff.handlers.deserialize import deserialize_handlers
@@ -55,6 +57,35 @@ def test_serialization_of_ffs():
                 assert handler is None
             else:
                 assert handler is not None, handler_name
+
+
+def test_amber_am1bcc_and_am1ccc_forcefields_have_identical_parameters():
+    """Unless the CCCs are adjusted, the two forcefields should be identical"""
+    rng = np.random.default_rng(2026)
+    ff_bcc = Forcefield.load_from_file("smirnoff_2_0_0_amber_am1bcc.py")
+    ff_ccc = Forcefield.load_from_file("smirnoff_2_0_0_amber_am1ccc.py")
+
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as ligand_path:
+        mols = read_sdf(ligand_path)
+    mol = rng.choice(mols)
+
+    # Remove any props that might cache values
+    for prop in mol.GetPropNames():
+        mol.ClearProp(prop)
+
+    mol_copy = Chem.Mol(mol)
+    for bcc_handle, ccc_handle in zip(ff_bcc.get_ordered_handles(), ff_ccc.get_ordered_handles()):
+        if bcc_handle is None:
+            assert ccc_handle is None
+            continue
+        params_bcc = bcc_handle.parameterize(mol)
+        params_ccc = ccc_handle.parameterize(mol_copy)
+        if isinstance(params_bcc, tuple):
+            assert len(params_bcc) == 2
+            params_bcc, idxs_bcc = params_bcc
+            params_ccc, idxs_ccc = params_ccc
+            np.testing.assert_array_equal(idxs_bcc, idxs_ccc)
+        np.testing.assert_array_equal(params_bcc, params_ccc)
 
 
 def test_loading_forcefield_from_file():

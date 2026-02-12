@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -86,6 +87,15 @@ class FlatBottomBond(Potential):
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
         return bonded.flat_bottom_bond(conf, params, box, self.idxs)
+
+
+@dataclass
+class FlatBottomRestraint(Potential):
+    idxs: NDArray[np.int32]
+    restraint_coords: NDArray
+
+    def __call__(self, conf: Conf, params: Params, box: Optional[Box]) -> float | Array:
+        return bonded.flat_bottom_restraint(conf, params, box, self.idxs, self.restraint_coords)
 
 
 @dataclass

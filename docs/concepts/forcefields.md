@@ -21,6 +21,7 @@ TMD includes pre-constructed forcefields with charge type extensions:
 - `smirnoff_x_x_x_ccc.py` - Smirnoff with Correctable BCCs, using OpenEye AM1ELF10 as base charges, suitable for BCC refitting.
 - `smirnoff_x_x_x_am1bcc.py` - Smirnoff with OpenEye AM1BCCELF10 charges; supports phosphorus.
 - `smirnoff_x_x_x_amber_am1bcc.py` - Smirnoff with Amber AM1BCCELF10 charges; may be very slow.
+- `smirnoff_x_x_x_amber_am1ccc.py` - Smirnoff with Amber AM1BCCELF10 charges; may be very slow. Suitable for refitting ligand charges.
 - `smirnoff_x_x_x_precomputed.py` - Smirnoff with precomputed charges assigned to ligands.
 
 #### Adding Precomputed Charges
