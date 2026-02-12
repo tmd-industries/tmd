@@ -1627,9 +1627,9 @@ void declare_bound_potential(py::module &m, const char *typestr) {
               D = coords.shape(2);
             } else {
               // Should always fail at this stage;
+              verify_coords_and_box(coords, box);
               throw std::runtime_error(
-                  "BoundPotential::execute got unexpected dimensions, ndim=" +
-                  std::to_string(coords.ndim()));
+                  "BoundPotential::execute failed for unknown reason");
             }
             const int num_systems = bp.potential->num_systems();
             // initialize with fixed garbage values for debugging convenience
@@ -3454,8 +3454,12 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
              const int num_systems = mover.num_systems();
              const int D = PARAMS_PER_ATOM;
              const int N = flat_params.size() / D * num_systems;
+             std::vector<int> params_shape = {N, D};
+             if (num_systems > 1) {
+               params_shape.insert(params_shape.begin(), num_systems);
+             }
              py::array_t<RealType, py::array::c_style> out_params(
-                 {num_systems, N, D}, flat_params.data());
+                 params_shape, flat_params.data());
              return out_params;
            })
       .def(

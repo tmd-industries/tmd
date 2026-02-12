@@ -163,7 +163,12 @@ def test_hrex_rbfe_hif2a(
 
     rss_traj = []
 
+    batch_size = 1
+
     def sample_and_record_rss(*args, **kwargs):
+        nonlocal batch_size
+        ctxt = args[0]
+        batch_size = ctxt.get_potentials()[0].num_systems()
         result = sample_with_context_iter(*args, **kwargs)
         rss_traj.append(Process().memory_info().rss)
         return result
@@ -192,7 +197,7 @@ def test_hrex_rbfe_hif2a(
         # min_overlap is None here, will reach the max number of windows
         assert final_windows == max_bisection_windows
 
-    assert len(rss_traj) > final_windows * md_params.n_frames
+    assert len(rss_traj) * batch_size > final_windows * md_params.n_frames
     # Check that memory usage is not increasing
     rss_traj = rss_traj[10:]  # discard initial transients
     assert len(rss_traj)
