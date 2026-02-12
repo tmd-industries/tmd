@@ -467,9 +467,9 @@ def test_run_rbfe_legs(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         (False, "vacuum"): (
-            "685a2dc7535b6de06931be3151336186766350c10fe86bb13c56d09f4151183f",
-            "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
-            "7f84f079fd7829941989dfe757df77bc28bb0f634147879720dc556881dd4195",
+            "c907ce95d06fe5369b2f7890839c73c60672a5be43d9bcf004437571a1a54236",
+            "75852ea851ad432d2541c0d55324d599e00d0f5cec1a26f64e5ca48e86a8f7e4",
+            "fe7c9c16e1defee7a416fe8352a88266eec5dc12807f2216359c2e5cdb17ada7",
         ),
         (False, "solvent"): (
             "102a9cb62df09104e7ad18818af999a414121f02ceb87d5c1a39225480e60b33",
@@ -482,19 +482,19 @@ def test_run_rbfe_legs(
             "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
         ),
         (True, "vacuum"): (
-            "685a2dc7535b6de06931be3151336186766350c10fe86bb13c56d09f4151183f",
-            "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
-            "7f84f079fd7829941989dfe757df77bc28bb0f634147879720dc556881dd4195",
+            "c907ce95d06fe5369b2f7890839c73c60672a5be43d9bcf004437571a1a54236",
+            "75852ea851ad432d2541c0d55324d599e00d0f5cec1a26f64e5ca48e86a8f7e4",
+            "fe7c9c16e1defee7a416fe8352a88266eec5dc12807f2216359c2e5cdb17ada7",
         ),
         (True, "solvent"): (
-            "102a9cb62df09104e7ad18818af999a414121f02ceb87d5c1a39225480e60b33",
-            "a839526092dce8883e246ba43bde84d644d12c04dddbde935e90c3c6cd906563",
-            "e0ed87de3b6f4040999bbe2a19313b35e0afffc4a1addfba72ab61bdce80546c",
+            "0f1d0b07a1dde22be1ab5afd4e98a5689bf1d9080d9f79f41512fdd36f1649bd",
+            "127ae4b9d9cc671a1ec9966483597b3571e58f6f7001959bd613515e369d1229",
+            "2c8702b72728146b14fb2788937e235162396736f5a8cc97bb8f6510d2d1e688",
         ),
         (True, "complex"): (
-            "e9a4de4eaaa48eaf7aa49b8eb41378df27ac91157747c9f6c4888cdeae263f6d",
-            "b6634c8f3bb6f6b07bc8b3b69f7862138979619e340b2d2903298e230643081a",
-            "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
+            "253ffee49ced6729aed6857cd9aa0b4e2191aa4d8951bee8dba008e91743f3d6",
+            "70d6367422f7641d9070997bc3f2614b636f618813bb785bfc642fef29924172",
+            "aaec1b7759b24fb7e684c5604feafc12db6a2c683fa0c089a94e79450a24899e",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -794,7 +794,9 @@ def test_run_rbfe_legs_local(
         proc = run_example("run_rbfe_legs.py", get_cli_args(config_a), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(leg, local_steps)])
+        verify_leg_results_hashes(
+            Path(config_a["output_dir"]) / leg, leg_results_hashes[(leg, local_steps, enable_batching)]
+        )
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
