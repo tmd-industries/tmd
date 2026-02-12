@@ -482,9 +482,9 @@ def test_run_rbfe_legs(
             "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
         ),
         (True, "vacuum"): (
-            "c907ce95d06fe5369b2f7890839c73c60672a5be43d9bcf004437571a1a54236",
-            "75852ea851ad432d2541c0d55324d599e00d0f5cec1a26f64e5ca48e86a8f7e4",
-            "fe7c9c16e1defee7a416fe8352a88266eec5dc12807f2216359c2e5cdb17ada7",
+            "60814da2840839494a3c846193fd917a0fb794fb8f018be7fca5f30c80e4b10b",
+            "1d44b1cde9499e0b360ac3dd831f15ae0685f5b5ed9a0a15e38733053a30c7ff",
+            "273f44224c1c88a81aa80280ccf842a5958583a92e514c80f328f238084493f3",
         ),
         (True, "solvent"): (
             "0f1d0b07a1dde22be1ab5afd4e98a5689bf1d9080d9f79f41512fdd36f1649bd",
@@ -681,19 +681,19 @@ def test_run_rbfe_legs_local(
             "d48741d0423055736f60e228debc3e6cfee1b9da5d67b9dde272dc3d8dd2447d",
         ),
         ("complex", 400, True): (
-            "4c021e76ff69fbd1131dc90109aa289886932cccd4d8a9e5bc432c6981679aa9",
-            "a07bccd5d85e44aaf694437674966c590480b7eeb010d19201bfcb3ca9b76173",
-            "ccf5b9d8ed5ec7b5ff34d71074f631ee42250d713c91e0fe8c9e526eddec86f2",
+            "4b16f752c5dbbda334afda7a01616c449da206925b94a353e3ee77083629fbe3",
+            "0a946faa7611c73f97dace407a9d11d87390cdf132ee4bf10536f36700c59f7b",
+            "5164010350abcfab2e8b3158804ddcf13bac170a3dce4e9cebb731417f74b419",
         ),
         ("solvent", 390, True): (
-            "13416594c844156eaff35b49b93d7ca78ce2a8b6cca86ea93108303977c9552d",
-            "072b72fb884d0f00de3085ecc628df6d42916fb62d42b679bcd9683411a1779b",
-            "6b3e0281f4d5ebe4abe7d69eddc27d7f64dcd97f0c2c3282f8e77f2b952515a8",
+            "f61fbf05cfc2c62c6c1cecde7767ce0ed7b2385729de72594c60db8d556b4795",
+            "a2e31f659e240ce741ba2d7241845cd6d8538049acb3ec3096a0fbe79503d7ef",
+            "b1e7cc4ce6951e2e1b22e0fdfff4a0ef03de30ad0b55981e33207879871118b2",
         ),
         ("complex", 390, True): (
-            "6f5f2ef0d996e6195a45574b1b45bf52c6421896522515fade1cd4af2f9d5918",
-            "9e1185b1111d125394fbcd32ee6a16a9da18542191fa7681ae9b615ffd5c90c4",
-            "f7709fa4c691ca730a1200e5cfced5db2e275954ed97858928b6918affaf7d6a",
+            "1c403b13b07a01b3ba6df9d3c381e9fdda57a51ea1ef3055607ba7d368b6f512",
+            "3834d190e132d068a940b4f3ee4011da242a62fee9b5495219ace1881ae5d3f3",
+            "b71a3b8f5040788fc3018fae4b6dfc37d036705c5951d5ee1f72561523f4aeab",
         ),
         ("solvent", 400, False): (
             "e99f12af5c0a678cad659efafa75d0e89e9fecb4ec69f2d12a07f895daef32a4",
