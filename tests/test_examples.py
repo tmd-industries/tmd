@@ -584,7 +584,7 @@ def test_run_rbfe_legs(
             assert ddg_rows[0]["mol_a"] == mol_a
             assert ddg_rows[0]["mol_b"] == mol_b
 
-        env = {"TMD_BATCHING_MODE": "on" if enable_batching else "off"}
+        env = {"TMD_BATCH_MODE": "on" if enable_batching else "off"}
 
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
@@ -646,6 +646,7 @@ def test_run_rbfe_legs(
 
 
 @pytest.mark.fixed_output
+@pytest.mark.parametrize("enable_batching", [False, True])
 @pytest.mark.parametrize(
     "leg, n_windows, n_frames, n_eq_steps, local_steps",
     [
@@ -658,6 +659,7 @@ def test_run_rbfe_legs(
 @pytest.mark.parametrize("mol_a, mol_b", [("15", "30")])
 @pytest.mark.parametrize("seed", [2025])
 def test_run_rbfe_legs_local(
+    enable_batching,
     leg,
     n_windows,
     n_frames,
@@ -673,22 +675,42 @@ def test_run_rbfe_legs_local(
     # which can be used to investigate the results that generated the hashes.
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
-        ("solvent", 400): (
+        ("solvent", 400, True): (
             "e99f12af5c0a678cad659efafa75d0e89e9fecb4ec69f2d12a07f895daef32a4",
             "041c105260026bf390c184eb8bb974aab76703a6f6e1891ddc1ffbc66c758053",
             "d48741d0423055736f60e228debc3e6cfee1b9da5d67b9dde272dc3d8dd2447d",
         ),
-        ("complex", 400): (
+        ("complex", 400, True): (
             "4c021e76ff69fbd1131dc90109aa289886932cccd4d8a9e5bc432c6981679aa9",
             "a07bccd5d85e44aaf694437674966c590480b7eeb010d19201bfcb3ca9b76173",
             "ccf5b9d8ed5ec7b5ff34d71074f631ee42250d713c91e0fe8c9e526eddec86f2",
         ),
-        ("solvent", 390): (
+        ("solvent", 390, True): (
             "13416594c844156eaff35b49b93d7ca78ce2a8b6cca86ea93108303977c9552d",
             "072b72fb884d0f00de3085ecc628df6d42916fb62d42b679bcd9683411a1779b",
             "6b3e0281f4d5ebe4abe7d69eddc27d7f64dcd97f0c2c3282f8e77f2b952515a8",
         ),
-        ("complex", 390): (
+        ("complex", 390, True): (
+            "6f5f2ef0d996e6195a45574b1b45bf52c6421896522515fade1cd4af2f9d5918",
+            "9e1185b1111d125394fbcd32ee6a16a9da18542191fa7681ae9b615ffd5c90c4",
+            "f7709fa4c691ca730a1200e5cfced5db2e275954ed97858928b6918affaf7d6a",
+        ),
+        ("solvent", 400, False): (
+            "e99f12af5c0a678cad659efafa75d0e89e9fecb4ec69f2d12a07f895daef32a4",
+            "041c105260026bf390c184eb8bb974aab76703a6f6e1891ddc1ffbc66c758053",
+            "d48741d0423055736f60e228debc3e6cfee1b9da5d67b9dde272dc3d8dd2447d",
+        ),
+        ("complex", 400, False): (
+            "4c021e76ff69fbd1131dc90109aa289886932cccd4d8a9e5bc432c6981679aa9",
+            "a07bccd5d85e44aaf694437674966c590480b7eeb010d19201bfcb3ca9b76173",
+            "ccf5b9d8ed5ec7b5ff34d71074f631ee42250d713c91e0fe8c9e526eddec86f2",
+        ),
+        ("solvent", 390, False): (
+            "13416594c844156eaff35b49b93d7ca78ce2a8b6cca86ea93108303977c9552d",
+            "072b72fb884d0f00de3085ecc628df6d42916fb62d42b679bcd9683411a1779b",
+            "6b3e0281f4d5ebe4abe7d69eddc27d7f64dcd97f0c2c3282f8e77f2b952515a8",
+        ),
+        ("complex", 390, False): (
             "6f5f2ef0d996e6195a45574b1b45bf52c6421896522515fade1cd4af2f9d5918",
             "9e1185b1111d125394fbcd32ee6a16a9da18542191fa7681ae9b615ffd5c90c4",
             "f7709fa4c691ca730a1200e5cfced5db2e275954ed97858928b6918affaf7d6a",
@@ -765,9 +787,11 @@ def test_run_rbfe_legs_local(
                 assert len(traj_data["coords"]) == n_frames
                 assert len(traj_data["boxes"]) == n_frames
 
+        env = {"TMD_BATCH_MODE": "on" if enable_batching else "off"}
+
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
         verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(leg, local_steps)])
@@ -775,7 +799,7 @@ def test_run_rbfe_legs_local(
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
         assert config_b["output_dir"] != config_a["output_dir"], "Runs are writing to the same output directory"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_b["output_dir"]))
 

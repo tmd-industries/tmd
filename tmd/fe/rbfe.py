@@ -62,6 +62,7 @@ from tmd.md.thermostat.utils import sample_velocities
 from tmd.optimize.protocol import greedily_optimize_protocol, make_fast_approx_overlap_distance_fxn
 from tmd.potentials import BoundPotential, jax_utils
 
+BATCH_MODE_ENV_VAR = "TMD_BATCH_MODE"
 DEFAULT_NUM_WINDOWS = 48
 
 # the constant is arbitrary, but see
@@ -1010,7 +1011,7 @@ def estimate_relative_free_energy_bisection_hrex_impl(
 
         batch_simulations = True
 
-        env_flag = os.environ.get("TMD_BATCH_MODE", None)
+        env_flag = os.environ.get(BATCH_MODE_ENV_VAR, None)
         if env_flag is not None:
             if env_flag.lower() == "on":
                 warnings.warn("Turning on batch mode, but batch mode is already on")
