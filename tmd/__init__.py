@@ -17,26 +17,15 @@ __version__ = "0.2.0"
 
 
 def _suppress_jax_no_gpu_warning():
-    """Suppresses the JAX 'No GPU/TPU found' warning when no GPU is available.
+    """Suppresses the following warning:
 
-    Only forces CPU mode if no GPU is actually available, allowing GPU usage
-    when GPUs are present.
+       WARNING:absl:No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
 
     See https://github.com/google/jax/issues/6805
     """
     import jax
 
-    # Check if GPU is available before forcing CPU
-    # This avoids suppressing GPU usage when GPUs are actually present
-    try:
-        devices = jax.devices()
-        has_gpu = any(d.platform in ("gpu", "cuda") for d in devices)
-        if not has_gpu:
-            # Only force CPU if no GPU is available (suppresses the warning)
-            jax.config.update("jax_platform_name", "cpu")
-    except Exception:
-        # If device detection fails, don't change platform settings
-        pass
+    jax.config.update("jax_platform_name", "cpu")
 
 
 _suppress_jax_no_gpu_warning()
