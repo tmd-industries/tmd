@@ -19,7 +19,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from tmd import potentials
-from tmd.constants import DEFAULT_CHIRAL_ATOM_RESTRAINT_K, DEFAULT_CHIRAL_BOND_RESTRAINT_K, NBParamIdx
+from tmd.constants import (
+    DEFAULT_CHIRAL_ATOM_RESTRAINT_K,
+    DEFAULT_CHIRAL_BOND_RESTRAINT_K,
+    DEFAULT_NB_CUTOFF,
+    NBParamIdx,
+)
 from tmd.fe import chiral_utils
 from tmd.fe.system import GuestSystem
 from tmd.fe.utils import get_romol_conf
@@ -38,7 +43,6 @@ _SCALE_14_LJ = 0.5
 _SCALE_14_Q = 0.5  # TODO: investigate FEP performance regression when set to OFF value
 
 _BETA = 2.0
-_CUTOFF = 1.2
 
 
 class AtomMappingError(Exception):
@@ -280,7 +284,7 @@ class BaseTopology:
         )
 
         beta = _BETA
-        cutoff = _CUTOFF  # solve for this analytically later
+        cutoff = DEFAULT_NB_CUTOFF  # solve for this analytically later
 
         N = len(q_params)
 
@@ -349,7 +353,7 @@ class BaseTopology:
         params[:, NBParamIdx.W_IDX] = 0.0
 
         beta = _BETA
-        cutoff = _CUTOFF  # solve for this analytically later
+        cutoff = DEFAULT_NB_CUTOFF  # solve for this analytically later
 
         return params, potentials.NonbondedPairListPrecomputed(inclusion_idxs, beta, cutoff)
 
@@ -566,7 +570,7 @@ class MultiTopology(BaseTopology):
         w_coords = jnp.zeros((N, 1))
 
         beta = _BETA
-        cutoff = _CUTOFF  # solve for this analytically later
+        cutoff = DEFAULT_NB_CUTOFF  # solve for this analytically later
 
         qlj_params = jnp.concatenate(
             [jnp.reshape(q_params, (-1, 1)), jnp.reshape(lj_params, (-1, 2)), w_coords], axis=1

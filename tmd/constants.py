@@ -24,7 +24,7 @@ BOLTZ = RGAS / 1000  # kJ/mol per kelvin
 ONE_4PI_EPS0 = 138.935456
 VIBRATIONAL_CONSTANT = 1302.79  # http://openmopac.net/manual/Hessian_Matrix.html
 
-DEFAULT_NB_CUTOFF = 1.2
+DEFAULT_NB_CUTOFF = 0.9
 
 # default thermodynamic ensemble
 DEFAULT_TEMP = 300.0  # kelvin
