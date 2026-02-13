@@ -108,6 +108,7 @@ def main():
     parser.add_argument("--steps", default=400, type=int)
     parser.add_argument("--frames", default=100, type=int)
     parser.add_argument("--output_suffix", default=None)
+    parser.add_argument("--nb_cutoff", default=constants.DEFAULT_NB_CUTOFF, type=float)
     parser.add_argument(
         "--active_thread_percentage",
         default=None,
@@ -131,7 +132,7 @@ def main():
     ff = Forcefield.load_default()
 
     if args.system == "dhfr":
-        host_fns, host_masses, x0, box0 = setup_dhfr()
+        host_fns, host_masses, x0, box0 = setup_dhfr(nb_cutoff=args.nb_cutoff)
         # Treat the entire system as the ligand indices
         ligand_idxs = np.arange(len(x0))
         harmonic_bond_potential = get_bound_potential_by_type(host_fns, HarmonicBond).potential
@@ -152,7 +153,9 @@ def main():
             mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
 
             with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_solv_equil.pdb") as protein_path:
-                host_config = builders.load_pdb_system(str(protein_path), ff.protein_ff, ff.water_ff, box_margin=0.1)
+                host_config = builders.load_pdb_system(
+                    str(protein_path), ff.protein_ff, ff.water_ff, box_margin=0.1, nb_cutoff=args.nb_cutoff
+                )
         else:
             with path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf") as ligands_path:
                 mols = read_sdf(ligands_path)
@@ -162,7 +165,7 @@ def main():
             core = atom_mapping.get_cores(mol_a, mol_b, **constants.DEFAULT_ATOM_MAPPING_KWARGS)[0]
             with path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "6hvi_prepared.pdb") as protein_path:
                 host_config = builders.build_protein_system(
-                    str(protein_path), ff.protein_ff, ff.water_ff, box_margin=0.1
+                    str(protein_path), ff.protein_ff, ff.water_ff, box_margin=0.1, nb_cutoff=args.nb_cutoff
                 )
 
         lamb = 0.0
@@ -179,7 +182,9 @@ def main():
         ligand_idxs = np.arange(len(host_config.conf), len(x0))
     elif args.system == "hif2a":
         with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_solv_equil.pdb") as protein_path:
-            host_config = builders.load_pdb_system(str(protein_path), ff.protein_ff, ff.water_ff)
+            host_config = builders.load_pdb_system(
+                str(protein_path), ff.protein_ff, ff.water_ff, nb_cutoff=args.nb_cutoff
+            )
 
         host_fns, host_masses, x0, box0 = (
             host_config.host_system.get_U_fns(),

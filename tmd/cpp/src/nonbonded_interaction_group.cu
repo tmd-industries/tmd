@@ -358,8 +358,7 @@ void NonbondedInteractionGroup<RealType>::execute_device(
     return;
   }
 
-  const int tpb = DEFAULT_THREADS_PER_BLOCK;
-  const int B = ceil_divide(N_, tpb);
+  constexpr int tpb = DEFAULT_THREADS_PER_BLOCK;
 
   int K; // number of atoms involved in the interaction group
   if (interaction_type_ == NonbondedInteractionType::DISJOINT) {

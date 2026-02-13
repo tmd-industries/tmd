@@ -53,7 +53,7 @@ protected:
   const int num_target_mols_;
   const RealType nb_beta_;
   const RealType beta_; // 1 / kT
-  const RealType cutoff_squared_;
+  const RealType cutoff_;
   const int batch_size_;
   const int num_intermediates_per_reduce_; // Number of intermediate values to
                                            // reduce mol weights

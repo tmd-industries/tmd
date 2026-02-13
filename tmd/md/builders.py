@@ -22,6 +22,7 @@ from numpy.typing import NDArray
 from openmm import app, openmm, unit
 from rdkit import Chem
 
+from tmd.constants import DEFAULT_NB_CUTOFF
 from tmd.fe.system import HostSystem
 from tmd.fe.utils import get_romol_conf
 from tmd.ff import get_water_ff_model
@@ -326,7 +327,7 @@ def load_pdb_system(
     protein_ff: str,
     water_ff: str,
     box_margin: float = 0.0,
-    cutoff: float = 1.2,
+    nb_cutoff: float = DEFAULT_NB_CUTOFF,
 ) -> HostConfig:
     """
     Load a protein system. Useful for when using an pre-existing system that has been solvated/equilibrated.
@@ -345,8 +346,8 @@ def load_pdb_system(
     box_margin: Amount of box_margin to add to box
         Avoids clashes within the system
 
-    cutoff: float
-        Nonbonded cutoff to use. Defaults to 1.2
+    nb_cutoff: float
+        Nonbonded cutoff to use. Defaults to tmd.constants.DEFAULT_NB_CUTOFF
 
     Returns
     -------
@@ -373,7 +374,7 @@ def load_pdb_system(
     omm_host_system = construct_default_omm_system(host_ff, modeller, ion_res_templates)
 
     (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
-        omm_host_system, cutoff=cutoff
+        omm_host_system, cutoff=nb_cutoff
     )
 
     host_system = HostSystem(
@@ -446,6 +447,7 @@ def build_host_config_from_omm(
     mols: list[Chem.Mol] | None = None,
     padding: float = 1.0,
     box_margin: float = 0.0,
+    nb_cutoff: float = DEFAULT_NB_CUTOFF,
     water_model: str = "tip3p",
     add_membrane: bool = False,
 ):
@@ -479,6 +481,9 @@ def build_host_config_from_omm(
 
     box_margin: Amount of box_margin to add to box, in nanometers
         Avoids clashes within the system
+
+    nb_cutoff: Nobonded Cutoff to use
+        Smaller cutoffs will produce faster simulations, but may be less accurate. Defaults to tmd.constants.DEFAULT_NB_CUTOFF
 
     water_model: str
         Water model used when adding waters. Can use tmd.ff.get_water_ff_model to get the appropriate
@@ -544,7 +549,7 @@ def build_host_config_from_omm(
         )
 
     (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
-        solvated_omm_host_system, cutoff=1.2
+        solvated_omm_host_system, cutoff=nb_cutoff
     )
 
     solvated_host_system = HostSystem(
@@ -584,6 +589,7 @@ def build_protein_system(
     ionic_concentration: float = 0.0,
     neutralize: bool = False,
     box_margin: float = 0.0,
+    nb_cutoff: float = DEFAULT_NB_CUTOFF,
 ) -> HostConfig:
     """
     Build a solvated protein system with a 10A padding.
@@ -611,6 +617,9 @@ def build_protein_system(
     box_margin: Amount of box_margin to add to box, in nanometers
         Avoids clashes within the system
 
+    nb_cutoff: Nobonded Cutoff to use
+        Smaller cutoffs will produce faster simulations, but may be less accurate. Defaults to tmd.constants.DEFAULT_NB_CUTOFF
+
     Returns
     -------
     HostConfig
@@ -635,6 +644,7 @@ def build_protein_system(
         padding=1.0,
         mols=mols,
         box_margin=box_margin,
+        nb_cutoff=nb_cutoff,
     )
 
 
@@ -646,6 +656,7 @@ def build_membrane_system(
     ionic_concentration: float = 0.0,
     neutralize: bool = False,
     box_margin: float = 0.0,
+    nb_cutoff: float = DEFAULT_NB_CUTOFF,
 ) -> HostConfig:
     """
     Build a solvated protein+membrane system with a 10A padding. Assumes the PDB file is posed such that the XY plane
@@ -677,6 +688,9 @@ def build_membrane_system(
     box_margin: Amount of box_margin to add to box
         Avoids clashes within the system
 
+    nb_cutoff: Nobonded Cutoff to use
+        Smaller cutoffs will produce faster simulations, but may be less accurate. Defaults to tmd.constants.DEFAULT_NB_CUTOFF
+
     Returns
     -------
     HostConfig
@@ -703,6 +717,7 @@ def build_membrane_system(
         mols=mols,
         box_margin=box_margin,
         add_membrane=True,
+        nb_cutoff=nb_cutoff,
     )
 
 
@@ -713,6 +728,7 @@ def build_water_system(
     ionic_concentration: float = 0.0,
     neutralize: bool = False,
     box_margin: float = 0.0,
+    nb_cutoff: float = DEFAULT_NB_CUTOFF,
 ) -> HostConfig:
     """
     Build a water system with a cubic box with each side of length box_width.
@@ -736,6 +752,9 @@ def build_water_system(
 
     box_margin: Amount of box_margin to add to box
         Avoids clashes within the system
+
+    nb_cutoff: Nobonded Cutoff to use
+        Smaller cutoffs will produce faster simulations, but may be less accurate. Defaults to tmd.constants.DEFAULT_NB_CUTOFF
 
     Returns
     -------
@@ -789,7 +808,7 @@ def build_water_system(
     omm_host_system = construct_default_omm_system(ff, modeller, ion_res_templates)
 
     (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
-        omm_host_system, cutoff=1.2
+        omm_host_system, cutoff=nb_cutoff
     )
 
     solvated_host_system = HostSystem(

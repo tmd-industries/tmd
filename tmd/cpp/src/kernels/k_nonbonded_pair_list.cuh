@@ -140,9 +140,9 @@ void __global__ k_nonbonded_pair_list(
     RealType dij;
     RealType inv_dij;
     RealType inv_d2ij;
-    compute_electrostatics<RealType, COMPUTE_U>(charge_scale, qi, qj, d2ij,
-                                                beta, dij, inv_dij, inv_d2ij,
-                                                ebd, delta_prefactor, u);
+    compute_electrostatics<RealType, COMPUTE_U>(
+        cutoff, charge_scale, qi, qj, d2ij, beta, dij, inv_dij, inv_d2ij, ebd,
+        delta_prefactor, u);
 
     // lennard jones force
     if (eps_i != 0 && eps_j != 0) {
