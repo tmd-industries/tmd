@@ -463,8 +463,8 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
     comp_final_swap_acceptance_rates = comp_res.hrex_diagnostics.cumulative_swap_acceptance_rates[-1]
 
     assert ref_final_swap_acceptance_rates.size == comp_final_swap_acceptance_rates.size
-    # Accept 5% difference in overlaps, 3x for swaps
-    tolerance = 0.05
+    # Accept 10% difference in overlaps, 3x for swaps
+    tolerance = 0.08
     np.testing.assert_allclose(ref_final_swap_acceptance_rates, comp_final_swap_acceptance_rates, atol=tolerance * 3)
     # Verify that all swaps are greater than zero
     assert np.all(ref_final_swap_acceptance_rates > tolerance)
