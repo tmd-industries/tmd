@@ -105,7 +105,6 @@ class FlatBottomBond(_BondBase):
 
 @dataclass
 class FlatBottomRestraint(_BondBase):
-    idxs: NDArray[np.int32]
     restraint_coords: NDArray
 
     def __call__(self, conf: Conf, params: Params, box: Optional[Box]) -> float | Array:
