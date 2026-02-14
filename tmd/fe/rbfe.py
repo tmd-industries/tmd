@@ -930,6 +930,20 @@ def estimate_relative_free_energy_bisection_hrex_impl(
     assert n_windows >= 2
 
     assert md_params.hrex_params is not None, "hrex_params must be set to use HREX"
+
+    batch_simulations = True
+
+    env_flag = os.environ.get(BATCH_MODE_ENV_VAR, None)
+    if env_flag is not None:
+        if env_flag.lower() == "on":
+            warnings.warn("Turning on batch mode, but batch mode is already on")
+            batch_simulations = True
+        elif env_flag.lower() == "off":
+            warnings.warn("Turning off batch mode")
+            batch_simulations = False
+        else:
+            warnings.warn(f"Ignoring unknown batch mode: {env_flag}")
+
     try:
         # First phase: bisection to determine lambda spacing
         md_params_bisection = replace(md_params, n_frames=md_params.hrex_params.n_frames_bisection)
@@ -944,6 +958,7 @@ def estimate_relative_free_energy_bisection_hrex_impl(
             n_bisections=n_windows - 2,
             temperature=temperature,
             min_overlap=min_overlap,
+            batch_simulations=batch_simulations,
         )
 
         assert all(traj.final_velocities is not None for traj in trajectories_by_state)
@@ -1008,19 +1023,6 @@ def estimate_relative_free_energy_bisection_hrex_impl(
             )
         else:
             initial_states_hrex = [get_initial_state(s.lamb) for s in initial_states]
-
-        batch_simulations = True
-
-        env_flag = os.environ.get(BATCH_MODE_ENV_VAR, None)
-        if env_flag is not None:
-            if env_flag.lower() == "on":
-                warnings.warn("Turning on batch mode, but batch mode is already on")
-                batch_simulations = True
-            elif env_flag.lower() == "off":
-                warnings.warn("Turning off batch mode")
-                batch_simulations = False
-            else:
-                warnings.warn(f"Ignoring unknown batch mode: {env_flag}")
 
         # Second phase: sample initial states determined by bisection using HREX
         pair_bar_result, trajectories_by_state, hrex_diagnostics, ws_diagnostics = run_sims_hrex(
