@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -653,6 +653,75 @@ def get_summed_potential_from_bps(bps: Sequence[BoundPotential_f32]) -> SummedPo
     return SummedPotential_f32([bp.get_potential() for bp in bps], [bp.size() for bp in bps])
 
 
+def get_batched_context(initial_states: Sequence[InitialState], md_params: Optional[MDParams] = None) -> Context_f32:
+    for s in initial_states[1:]:
+        assert_ensembles_compatible(initial_states[0], s)
+
+    assert len(initial_states) > 1
+    bps = [bp for bp in initial_states[0].potentials]
+    for state in initial_states[1:]:
+        for i, pot in enumerate(state.potentials):
+            combined_pot = bps[i].combine(pot)
+            bps[i] = combined_pot
+
+    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
+
+    assert isinstance(initial_states[0].integrator, LangevinIntegrator)
+    intg = LangevinIntegrator(
+        initial_states[0].integrator.temperature,
+        initial_states[0].integrator.dt,
+        initial_states[0].integrator.friction,
+        np.array([initial_states[0].integrator.masses for _ in range(len(initial_states))]),
+        initial_states[0].integrator.seed,
+    )
+    intg_impl = intg.impl(np.float32)
+    movers = []
+    if initial_states[0].barostat is not None:
+        # Requires that the barostat is consistent across states
+        movers.append(initial_states[0].barostat.impl(bound_impls))
+
+    if md_params is not None and md_params.water_sampling_params is not None:
+        hb_potential = get_bound_potential_by_type(initial_states[0].potentials, HarmonicBond).potential
+        group_indices = get_group_indices(get_bond_list(hb_potential), len(initial_states[0].integrator.masses))
+
+        water_idxs = get_water_idxs(group_indices, ligand_idxs=initial_states[0].ligand_idxs)
+
+        # Select a Nonbonded Potential to get the the cutoff/beta, assumes all have same cutoff/beta.
+        nb = get_bound_potential_by_type(initial_states[0].potentials, Nonbonded).potential
+
+        water_params = np.array([get_water_sampler_params(initial_state) for initial_state in initial_states])
+        assert water_params.shape[0] == len(initial_states)
+
+        # Generate a new random seed based on the integrator seed, MDParams seed is constant across states
+        rng = np.random.default_rng(initial_states[0].integrator.seed)
+        water_sampler_seed = rng.integers(np.iinfo(np.int32).max)
+
+        water_sampler = custom_ops.TIBDExchangeMove_f32(
+            initial_states[0].x0.shape[0],
+            initial_states[0].ligand_idxs.tolist(),  # type: ignore
+            water_idxs,
+            water_params,
+            initial_states[0].integrator.temperature,
+            nb.beta,
+            nb.cutoff,
+            md_params.water_sampling_params.radius,
+            water_sampler_seed,
+            md_params.water_sampling_params.n_proposals,
+            md_params.water_sampling_params.interval,
+            batch_size=md_params.water_sampling_params.batch_size,
+        )
+        movers.append(water_sampler)
+
+    return Context_f32(
+        np.stack([state.x0 for state in initial_states]),
+        np.stack([state.v0 for state in initial_states]),
+        np.stack([state.box0 for state in initial_states]),
+        intg_impl,
+        bound_impls,
+        movers=movers,
+    )
+
+
 def get_context(initial_state: InitialState, md_params: Optional[MDParams] = None) -> Context_f32:
     """
     Construct a Context from the potentials defined by the initial state
@@ -1265,7 +1334,7 @@ def batch_compute_potential_matrix(
     computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
     set to `np.inf`.
 
-    A batched variant of `compute_potential_matrix`.
+    A batched variant of `compute_potential_matrix` that parallelizes the computation of energies on the GPU using streams.
 
     Parameters
     ----------
@@ -1495,11 +1564,200 @@ def generate_pair_bar_ulkns(
     return u_kln_by_component_by_lambda
 
 
+def run_sequential_hrex_step(
+    hrex: HREX,
+    nrg_pots: list[custom_ops.Potential_f32],
+    params_by_state_by_pot: list[NDArray],
+    water_params_by_state: NDArray | None,
+    context: custom_ops.Context_f32,
+    md_params: MDParams,
+    ligand_idxs: NDArray[np.int32],
+    temperature: float,
+    current_frame: int,
+):
+    assert md_params.hrex_params is not None
+    bound_potentials = context.get_potentials()
+
+    barostat = context.get_barostat()
+    water_sampler: custom_ops.TIBDExchangeMove_f32 | custom_ops.TIBDExchangeMove_f64 | None = None
+
+    if barostat is not None and md_params.water_sampling_params is not None:
+        # Should have a barostat and a water sampler
+        assert len(context.get_movers()) == 2
+        water_sampler = next(mover for mover in context.get_movers() if isinstance(mover, WATER_SAMPLER_MOVERS))
+
+    water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(hrex.replicas))]
+
+    def sample_replica(xvb: CoordsVelBox, state_idx: StateIdx) -> tuple[NDArray, NDArray, NDArray, Optional[float]]:
+        context.set_x_t(xvb.coords)
+        context.set_v_t(xvb.velocities)
+        context.set_box(xvb.box)
+
+        for i, bp in enumerate(bound_potentials):
+            bp.set_params(params_by_state_by_pot[i][state_idx])
+
+        # Movers are not called during local steps, so if local moves are mixed in need to account only for global steps
+        current_mover_step = current_frame * md_params.steps_per_frame
+        if md_params.local_md_params is not None:
+            current_mover_step = current_frame * (md_params.steps_per_frame - md_params.local_md_params.local_steps)
+        # Setup the MC movers of the Context
+        starting_water_acceptances = 0
+        starting_water_proposals = 0
+        if water_sampler is not None:
+            assert water_params_by_state is not None
+            water_sampler.set_params(water_params_by_state[state_idx])
+            water_sampler.set_step(current_mover_step)
+            assert water_sampler.num_systems() == 1
+            starting_water_proposals = water_sampler.n_proposed()[0]
+            starting_water_acceptances = water_sampler.n_accepted()[0]
+        if barostat is not None:
+            barostat.set_step(current_mover_step)
+
+        md_params_replica = replace(
+            md_params,
+            n_frames=1,
+            # Run equilibration as part of the first frame
+            n_eq_steps=md_params.n_eq_steps if current_frame == 0 else 0,
+            seed=state_idx + current_frame,
+        )
+
+        assert md_params_replica.n_frames == 1
+        # Get the next set of frames from the iterator, which will be the only value returned
+        frame, box, final_velos = next(
+            sample_with_context_iter(context, md_params_replica, temperature, ligand_idxs, batch_size=1)
+        )
+        assert frame.shape[0] == 1
+
+        if water_sampler is not None:
+            final_water_proposals = water_sampler.n_proposed()[0] - starting_water_proposals
+            final_water_acceptances = water_sampler.n_accepted()[0] - starting_water_acceptances
+            water_sampling_acceptance_proposal_counts_by_state[state_idx] = (
+                final_water_acceptances,
+                final_water_proposals,
+            )
+
+        final_barostat_volume_scale_factor = (
+            float(np.mean(barostat.get_volume_scale_factor())) if barostat is not None else None
+        )
+
+        return frame[-1], box[-1], final_velos, final_barostat_volume_scale_factor
+
+    def replica_from_samples(last_sample: tuple[NDArray, NDArray, NDArray, Optional[float]]) -> CoordsVelBox:
+        frame, box, velos, _ = last_sample
+        return CoordsVelBox(frame, velos, box)
+
+    hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica, replica_from_samples)
+    # Generate the per-potential U_kl, avoids the need to re-compute the U_kln at the end
+    U_kl_raw = batch_compute_potential_matrix(
+        nrg_pots,
+        hrex,
+        params_by_state_by_pot,
+        md_params.hrex_params.max_delta_states,
+    )
+
+    return hrex, samples_by_state_iter, U_kl_raw, water_sampling_acceptance_proposal_counts_by_state
+
+
+def run_batched_hrex_step(
+    hrex: HREX,
+    nrg_pots: list[custom_ops.Potential_f32],
+    params_by_state_by_pot: list[NDArray],
+    water_params_by_state: NDArray | None,
+    context: custom_ops.Context_f32,
+    md_params: MDParams,
+    ligand_idxs: NDArray[np.int32],
+    temperature: float,
+    current_frame: int,
+):
+    assert md_params.hrex_params is not None
+    bound_potentials = context.get_potentials()
+    barostat = context.get_barostat()
+
+    water_sampler: custom_ops.TIBDExchangeMove_f32 | custom_ops.TIBDExchangeMove_f64 | None = None
+
+    if md_params.water_sampling_params is not None:
+        # Should have a barostat and a water sampler
+        assert len(context.get_movers()) == 2
+        water_sampler = next(mover for mover in context.get_movers() if isinstance(mover, WATER_SAMPLER_MOVERS))
+
+    water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(hrex.replicas))]
+
+    state_to_replica = np.argsort(hrex.replica_idx_by_state).tolist()
+
+    # Note that the index of the frames is the replica index, the params need to be permuted accordingly
+    if current_frame > 0:
+        for i, bp in enumerate(bound_potentials):
+            params = np.stack(params_by_state_by_pot[i])[state_to_replica]  # type: ignore
+            bp.set_params(params)
+
+    # Setup the MC movers of the Context
+    if water_sampler is not None:
+        accepted = np.asarray(water_sampler.n_accepted())[state_to_replica]
+        proposed = np.asarray(water_sampler.n_proposed())[state_to_replica]
+        for i, (acc, prop) in enumerate(zip(accepted, proposed)):
+            water_sampling_acceptance_proposal_counts_by_state[i] = (acc, prop)
+
+        assert water_params_by_state is not None
+        water_sampler.set_params(water_params_by_state[state_to_replica])
+
+    md_params_replica = replace(
+        md_params,
+        n_frames=1,
+        # Run equilibration as part of the first frame
+        n_eq_steps=md_params.n_eq_steps if current_frame == 0 else 0,
+        seed=md_params.seed + current_frame,
+    )
+
+    assert md_params_replica.n_frames == 1
+    # Get the next set of frames from the iterator, which will be the only value returned
+    frame, box, final_velos = next(
+        sample_with_context_iter(context, md_params_replica, temperature, ligand_idxs, batch_size=1)
+    )
+
+    assert frame.shape[0] == 1
+    assert frame.shape[1] == len(hrex.replicas)
+
+    if water_sampler is not None:
+        accepted = np.asarray(water_sampler.n_accepted())[state_to_replica]
+        proposed = np.asarray(water_sampler.n_proposed())[state_to_replica]
+        for i, (acc, prop) in enumerate(zip(accepted, proposed)):
+            last_acc, last_prop = water_sampling_acceptance_proposal_counts_by_state[i]
+            water_sampling_acceptance_proposal_counts_by_state[i] = (acc - last_acc, prop - last_prop)
+
+    final_barostat_volume_scale_factors = barostat.get_volume_scale_factor() if barostat is not None else None
+
+    def sample_replica_wrapper(xvb: CoordsVelBox, state_idx: StateIdx):
+        replica_idx = state_to_replica.index(state_idx)  # type: ignore
+
+        return (
+            frame[-1, replica_idx],
+            box[-1, replica_idx],
+            final_velos[replica_idx],
+            None if final_barostat_volume_scale_factors is None else final_barostat_volume_scale_factors[replica_idx],
+        )
+
+    def replica_from_samples(last_sample: tuple[NDArray, NDArray, NDArray, Optional[float]]) -> CoordsVelBox:
+        x, b, v, _ = last_sample
+        return CoordsVelBox(x, v, b)
+
+    hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica_wrapper, replica_from_samples)
+
+    U_kl_raw = batch_compute_potential_matrix(
+        nrg_pots,
+        hrex,
+        params_by_state_by_pot,
+        md_params.hrex_params.max_delta_states,
+    )
+
+    return hrex, samples_by_state_iter, U_kl_raw, water_sampling_acceptance_proposal_counts_by_state
+
+
 def run_sims_hrex(
     initial_states: Sequence[InitialState],
     md_params: MDParams,
     n_swap_attempts_per_iter: Optional[int] = None,
     print_diagnostics_interval: Optional[int] = 10,
+    batch_simulations: bool = False,
 ) -> tuple[PairBarResult, list[Trajectory], HREXDiagnostics, WaterSamplingDiagnostics | None]:
     r"""Sample from a sequence of states using nearest-neighbor Hamiltonian Replica EXchange (HREX).
 
@@ -1519,6 +1777,9 @@ def run_sims_hrex(
 
     print_diagnostics_interval: int or None, optional
         If not None, print diagnostics every N iterations
+
+    batch_simulations: bool
+        Run simulations in batch mode. May result in GPU running out of memory
 
     Returns
     -------
@@ -1548,9 +1809,16 @@ def run_sims_hrex(
         assert_potentials_compatible(initial_states[0].potentials, s.potentials)
 
     # Set up overall potential and context using the first state.
-    context = get_context(initial_states[0], md_params=md_params)
-    bound_potentials = context.get_potentials()
-    assert len(bound_potentials) == len(initial_states[0].potentials)
+    if batch_simulations:
+        context = get_batched_context(initial_states, md_params=md_params)
+
+        temp_ctxt = get_context(initial_states[0])
+        nrg_pots = [bp.get_potential() for bp in temp_ctxt.get_potentials()]
+        del temp_ctxt
+    else:
+        context = get_context(initial_states[0], md_params=md_params)
+        nrg_pots = [bp.get_potential() for bp in context.get_potentials()]
+    assert len(context.get_potentials()) == len(initial_states[0].potentials)
     temperature = initial_states[0].integrator.temperature
     ligand_idxs = initial_states[0].ligand_idxs
 
@@ -1560,27 +1828,19 @@ def run_sims_hrex(
     params_by_state = [get_state_params(initial_state) for initial_state in initial_states]
 
     params_by_state_by_pot = [
-        np.asarray([params[i] for params in params_by_state]) for i in range(len(bound_potentials))
+        np.asarray([params[i] for params in params_by_state]) for i in range(len(initial_states[0].potentials))
     ]
 
     water_params_by_state: Optional[NDArray] = None
     if md_params.water_sampling_params is not None:
         water_params_by_state = np.array([get_water_sampler_params(initial_state) for initial_state in initial_states])
 
-    state_idxs = [StateIdx(i) for i, _ in enumerate(initial_states)]
+    state_idxs = [StateIdx(i) for i in range(len(initial_states))]
     neighbor_pairs = list(zip(state_idxs, state_idxs[1:]))
 
     if len(initial_states) == 2:
         # Add an identity move to the mixture to ensure aperiodicity
         neighbor_pairs = [(StateIdx(0), StateIdx(0)), *neighbor_pairs]
-
-    barostat = context.get_barostat()
-    water_sampler: custom_ops.TIBDExchangeMove_f32 | custom_ops.TIBDExchangeMove_f64 | None = None
-
-    if barostat is not None and md_params.water_sampling_params is not None:
-        # Should have a barostat and a water sampler
-        assert len(context.get_movers()) == 2
-        water_sampler = next(mover for mover in context.get_movers() if isinstance(mover, WATER_SAMPLER_MOVERS))
 
     hrex = HREX.from_replicas([CoordsVelBox(s.x0, s.v0, s.box0) for s in initial_states])
 
@@ -1601,80 +1861,28 @@ def run_sims_hrex(
     kBT = temperature * BOLTZ
 
     iterated_u_kln = np.full(
-        (len(bound_potentials), len(initial_states), len(initial_states), md_params.n_frames), np.inf, dtype=np.float32
+        (len(initial_states[0].potentials), len(initial_states), len(initial_states), md_params.n_frames),
+        np.inf,
+        dtype=np.float32,
     )
 
+    hrex_func = run_sequential_hrex_step if not batch_simulations else run_batched_hrex_step
+
     for current_frame in range(md_params.n_frames):
-        water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(initial_states))]
-
-        def sample_replica(xvb: CoordsVelBox, state_idx: StateIdx) -> tuple[NDArray, NDArray, NDArray, Optional[float]]:
-            context.set_x_t(xvb.coords)
-            context.set_v_t(xvb.velocities)
-            context.set_box(xvb.box)
-
-            params_by_bp = params_by_state[state_idx]
-            for bp, params in zip(bound_potentials, params_by_bp):
-                bp.set_params(params)
-
-            # Movers are not called during local steps, so if local moves are mixed in need to account only for global steps
-            current_mover_step = current_frame * md_params.steps_per_frame
-            if md_params.local_md_params is not None:
-                current_mover_step = current_frame * (md_params.steps_per_frame - md_params.local_md_params.local_steps)
-            # Setup the MC movers of the Context
-            starting_water_acceptances = 0
-            starting_water_proposals = 0
-            if water_sampler is not None:
-                assert water_params_by_state is not None
-                water_sampler.set_params(water_params_by_state[state_idx])
-                water_sampler.set_step(current_mover_step)
-                assert water_sampler.num_systems() == 1
-                starting_water_proposals = water_sampler.n_proposed()[0]
-                starting_water_acceptances = water_sampler.n_accepted()[0]
-            if barostat is not None:
-                barostat.set_step(current_mover_step)
-
-            md_params_replica = replace(
-                md_params,
-                n_frames=1,
-                # Run equilibration as part of the first frame
-                n_eq_steps=md_params.n_eq_steps if current_frame == 0 else 0,
-                seed=state_idx + current_frame,
-            )
-
-            assert md_params_replica.n_frames == 1
-            # Get the next set of frames from the iterator, which will be the only value returned
-            frame, box, final_velos = next(
-                sample_with_context_iter(context, md_params_replica, temperature, ligand_idxs, batch_size=1)
-            )
-            assert frame.shape[0] == 1
-
-            if water_sampler is not None:
-                final_water_proposals = water_sampler.n_proposed()[0] - starting_water_proposals
-                final_water_acceptances = water_sampler.n_accepted()[0] - starting_water_acceptances
-                water_sampling_acceptance_proposal_counts_by_state[state_idx] = (
-                    final_water_acceptances,
-                    final_water_proposals,
-                )
-
-            final_barostat_volume_scale_factor = (
-                float(np.mean(barostat.get_volume_scale_factor())) if barostat is not None else None
-            )
-
-            return frame[-1], box[-1], final_velos, final_barostat_volume_scale_factor
-
-        def replica_from_samples(last_sample: tuple[NDArray, NDArray, NDArray, Optional[float]]) -> CoordsVelBox:
-            frame, box, velos, _ = last_sample
-            return CoordsVelBox(frame, velos, box)
-
-        hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica, replica_from_samples)
-        water_sampler_proposals_by_state_by_iter.append(water_sampling_acceptance_proposal_counts_by_state)
-        # Generate the per-potential U_kl, avoids the need to re-compute the U_kln at the end
-        U_kl_raw = batch_compute_potential_matrix(
-            [bp.get_potential() for bp in bound_potentials],
+        hrex, samples_by_state_iter, U_kl_raw, water_sampler_proposals_by_state = hrex_func(
             hrex,
+            nrg_pots,  # TBD: Use the batched potentials for computing the energy matrix
             params_by_state_by_pot,
-            md_params.hrex_params.max_delta_states,
+            water_params_by_state,
+            context,
+            md_params,
+            ligand_idxs,
+            temperature,
+            current_frame,
         )
+
+        water_sampler_proposals_by_state_by_iter.append(water_sampler_proposals_by_state)
+
         # Sum the per-potential components for performing swaps
         U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 

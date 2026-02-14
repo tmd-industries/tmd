@@ -1625,11 +1625,8 @@ void declare_bound_potential(py::module &m, const char *typestr) {
             } else if (coords.ndim() == 3) {
               N = coords.shape(1);
               D = coords.shape(2);
-              // for (int i = 0; i  < coords.shape(0); i++) {
-              //   verify_coords_and_box(coords[i], box[i]);
-              // }
             } else {
-              // Should always fail at this stage
+              // Should always fail at this stage;
               verify_coords_and_box(coords, box);
               throw std::runtime_error(
                   "BoundPotential::execute failed for unknown reason");
@@ -3454,10 +3451,15 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
       .def("get_params",
            [](Class &mover) -> py::array_t<RealType, py::array::c_style> {
              std::vector<RealType> flat_params = mover.get_params();
+             const int num_systems = mover.num_systems();
              const int D = PARAMS_PER_ATOM;
-             const int N = flat_params.size() / D;
+             const int N = flat_params.size() / D * num_systems;
+             std::vector<int> params_shape = {N, D};
+             if (num_systems > 1) {
+               params_shape.insert(params_shape.begin(), num_systems);
+             }
              py::array_t<RealType, py::array::c_style> out_params(
-                 {N, D}, flat_params.data());
+                 params_shape, flat_params.data());
              return out_params;
            })
       .def(

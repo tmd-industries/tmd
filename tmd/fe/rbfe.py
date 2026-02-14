@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import os
 import pickle
 import warnings
 from collections.abc import Iterable, Sequence
@@ -62,6 +62,7 @@ from tmd.md.thermostat.utils import sample_velocities
 from tmd.optimize.protocol import greedily_optimize_protocol, make_fast_approx_overlap_distance_fxn
 from tmd.potentials import BoundPotential, jax_utils
 
+BATCH_MODE_ENV_VAR = "TMD_BATCH_MODE"
 DEFAULT_NUM_WINDOWS = 48
 
 # the constant is arbitrary, but see
@@ -1008,10 +1009,24 @@ def estimate_relative_free_energy_bisection_hrex_impl(
         else:
             initial_states_hrex = [get_initial_state(s.lamb) for s in initial_states]
 
+        batch_simulations = True
+
+        env_flag = os.environ.get(BATCH_MODE_ENV_VAR, None)
+        if env_flag is not None:
+            if env_flag.lower() == "on":
+                warnings.warn("Turning on batch mode, but batch mode is already on")
+                batch_simulations = True
+            elif env_flag.lower() == "off":
+                warnings.warn("Turning off batch mode")
+                batch_simulations = False
+            else:
+                warnings.warn(f"Ignoring unknown batch mode: {env_flag}")
+
         # Second phase: sample initial states determined by bisection using HREX
         pair_bar_result, trajectories_by_state, hrex_diagnostics, ws_diagnostics = run_sims_hrex(
             initial_states_hrex,
             replace(md_params, n_eq_steps=0),  # using pre-equilibrated samples
+            batch_simulations=batch_simulations,
         )
 
         plots = make_pair_bar_plots(pair_bar_result, temperature, combined_prefix)

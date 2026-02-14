@@ -243,8 +243,8 @@ def test_run_rbfe_graph_local(
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("scoring_method", ["best", "jaccard", "dummy_atoms"])
-def test_build_rbfe_graph(scoring_method):
+@pytest.mark.parametrize("scoring_method, expected_edges", [("best", 58), ("jaccard", 59), ("dummy_atoms", 58)])
+def test_build_rbfe_graph(scoring_method, expected_edges):
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
         base_args = [str(hif2a_dir / "ligands.sdf"), "--greedy_scoring", scoring_method]
         with NamedTemporaryFile(suffix=".json") as temp:
@@ -254,7 +254,7 @@ def test_build_rbfe_graph(scoring_method):
             with open(temp.name) as ifs:
                 ref_edges = json.load(ifs)
                 # The number of edges changes based on the mapping
-                assert 63 <= len(ref_edges) <= 64
+                assert len(ref_edges) == expected_edges
                 assert all(isinstance(edge, dict) for edge in ref_edges)
                 for expected_key in ["mol_a", "mol_b", "core"]:
                     assert all(expected_key in edge for edge in ref_edges)
@@ -313,10 +313,10 @@ def test_build_rbfe_graph_charge_hop():
 
 @pytest.mark.nocuda
 @pytest.mark.parametrize(
-    "parameters_to_adjust",
-    [{"ring_matches_ring_only": True}, {"max_connected_components": 2}, {"enforce_core_core": False}],
+    "parameters_to_adjust, expected_edges",
+    [({"ring_matches_ring_only": True}, 58), ({"max_connected_components": 2}, 58), ({"enforce_core_core": False}, 58)],
 )
-def test_build_rbfe_graph_atom_mapping_parameters(parameters_to_adjust):
+def test_build_rbfe_graph_atom_mapping_parameters(parameters_to_adjust, expected_edges):
     atom_mapping_kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
     # Parameters to update should be in the base atom mapping set
     assert set(atom_mapping_kwargs.keys()).union(parameters_to_adjust.keys()) == set(atom_mapping_kwargs.keys())
@@ -339,7 +339,7 @@ def test_build_rbfe_graph_atom_mapping_parameters(parameters_to_adjust):
             with open(temp.name) as ifs:
                 ref_edges = json.load(ifs)
                 # The number of edges changes based on the mapping
-                assert 63 <= len(ref_edges) <= 66
+                assert len(ref_edges) == expected_edges
                 assert all(isinstance(edge, dict) for edge in ref_edges)
                 for expected_key in ["mol_a", "mol_b", "core"]:
                     assert all(expected_key in edge for edge in ref_edges)
@@ -443,13 +443,15 @@ def verify_leg_results_hashes(leg_dir: Path, expected_hash: str):
 
 
 @pytest.mark.fixed_output
+@pytest.mark.parametrize("enable_batching", [False, True])
 @pytest.mark.parametrize(
     "leg, n_windows, n_frames, n_eq_steps",
-    [("vacuum", 6, 50, 1000), ("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
+    [("vacuum", 24, 50, 1000), ("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
 )
 @pytest.mark.parametrize("mol_a, mol_b", [("15", "30")])
 @pytest.mark.parametrize("seed", [2025])
 def test_run_rbfe_legs(
+    enable_batching,
     leg,
     n_windows,
     n_frames,
@@ -464,20 +466,35 @@ def test_run_rbfe_legs(
     # which can be used to investigate the results that generated the hashes.
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
-        "vacuum": (
-            "685a2dc7535b6de06931be3151336186766350c10fe86bb13c56d09f4151183f",
-            "c025f066123ae36ca7698ae1c3a0aac144cf16806491a8af96e42561b7a65693",
-            "7f84f079fd7829941989dfe757df77bc28bb0f634147879720dc556881dd4195",
+        (False, "vacuum"): (
+            "f6037bbd113c54ce3b06b2c50a61a015502866341a35ce9883e5f710db4389df",
+            "6886f74df3d0899980fe4cc3f7b4b00a37db6f7ef05ee6169a537ff656f5295a",
+            "5812eb125a0ec707bb169536f506cef18f53fe4c92f59ed0c889ab669dbcde66",
         ),
-        "solvent": (
-            "102a9cb62df09104e7ad18818af999a414121f02ceb87d5c1a39225480e60b33",
-            "a839526092dce8883e246ba43bde84d644d12c04dddbde935e90c3c6cd906563",
-            "e0ed87de3b6f4040999bbe2a19313b35e0afffc4a1addfba72ab61bdce80546c",
+        (False, "solvent"): (
+            "0486b647802e4c03186b509d1d89c2f91cf9fb6a3e4ef0e8ce4d968c0f5f9d2f",
+            "15f07065aa84affde2adb3d10f40bed2f20028148a1c66e77650f0ea599a3cbd",
+            "675dcc01e335616cd8544bc0a87bab895b0a3310c5c17ccf15f65636f6ebdd2a",
         ),
-        "complex": (
-            "e9a4de4eaaa48eaf7aa49b8eb41378df27ac91157747c9f6c4888cdeae263f6d",
-            "b6634c8f3bb6f6b07bc8b3b69f7862138979619e340b2d2903298e230643081a",
-            "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
+        (False, "complex"): (
+            "215d806c89acb78bd43d168558f64f170e41564177b5b0a80b85baec50fd37ea",
+            "d89bf4811f0635ad240052a12cdbacb8eb68075598be2a784a3f4588167ec5fe",
+            "428f5b97fd2208589e2dc82d85cfa50ca0b97ed33e25bbe1d303981aa25ccd7f",
+        ),
+        (True, "vacuum"): (
+            "eedbdcb6b04caffe9a5831046157072d61223cb7e8052be68182e95ccc2a080c",
+            "b3b5b57f3bed86dfa7b57f4061e87b2978f5a8dd621690c56931ffdce3576db5",
+            "6bb4e41a57c64eb9ac857021690affb565754f570a8aa258ccaee8111c156dd6",
+        ),
+        (True, "solvent"): (
+            "ef16042e6dd01a63d4d5e196060931f89d73554b5e1e0cc171c9d7636b8db862",
+            "f89514856113919745fa7d5cb5ff9a1f13e3ac87d3d6c1a97ba1404ca67f048a",
+            "5546774570c9342c941e001600dd918a3d399e6ad345499a65d6a24b30079241",
+        ),
+        (True, "complex"): (
+            "05df595296141d7130d9fba460c62210f7780d2276dd6137659c32468939fa08",
+            "d741cb2bbc5751eca83f14cdc57d893359e44660cadc548ddcfaedb62b75a53f",
+            "f7f0654adfc391a70cea70a364fe893d53ec724d4707569d8bab3133e58abf22",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -492,7 +509,7 @@ def test_run_rbfe_legs(
             n_frames=n_frames,
             n_windows=n_windows,
             forcefield=DEFAULT_FF,
-            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_{mol_a}_{mol_b}_{leg}_{seed}",
+            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_{mol_a}_{mol_b}_{leg}_{seed}_{enable_batching}",
             force_overwrite=None,  # Force overwrite any existing data
             experimental_field="IC50[uM](SPA)",
             experimental_units="uM",
@@ -567,17 +584,19 @@ def test_run_rbfe_legs(
             assert ddg_rows[0]["mol_a"] == mol_a
             assert ddg_rows[0]["mol_b"] == mol_b
 
+        env = {"TMD_BATCH_MODE": "on" if enable_batching else "off"}
+
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[leg])
+        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(enable_batching, leg)])
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
         assert config_b["output_dir"] != config_a["output_dir"], "Runs are writing to the same output directory"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_b["output_dir"]))
 
@@ -627,6 +646,7 @@ def test_run_rbfe_legs(
 
 
 @pytest.mark.fixed_output
+@pytest.mark.parametrize("enable_batching", [False, True])
 @pytest.mark.parametrize(
     "leg, n_windows, n_frames, n_eq_steps, local_steps",
     [
@@ -639,6 +659,7 @@ def test_run_rbfe_legs(
 @pytest.mark.parametrize("mol_a, mol_b", [("15", "30")])
 @pytest.mark.parametrize("seed", [2025])
 def test_run_rbfe_legs_local(
+    enable_batching,
     leg,
     n_windows,
     n_frames,
@@ -654,25 +675,45 @@ def test_run_rbfe_legs_local(
     # which can be used to investigate the results that generated the hashes.
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
-        ("solvent", 400): (
-            "e99f12af5c0a678cad659efafa75d0e89e9fecb4ec69f2d12a07f895daef32a4",
-            "041c105260026bf390c184eb8bb974aab76703a6f6e1891ddc1ffbc66c758053",
-            "d48741d0423055736f60e228debc3e6cfee1b9da5d67b9dde272dc3d8dd2447d",
+        ("solvent", 400, True): (
+            "06393b7bf1e060a03fc501fb840f93723c7215b05abfd5583fc1d75bd7567259",
+            "8e8a4a983e93eef8ad2bddd591785751fe08e2970854e733b68ba215981eb0d4",
+            "1147b911fd490ea443db33be7076157bfda92e3a339d1b80150f026cd9a28612",
         ),
-        ("complex", 400): (
-            "4c021e76ff69fbd1131dc90109aa289886932cccd4d8a9e5bc432c6981679aa9",
-            "a07bccd5d85e44aaf694437674966c590480b7eeb010d19201bfcb3ca9b76173",
-            "ccf5b9d8ed5ec7b5ff34d71074f631ee42250d713c91e0fe8c9e526eddec86f2",
+        ("complex", 400, True): (
+            "05cdb26da906ef582440c71a51725ec76ec5aeab8eea7ef617931fda91bdd8cc",
+            "affc8f7dc7054f1b0b29199168bdbc93322676d7e56de6a9a17fe8675a6db579",
+            "d336a4fff7aea6cf190e43451f7701f35df9f1e6a95f24cbd17337736a0164ca",
         ),
-        ("solvent", 390): (
-            "13416594c844156eaff35b49b93d7ca78ce2a8b6cca86ea93108303977c9552d",
-            "072b72fb884d0f00de3085ecc628df6d42916fb62d42b679bcd9683411a1779b",
-            "6b3e0281f4d5ebe4abe7d69eddc27d7f64dcd97f0c2c3282f8e77f2b952515a8",
+        ("solvent", 390, True): (
+            "30140f144869ac973cafa3048b4f721d4c1ecc4f9f416ce7772e716916467c18",
+            "47306c2f0019a8ce002d4f4a6081c1a0e97f5807fcdb5121ac5301207068fdbb",
+            "a1edcc2f8b3be509656edd4556ae0995fb3e91be8f63678e1ca14c5da3cc8c88",
         ),
-        ("complex", 390): (
-            "6f5f2ef0d996e6195a45574b1b45bf52c6421896522515fade1cd4af2f9d5918",
-            "9e1185b1111d125394fbcd32ee6a16a9da18542191fa7681ae9b615ffd5c90c4",
-            "f7709fa4c691ca730a1200e5cfced5db2e275954ed97858928b6918affaf7d6a",
+        ("complex", 390, True): (
+            "4b90a4dbe8bf4b9d7b2362b9e8041c7afb5fc2dadb96cf6504a59de97802436e",
+            "4cca45375401019197a61f6beb6419b5b8ad6c485d416d490e19958cc0575b3b",
+            "1d566d1fb470996ea12ffcc8dddb665c56d8ca636cb0b81f548f7d3346aedbff",
+        ),
+        ("solvent", 400, False): (
+            "88a47c42da84db9ded4b5c75b405d8f53e1e1b54737fd4ba89a557f269809302",
+            "ae3c13799a2b3de54e776bf21a15a6937303ea5b7168415a9f22fec7c85fb34b",
+            "9896a66cb47e22d457b48ab6f03c2dcb85a13ec01a28988b2c57cb7ed1a7ec2f",
+        ),
+        ("complex", 400, False): (
+            "3197ffe103a435efb4f1ebb7a385eb7a52e1e0d07cdf9edf52dd19258f905a5e",
+            "3f5362bae67f81be6c1cf1ede79614a7b3e40994981efa177cc9038d153d74e6",
+            "2615c28622911c7b77d643a14b937382a0bdba79f42e27e9422da12eb25f4b90",
+        ),
+        ("solvent", 390, False): (
+            "67f2c6c5c360b30ff569868e725c43c8aafdbf04b660e7827d0dfa75f2aa9a8c",
+            "fb83a54cb54629d503b2c6ec2c29f7c930fca484e1ecf71838207fc1700a95db",
+            "d9262eb53e230dda24dbee9f909f8d55680bf62f1d8521c8a5a05a44a26713eb",
+        ),
+        ("complex", 390, False): (
+            "7d93d2e93bf66c29b49fc352fbf0ea0f41240a00348c41babeac1de3978ec540",
+            "8c4c196e786b69cf55b59773ad26f460f82cbe099abe9f1856957d405dc80980",
+            "2c8f88cb93cf5e2926982a8486f8d772dd34c07d81baaf13ce1f82ab33769368",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -687,7 +728,7 @@ def test_run_rbfe_legs_local(
             n_frames=n_frames,
             n_windows=n_windows,
             forcefield=DEFAULT_FF,
-            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}_{local_steps}",
+            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}_{local_steps}_{enable_batching}",
             local_md_steps=local_steps,
             local_md_radius=2.0,
             force_overwrite=None,  # Force overwrite any existing data
@@ -746,17 +787,21 @@ def test_run_rbfe_legs_local(
                 assert len(traj_data["coords"]) == n_frames
                 assert len(traj_data["boxes"]) == n_frames
 
+        env = {"TMD_BATCH_MODE": "on" if enable_batching else "off"}
+
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(leg, local_steps)])
+        verify_leg_results_hashes(
+            Path(config_a["output_dir"]) / leg, leg_results_hashes[(leg, local_steps, enable_batching)]
+        )
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
         assert config_b["output_dir"] != config_a["output_dir"], "Runs are writing to the same output directory"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_b["output_dir"]))
 
