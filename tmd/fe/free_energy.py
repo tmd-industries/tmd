@@ -1110,7 +1110,7 @@ class MinOverlapWarning(UserWarning):
     pass
 
 
-def run_sims_bisection(
+def _run_sequential_bisection(
     initial_lambdas: Sequence[float],
     make_initial_state: Callable[[float], InitialState],
     md_params: MDParams,
@@ -1163,7 +1163,7 @@ def run_sims_bisection(
     get_initial_state = cache(make_initial_state)
     rng = np.random.default_rng(md_params.seed)
 
-    # Set up a single context and potentisl for generating the BarResult objects
+    # Set up a single context and potential for generating the BarResult objects
     context = get_context(get_initial_state(lambdas[0]), md_params=md_params)
     bound_potentials = context.get_potentials()
     assert len(bound_potentials) == len(get_initial_state(lambdas[0]).potentials)
@@ -1267,6 +1267,288 @@ def run_sims_bisection(
     trajectories = [get_samples(lamb) for lamb in lambdas]
 
     return results, trajectories
+
+
+def _run_batched_bisection(
+    initial_lambdas: Sequence[float],
+    make_initial_state: Callable[[float], InitialState],
+    md_params: MDParams,
+    n_bisections: int,
+    temperature: float,
+    min_overlap: Optional[float] = None,
+    verbose: bool = True,
+    batch_size: int = 8,
+) -> tuple[list[PairBarResult], list[Trajectory]]:
+    r"""Starting from a specified lambda schedule, successively bisect the lambda interval between the pair of states
+    with the lowest BAR overlap and sample the new state with MD.
+
+    Parameters
+    ----------
+    initial_lambdas: sequence of float, length >= 2, monotonically increasing
+        Initial protocol; starting point for bisection.
+
+    make_initial_state: callable
+        Function returning an InitialState (i.e., starting point for MD) given lambda
+
+    md_params: MDParams
+        Parameters used to simulate new states
+
+    n_bisections: int
+        Number of bisection steps to perform
+
+    temperature: float
+        Temperature in K
+
+    min_overlap: float or None, optional
+        If not None, return early when the BAR overlap between all neighboring pairs of states exceeds this value
+
+    verbose: bool, optional
+        Whether to print diagnostic information
+
+    batch_simulations: bool
+        Run simulations in batch mode. May result in GPU running out of memory
+
+    Returns
+    -------
+    list of IntermediateResult
+        For each iteration of bisection, object containing the current list of states and array of energy-decomposed
+        u_kln matrices.
+
+    list of Trajectory
+        Trajectory for each state
+    """
+
+    assert len(initial_lambdas) >= 2
+    assert np.all(np.diff(initial_lambdas) > 0), "initial lambda schedule must be monotonically increasing"
+    get_initial_state = cache(make_initial_state)
+    rng = np.random.default_rng(md_params.seed)
+
+    if len(initial_lambdas) == 2:
+        lambdas = [float(x) for x in np.linspace(initial_lambdas[0], initial_lambdas[-1], batch_size)]
+    else:
+        assert False, "Not handled"
+
+    # Set up a single context and potential for generating the BarResult objects
+    context = get_batched_context([get_initial_state(lamb) for lamb in lambdas], md_params=md_params)  # type: ignore
+    bound_potentials = context.get_potentials()
+    assert len(bound_potentials) == len(get_initial_state(lambdas[0]).potentials)
+
+    temp_ctxt = get_context(get_initial_state(initial_lambdas[0]))
+    nrg_pots = [bp.get_potential() for bp in temp_ctxt.get_potentials()]
+    del temp_ctxt
+
+    barostat = context.get_barostat()
+
+    first_state = get_initial_state(initial_lambdas[0])
+    initial_volume_scale_factor = 0.0
+    ligand_idxs = first_state.ligand_idxs
+    if barostat is not None:
+        assert first_state.barostat is not None
+        initial_volume_scale_factor = first_state.barostat.initial_volume_scale_factor or 0.0
+
+    trajs_by_lamb = {}
+
+    def sample_lambdas(lambs: list[float]):
+        if len(trajs_by_lamb) > 0:
+            states = [get_initial_state(lamb) for lamb in lambs]
+            context.set_x_t(np.stack([state.x0 for state in states]))
+            context.set_v_t(np.stack([state.v0 for state in states]))
+            context.set_box(np.stack([state.box0 for state in states]))
+            for i, bp in enumerate(bound_potentials):
+                bp.set_params(np.stack([state.potentials[i].params for state in states]))
+            for mover in context.get_movers():
+                mover.set_step(0)
+                if isinstance(mover, WATER_SAMPLER_MOVERS):
+                    mover.set_params(np.stack([get_water_sampler_params(state) for state in states]))
+                elif isinstance(mover, BAROSTAT_MOVERS):
+                    # assert initial_state.barostat is not None
+                    # If initial_volume_scale factor is None, set to 0.0. Which indicates 1% of box volume.
+                    mover.set_volume_scale_factor(initial_volume_scale_factor)
+
+        samples_by_lamb: list[Trajectory] = [Trajectory.empty() for _ in lambs]
+        # TBD: Fix the ligand idxs
+        for frames, boxes, velos in sample_with_context_iter(
+            context,
+            replace(md_params, seed=rng.integers(np.iinfo(np.int32).max)),
+            temperature,
+            ligand_idxs,
+            batch_size=1,
+        ):
+            frames = frames.reshape(1, batch_size, -1, 3)
+            boxes = boxes.reshape(1, batch_size, 3, 3)
+            velos = velos.reshape(batch_size, -1, 3)
+            for i in range(len(lambs)):
+                samples_by_lamb[i].frames.extend([frames[0, i]])
+                samples_by_lamb[i].boxes.extend([boxes[0, i]])
+                samples_by_lamb[i].final_velocities = velos[i]
+
+        if barostat is not None:
+            volume_scales = barostat.get_volume_scale_factor()
+            for i in range(len(lambs)):
+                samples_by_lamb[i].final_barostat_volume_scale_factor = volume_scales[i]
+        for lamb, traj in zip(lambs, samples_by_lamb):
+            assert lamb not in trajs_by_lamb
+            trajs_by_lamb[lamb] = traj
+
+    sample_lambdas(lambdas)
+
+    @cache
+    def get_bar_result(lamb1: float, lamb2: float) -> BarResult:
+        initial_states = [get_initial_state(lamb1), get_initial_state(lamb2)]
+        trajs = [trajs_by_lamb[lamb1], trajs_by_lamb[lamb2]]
+        u_kln_by_component = generate_pair_bar_ulkns(initial_states, trajs, temperature, nrg_pots)
+
+        # Trim off the first dimension
+        assert u_kln_by_component.shape[0] == 1
+        u_kln_by_component = u_kln_by_component.reshape(u_kln_by_component.shape[1:])
+        assert len(u_kln_by_component.shape) == 4
+        return estimate_free_energy_bar(u_kln_by_component, temperature, n_bootstrap=0)
+
+    def compute_intermediate_result(lambdas: Sequence[float]) -> PairBarResult:
+        refined_initial_states = [get_initial_state(lamb) for lamb in lambdas]
+        bar_results = []
+        for lamb1, lamb2 in zip(lambdas, lambdas[1:]):
+            bar_res = get_bar_result(lamb1, lamb2)
+            bar_results.append(bar_res)
+        return PairBarResult(refined_initial_states, bar_results)
+
+    def get_next_lambda_batch(lambs: Sequence[float]) -> tuple[NDArray, list[float]]:
+        overlaps = np.array([get_bar_result(lamb1, lamb2).overlap for lamb1, lamb2 in zip(lambs, lambs[1:])])
+        idxs_below_overlap = np.argsort(overlaps)
+
+        num_gaps = np.sum(overlaps < min_overlap)
+        assert num_gaps >= 1
+
+        lambs_to_add = []
+
+        lambs_per_gaps = max(1, int(np.ceil(batch_size / num_gaps)))
+
+        for idx in idxs_below_overlap:
+            if overlaps[idx] >= min_overlap:
+                break
+            if len(lambs_to_add) == batch_size:
+                break
+            spots_left = batch_size - len(lambs_to_add)
+            assert spots_left > 0
+            to_add = min(spots_left, lambs_per_gaps)
+            delta = abs(lambs[idx + 1] - lambs[idx]) / (to_add + 1)
+
+            lambs_to_add.extend(np.linspace(lambs[idx] + delta, lambs[idx + 1], to_add, endpoint=False))
+
+        assert len(lambs_to_add) == batch_size
+        return overlaps, lambs_to_add
+
+    result = compute_intermediate_result(lambdas)
+    results = [result]
+
+    n_bisections = max(1, n_bisections // batch_size)
+
+    for iteration in range(n_bisections):
+        if min_overlap is not None and np.all(np.array(result.overlaps) > min_overlap):
+            if verbose:
+                print(f"All BAR overlaps exceed min_overlap={min_overlap}. Returning after {iteration} iterations.")
+            break
+
+        overlaps, new_lambs_to_sample = get_next_lambda_batch(lambdas)
+        if verbose:
+            if min_overlap is not None:
+                overlap_info = f"Current minimum BAR overlap {np.min(overlaps):.3g} <= {min_overlap:.3g} "
+            else:
+                overlap_info = f"Current minimum BAR overlap {np.min(overlaps):.3g} (min_overlap == None) "
+
+            print(
+                f"Bisection iteration {iteration + 1} (of {n_bisections}): "
+                + overlap_info
+                + f"Sampling new states at λ={[float(np.round(x, 2)) for x in sorted(new_lambs_to_sample)]}…"
+            )
+        sample_lambdas(new_lambs_to_sample)
+
+        lambdas = [float(x) for x in sorted(lambdas + new_lambs_to_sample)]
+        result = compute_intermediate_result(lambdas)
+        results.append(result)
+    else:
+        if min_overlap is not None and np.min(result.overlaps) < min_overlap:
+            warn(
+                f"Reached n_bisections={n_bisections} iterations without achieving min_overlap={min_overlap}. "
+                f"The minimum BAR overlap was {np.min(result.overlaps)}.",
+                MinOverlapWarning,
+            )
+
+    trajectories = [trajs_by_lamb[lamb] for lamb in lambdas]
+
+    return results, trajectories
+
+
+def run_sims_bisection(
+    initial_lambdas: Sequence[float],
+    make_initial_state: Callable[[float], InitialState],
+    md_params: MDParams,
+    n_bisections: int,
+    temperature: float,
+    min_overlap: Optional[float] = None,
+    verbose: bool = True,
+    batch_simulations: bool = False,
+) -> tuple[list[PairBarResult], list[Trajectory]]:
+    r"""Starting from a specified lambda schedule, successively bisect the lambda interval between the pair of states
+    with the lowest BAR overlap and sample the new state with MD.
+
+    Parameters
+    ----------
+    initial_lambdas: sequence of float, length >= 2, monotonically increasing
+        Initial protocol; starting point for bisection.
+
+    make_initial_state: callable
+        Function returning an InitialState (i.e., starting point for MD) given lambda
+
+    md_params: MDParams
+        Parameters used to simulate new states
+
+    n_bisections: int
+        Number of bisection steps to perform
+
+    temperature: float
+        Temperature in K
+
+    min_overlap: float or None, optional
+        If not None, return early when the BAR overlap between all neighboring pairs of states exceeds this value
+
+    verbose: bool, optional
+        Whether to print diagnostic information
+
+    batch_simulations: bool
+        Run simulations in batch mode. May result in GPU running out of memory
+
+    Returns
+    -------
+    list of IntermediateResult
+        For each iteration of bisection, object containing the current list of states and array of energy-decomposed
+        u_kln matrices.
+
+    list of Trajectory
+        Trajectory for each state
+    """
+
+    if batch_simulations:
+        return _run_batched_bisection(
+            initial_lambdas,
+            make_initial_state,
+            md_params,
+            n_bisections,
+            temperature,
+            min_overlap,
+            verbose,
+            8,
+        )
+    else:
+        return _run_sequential_bisection(
+            initial_lambdas,
+            make_initial_state,
+            md_params,
+            n_bisections,
+            temperature,
+            min_overlap,
+            verbose,
+        )
 
 
 def compute_potential_matrix(
