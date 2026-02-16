@@ -50,9 +50,6 @@ pip install -e .[dev,test]
 
 In some cases it may be desirable to build a wheel of TMD for installation in environments without CMake and NVCC. This can be done in the following way.
 
-> [!NOTE]
-> Requires installing the development requirements
-
 ```shell
 # If the CUDA shared libraries are to be included in the wheel
 cp -P /usr/local/cuda/lib64/libcudart.so* tmd/lib/
