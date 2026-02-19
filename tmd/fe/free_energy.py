@@ -35,6 +35,7 @@ from tmd.fe.bar import (
     sanitize_energies_for_bar,
     works_from_ukln,
 )
+from tmd.fe.lambda_schedule import interpolate_pre_optimized_protocol
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_dG_errs_figure,
@@ -1305,8 +1306,9 @@ def _run_batched_bisection(
     verbose: bool, optional
         Whether to print diagnostic information
 
-    batch_simulations: bool
-        Run simulations in batch mode. May result in GPU running out of memory
+    batch_size: int
+        Number of simulations to simulate in each batch. Must be greater than 1. There is likely a trade off between
+        the batch size and effectiveness of batch size. May return up to batch_size * (n_bisections + 1) windows.
 
     Returns
     -------
@@ -1318,15 +1320,37 @@ def _run_batched_bisection(
         Trajectory for each state
     """
 
+    if batch_size <= 1:
+        raise ValueError(f"Batch size must be greater than 1, got {batch_size}")
     assert len(initial_lambdas) >= 2
     assert np.all(np.diff(initial_lambdas) > 0), "initial lambda schedule must be monotonically increasing"
+    if len(initial_lambdas) > batch_size:
+        raise RuntimeError("Batched Bisection doesn't support more initial lambdas than batch size")
     get_initial_state = cache(make_initial_state)
     rng = np.random.default_rng(md_params.seed)
 
     if len(initial_lambdas) == 2:
-        lambdas = [float(x) for x in np.linspace(initial_lambdas[0], initial_lambdas[-1], batch_size)]
+        lambdas_ = np.linspace(initial_lambdas[0], initial_lambdas[-1], batch_size)
     else:
-        assert False, "Not handled"
+        # if the user has provided initial lambdas, replace the nearest linear lambda with the provided lambda
+        lambdas_ = interpolate_pre_optimized_protocol(np.asarray(initial_lambdas), batch_size, validate=False)
+
+        def find_nearest_lamb(lamb: float):
+            abs_delta = np.abs(lambdas_ - lamb)
+            nearest_idx = np.argmin(abs_delta)
+            return nearest_idx
+
+        for i, user_lamb in enumerate(initial_lambdas):
+            # Ignore the endstates
+            if i == 0 or i == len(initial_lambdas) - 1:
+                continue
+            nearest_idx = find_nearest_lamb(user_lamb)
+            lambdas_[nearest_idx] = user_lamb
+        # Verify that all of the lambdas are correctly assigned
+        for lamb in initial_lambdas:
+            assert lamb in lambdas_
+
+    lambdas = [float(x) for x in lambdas_]
 
     # Set up a single context and potential for generating the BarResult objects
     context = get_batched_context([get_initial_state(lamb) for lamb in lambdas], md_params=md_params)  # type: ignore
@@ -1366,7 +1390,7 @@ def _run_batched_bisection(
                     mover.set_volume_scale_factor(initial_volume_scale_factor)
 
         samples_by_lamb: list[Trajectory] = [Trajectory.empty() for _ in lambs]
-        # TBD: Fix the ligand idxs
+        # TBD: Handle the ligand idxs in a more dynamic manner
         for frames, boxes, velos in sample_with_context_iter(
             context,
             replace(md_params, seed=rng.integers(np.iinfo(np.int32).max)),
@@ -1415,8 +1439,9 @@ def _run_batched_bisection(
     def get_next_lambda_batch(lambs: Sequence[float]) -> tuple[NDArray, list[float]]:
         overlaps = np.array([get_bar_result(lamb1, lamb2).overlap for lamb1, lamb2 in zip(lambs, lambs[1:])])
         idxs_below_overlap = np.argsort(overlaps)
+        target_overlap = min_overlap if min_overlap is not None else 1.0
 
-        num_gaps = np.sum(overlaps < min_overlap)
+        num_gaps = np.sum(overlaps < target_overlap)
         assert num_gaps >= 1
 
         lambs_to_add = []
@@ -1424,7 +1449,7 @@ def _run_batched_bisection(
         lambs_per_gaps = max(1, int(np.ceil(batch_size / num_gaps)))
 
         for idx in idxs_below_overlap:
-            if overlaps[idx] >= min_overlap:
+            if overlaps[idx] >= target_overlap:
                 break
             if len(lambs_to_add) == batch_size:
                 break
@@ -1487,7 +1512,7 @@ def run_sims_bisection(
     temperature: float,
     min_overlap: Optional[float] = None,
     verbose: bool = True,
-    batch_simulations: bool = False,
+    batch_size: int = 1,
 ) -> tuple[list[PairBarResult], list[Trajectory]]:
     r"""Starting from a specified lambda schedule, successively bisect the lambda interval between the pair of states
     with the lowest BAR overlap and sample the new state with MD.
@@ -1515,8 +1540,8 @@ def run_sims_bisection(
     verbose: bool, optional
         Whether to print diagnostic information
 
-    batch_simulations: bool
-        Run simulations in batch mode. May result in GPU running out of memory
+    batch_size: int
+        Number of simulations to run in each batch. Setting to 1 disables any batching.
 
     Returns
     -------
@@ -1528,7 +1553,7 @@ def run_sims_bisection(
         Trajectory for each state
     """
 
-    if batch_simulations:
+    if batch_size > 1:
         return _run_batched_bisection(
             initial_lambdas,
             make_initial_state,
@@ -1537,7 +1562,7 @@ def run_sims_bisection(
             temperature,
             min_overlap,
             verbose,
-            8,
+            batch_size,
         )
     else:
         return _run_sequential_bisection(

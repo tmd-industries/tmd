@@ -63,6 +63,7 @@ from tmd.optimize.protocol import greedily_optimize_protocol, make_fast_approx_o
 from tmd.potentials import BoundPotential, jax_utils
 
 BATCH_MODE_ENV_VAR = "TMD_BATCH_MODE"
+BISECTION_BATCH_SIZE_ENV_VAR = "TMD_BISECTION_BATCH_SIZE"
 DEFAULT_NUM_WINDOWS = 48
 
 # the constant is arbitrary, but see
@@ -933,16 +934,25 @@ def estimate_relative_free_energy_bisection_hrex_impl(
 
     batch_simulations = True
 
-    env_flag = os.environ.get(BATCH_MODE_ENV_VAR, None)
-    if env_flag is not None:
-        if env_flag.lower() == "on":
+    mode_flag = os.environ.get(BATCH_MODE_ENV_VAR, None)
+    if mode_flag is not None:
+        # TBD: May want to disable batching if it is clear that it would trigger an OOM
+        if mode_flag.lower() == "on":
             warnings.warn("Turning on batch mode, but batch mode is already on")
             batch_simulations = True
-        elif env_flag.lower() == "off":
+        elif mode_flag.lower() == "off":
             warnings.warn("Turning off batch mode")
             batch_simulations = False
         else:
-            warnings.warn(f"Ignoring unknown batch mode: {env_flag}")
+            warnings.warn(f"Ignoring unknown batch mode: {mode_flag}")
+    batch_size = 8
+    batch_flag = os.environ.get(BISECTION_BATCH_SIZE_ENV_VAR, None)
+    if batch_flag is not None:
+        if not batch_flag.isdecimal():
+            warnings.warn(f"Ignoring non-integer batch size: {batch_flag}")
+        else:
+            batch_size = int(batch_flag)
+            assert batch_size > 1
 
     try:
         # First phase: bisection to determine lambda spacing
@@ -958,7 +968,8 @@ def estimate_relative_free_energy_bisection_hrex_impl(
             n_bisections=n_windows - 2,
             temperature=temperature,
             min_overlap=min_overlap,
-            batch_simulations=batch_simulations,
+            # TBD: Parameterize the batch size
+            batch_size=batch_size if batch_simulations else 1,
         )
 
         assert all(traj.final_velocities is not None for traj in trajectories_by_state)
