@@ -559,7 +559,12 @@ def test_run_rbfe_legs(
 
             assert results["n_windows"].size == 1
             assert results["n_windows"].dtype == np.intp
-            assert 2 <= results["n_windows"] <= config["n_windows"]
+            if not enable_batching:
+                assert 2 <= results["n_windows"] <= config["n_windows"]
+            else:
+                batch_size = 8
+                # If batching, can get config["n_windows"] // 8
+                assert 2 <= results["n_windows"] <= max(1, config["n_windows"] // batch_size) * batch_size
             assert isinstance(results["overlaps"], np.ndarray)
             assert all(isinstance(overlap, float) for overlap in results["overlaps"])
 
@@ -778,7 +783,12 @@ def test_run_rbfe_legs_local(
 
             assert results["n_windows"].size == 1
             assert results["n_windows"].dtype == np.intp
-            assert 2 <= results["n_windows"] <= config["n_windows"]
+            if not enable_batching:
+                assert 2 <= results["n_windows"] <= config["n_windows"]
+            else:
+                batch_size = 8
+                # If batching, can get config["n_windows"] // 8
+                assert 2 <= results["n_windows"] <= max(1, config["n_windows"] // batch_size) * batch_size
             assert isinstance(results["overlaps"], np.ndarray)
             assert all(isinstance(overlap, float) for overlap in results["overlaps"])
 

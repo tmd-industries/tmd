@@ -1466,7 +1466,7 @@ def _run_batched_bisection(
     result = compute_intermediate_result(lambdas)
     results = [result]
 
-    n_bisections = max(1, n_bisections // batch_size)
+    n_bisections = n_bisections // batch_size
 
     for iteration in range(n_bisections):
         if min_overlap is not None and np.all(np.array(result.overlaps) > min_overlap):
