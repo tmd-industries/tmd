@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,12 +27,13 @@ def validate_lambda_schedule(lambda_schedule: NDArray, num_windows: int):
     assert ((lambda_schedule[1:] - lambda_schedule[:-1]) > 0).all()
 
 
-def interpolate_pre_optimized_protocol(pre_optimized_protocol: NDArray, num_windows: int):
+def interpolate_pre_optimized_protocol(pre_optimized_protocol: NDArray, num_windows: int, validate: bool = True):
     xp = np.linspace(0, 1, len(pre_optimized_protocol))
     x_interp = np.linspace(0, 1, num_windows)
     lambda_schedule = np.interp(x_interp, xp, pre_optimized_protocol)
 
-    validate_lambda_schedule(lambda_schedule, num_windows)
+    if validate:
+        validate_lambda_schedule(lambda_schedule, num_windows)
 
     return lambda_schedule
 

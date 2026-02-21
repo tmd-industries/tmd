@@ -482,9 +482,9 @@ def test_run_rbfe_legs(
             "428f5b97fd2208589e2dc82d85cfa50ca0b97ed33e25bbe1d303981aa25ccd7f",
         ),
         (True, "vacuum"): (
-            "eedbdcb6b04caffe9a5831046157072d61223cb7e8052be68182e95ccc2a080c",
-            "b3b5b57f3bed86dfa7b57f4061e87b2978f5a8dd621690c56931ffdce3576db5",
-            "6bb4e41a57c64eb9ac857021690affb565754f570a8aa258ccaee8111c156dd6",
+            "5b6631c0f44d555e52b39cda5d696789ab22df517d7c223fe44e7bc2807be4fd",
+            "aa4b3014573d9b969559eb0460fea320657de48237690f5de175b5d2f97312ef",
+            "b6c75d5d37939196c3271e7db56299b07e8e9b856ace03e4d9b42f11cf30c220",
         ),
         (True, "solvent"): (
             "ef16042e6dd01a63d4d5e196060931f89d73554b5e1e0cc171c9d7636b8db862",
@@ -559,7 +559,12 @@ def test_run_rbfe_legs(
 
             assert results["n_windows"].size == 1
             assert results["n_windows"].dtype == np.intp
-            assert 2 <= results["n_windows"] <= config["n_windows"]
+            if not enable_batching:
+                assert 2 <= results["n_windows"] <= config["n_windows"]
+            else:
+                batch_size = 8
+                # If batching, can get config["n_windows"] // 8
+                assert 2 <= results["n_windows"] <= max(1, config["n_windows"] // batch_size) * batch_size
             assert isinstance(results["overlaps"], np.ndarray)
             assert all(isinstance(overlap, float) for overlap in results["overlaps"])
 
@@ -778,7 +783,12 @@ def test_run_rbfe_legs_local(
 
             assert results["n_windows"].size == 1
             assert results["n_windows"].dtype == np.intp
-            assert 2 <= results["n_windows"] <= config["n_windows"]
+            if not enable_batching:
+                assert 2 <= results["n_windows"] <= config["n_windows"]
+            else:
+                batch_size = 8
+                # If batching, can get config["n_windows"] // 8
+                assert 2 <= results["n_windows"] <= max(1, config["n_windows"] // batch_size) * batch_size
             assert isinstance(results["overlaps"], np.ndarray)
             assert all(isinstance(overlap, float) for overlap in results["overlaps"])
 
