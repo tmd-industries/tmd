@@ -31,7 +31,7 @@ FanoutSummedPotential<RealType>::FanoutSummedPotential(
       num_systems_(potentials.size() > 0 ? potentials[0]->num_systems() : 1),
       d_u_buffer_(num_systems_ * potentials_.size()),
       d_system_idxs_(num_systems_ * potentials_.size()),
-      nrg_accum_(num_systems_, potentials_.size()) {
+      nrg_accum_(num_systems_, potentials_.size() * num_systems_) {
 
   verify_potentials_are_compatible(potentials_);
   k_segment_arange<<<dim3(ceil_divide(num_systems_, DEFAULT_THREADS_PER_BLOCK),

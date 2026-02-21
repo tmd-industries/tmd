@@ -39,34 +39,34 @@ EnergyAccumulator::EnergyAccumulator(const int batches, const int total_size)
     : batches_(batches), max_buffer_size_(total_size), temp_storage_bytes_(0) {
   assert(batches_ >= 1);
   __int128 *dummy_nrg_buffer = nullptr;
+  if (max_buffer_size_ > 0 && max_buffer_size_ < batches_) {
+    throw std::runtime_error(
+        "Max buffer size must be larger than the number of batches, got " +
+        std::to_string(max_buffer_size_) + " max buffer size and " +
+        std::to_string(batches_) + "batches");
+  }
   if (batches_ == 1) {
     gpuErrchk(cub::DeviceReduce::Sum(nullptr, temp_storage_bytes_,
                                      dummy_nrg_buffer, dummy_nrg_buffer,
                                      max_buffer_size_));
   } else {
-    // Allocates more memory than strictly needed, but would rather be safe
-    // if indices are greater than batches, the results will be hosed
     cudaSafeMalloc(&d_reductions_out_, sizeof(*d_reductions_out_));
-    cudaSafeMalloc(&d_sorted_idxs_,
-                   max_buffer_size_ * batches_ * sizeof(*d_sorted_idxs_));
-    cudaSafeMalloc(&d_idxs_unique_,
-                   max_buffer_size_ * batches_ * sizeof(*d_idxs_unique_));
+    cudaSafeMalloc(&d_sorted_idxs_, max_buffer_size_ * sizeof(*d_sorted_idxs_));
+    cudaSafeMalloc(&d_idxs_unique_, max_buffer_size_ * sizeof(*d_idxs_unique_));
     cudaSafeMalloc(&d_u_intermediate_,
-                   max_buffer_size_ * batches_ * sizeof(*d_u_intermediate_));
-    cudaSafeMalloc(&d_sorted_nrgs_,
-                   max_buffer_size_ * batches_ * sizeof(*d_sorted_nrgs_));
+                   max_buffer_size_ * sizeof(*d_u_intermediate_));
+    cudaSafeMalloc(&d_sorted_nrgs_, max_buffer_size_ * sizeof(*d_sorted_nrgs_));
 
     size_t sort_bytes = 0;
     gpuErrchk(cub::DeviceRadixSort::SortPairs(
         nullptr, sort_bytes, d_idxs_unique_, d_idxs_unique_, dummy_nrg_buffer,
-        dummy_nrg_buffer, max_buffer_size_ * batches_));
+        dummy_nrg_buffer, max_buffer_size_));
 
     size_t reduce_bytes = 0;
     CUBSumOp reduction_op;
     gpuErrchk(cub::DeviceReduce::ReduceByKey(
         nullptr, reduce_bytes, d_idxs_unique_, d_idxs_unique_, dummy_nrg_buffer,
-        dummy_nrg_buffer, d_reductions_out_, reduction_op,
-        max_buffer_size_ * batches_));
+        dummy_nrg_buffer, d_reductions_out_, reduction_op, max_buffer_size_));
     temp_storage_bytes_ = max(reduce_bytes, sort_bytes);
   }
 
@@ -87,7 +87,10 @@ EnergyAccumulator::~EnergyAccumulator() {
 void EnergyAccumulator::sum_device(const int num_vals, const __int128 *d_nrg_in,
                                    const int *d_system_idxs,
                                    __int128 *d_nrg_out, cudaStream_t stream) {
-
+  if (num_vals > max_buffer_size_) {
+    throw std::runtime_error(
+        "Number of values larger than the maximum buffer size");
+  }
   if (batches_ == 1) {
     gpuErrchk(cub::DeviceReduce::Sum(d_temp_storage_buffer_,
                                      temp_storage_bytes_, d_nrg_in, d_nrg_out,
@@ -97,8 +100,7 @@ void EnergyAccumulator::sum_device(const int num_vals, const __int128 *d_nrg_in,
 
     // Clear the buffer
     gpuErrchk(cudaMemsetAsync(d_u_intermediate_, 0,
-                              max_buffer_size_ * batches_ * sizeof(*d_nrg_out),
-                              stream));
+                              max_buffer_size_ * sizeof(*d_nrg_out), stream));
     // Copy any values written to the batch
     gpuErrchk(cudaMemcpyAsync(d_u_intermediate_, d_nrg_out,
                               batches_ * sizeof(*d_nrg_out),
