@@ -153,7 +153,8 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
       interaction_type_(
           get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs)),
       compute_col_grads_(true),
-      nrg_accum_(num_systems_, this->get_max_nonbonded_kernel_blocks()),
+      nrg_accum_(num_systems_,
+                 this->get_max_nonbonded_kernel_blocks() * num_systems_),
       kernel_ptrs_(
           {// enumerate over every possible kernel combination
            // Set threads to 1 if not computing energy to reduced unused shared

@@ -42,7 +42,7 @@ MonteCarloBarostat<RealType>::MonteCarloBarostat(
       adaptive_scaling_enabled_(adaptive_scaling_enabled), bps_(bps),
       pressure_(pressure), temperature_(temperature), seed_(seed),
       num_grouped_atoms_(0), runner_(),
-      nrg_accum_(this->num_systems_, bps_.size()) {
+      nrg_accum_(this->num_systems_, bps_.size() * this->num_systems_) {
 
   verify_potentials_are_compatible(bps_);
   // Trigger check that interval is valid
