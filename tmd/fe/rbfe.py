@@ -932,7 +932,7 @@ def estimate_relative_free_energy_bisection_hrex_impl(
 
     assert md_params.hrex_params is not None, "hrex_params must be set to use HREX"
 
-    batch_simulations = True
+    batch_simulations = False
 
     mode_flag = os.environ.get(BATCH_MODE_ENV_VAR, None)
     if mode_flag is not None:
@@ -968,7 +968,6 @@ def estimate_relative_free_energy_bisection_hrex_impl(
             n_bisections=n_windows - 2,
             temperature=temperature,
             min_overlap=min_overlap,
-            # TBD: Parameterize the batch size
             batch_size=batch_size if batch_simulations else 1,
         )
 
