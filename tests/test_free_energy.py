@@ -622,7 +622,7 @@ def test_run_sims_bisection_batched(batch_size, hif2a_ligand_pair_single_topolog
         batch_size=batch_size,
     )
 
-    expected_bisections = max(1, int(np.floor(n_bisections / batch_size)))
+    expected_bisections = n_bisections // batch_size
 
     # runs all n_bisections iterations by default
     results = run_sims_batched_bisection()[0]
