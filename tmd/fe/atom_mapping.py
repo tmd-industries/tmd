@@ -455,8 +455,6 @@ def _get_cores_impl(
     min_threshold,
     initial_mapping,
 ) -> tuple[list[NDArray], mcgregor.MCSDiagnostics]:
-    assert heavy_matches_heavy_only, "heavy_matches_heavy_only must be True"
-
     if initial_mapping is None:
         initial_mapping = np.zeros((0, 2), dtype=np.intp)
 
@@ -467,21 +465,35 @@ def _get_cores_impl(
     conf_a_full = get_romol_conf(mol_a_full)
     conf_b_full = get_romol_conf(mol_b_full)
 
-    # --- Phase 1: Build H-stripped molecules for the MCS search ---
-    mol_a_heavy = Chem.RemoveHs(mol_a)
-    mol_b_heavy = Chem.RemoveHs(mol_b)
+    if heavy_matches_heavy_only:
+        # --- Phase 1: Build H-stripped molecules for the MCS search ---
+        mol_a_heavy = Chem.RemoveHs(mol_a)
+        mol_b_heavy = Chem.RemoveHs(mol_b)
 
-    old_to_new_a, new_to_old_a, removed_h_a = _build_h_removal_index_maps(mol_a_full, mol_a_heavy)
-    old_to_new_b, new_to_old_b, removed_h_b = _build_h_removal_index_maps(mol_b_full, mol_b_heavy)
+        old_to_new_a, new_to_old_a, removed_h_a = _build_h_removal_index_maps(mol_a_full, mol_a_heavy)
+        old_to_new_b, new_to_old_b, removed_h_b = _build_h_removal_index_maps(mol_b_full, mol_b_heavy)
 
-    # Translate initial_mapping from original indices to H-stripped indices,
-    # skipping any pairs where either atom was a removed hydrogen
-    heavy_initial_pairs = []
-    for a_old, b_old in initial_mapping:
-        a_old, b_old = int(a_old), int(b_old)
-        if a_old in old_to_new_a and b_old in old_to_new_b:
-            heavy_initial_pairs.append([old_to_new_a[a_old], old_to_new_b[b_old]])
-    heavy_initial_mapping = np.array(heavy_initial_pairs, dtype=np.intp).reshape(-1, 2)
+        # Translate initial_mapping from original indices to H-stripped indices,
+        # skipping any pairs where either atom was a removed hydrogen
+        heavy_initial_pairs = []
+        for a_old, b_old in initial_mapping:
+            a_old, b_old = int(a_old), int(b_old)
+            if a_old in old_to_new_a and b_old in old_to_new_b:
+                heavy_initial_pairs.append([old_to_new_a[a_old], old_to_new_b[b_old]])
+        heavy_initial_mapping = np.array(heavy_initial_pairs, dtype=np.intp).reshape(-1, 2)
+    else:
+        # No H stripping: run MCS on full molecules directly in one pass
+        mol_a_heavy = mol_a
+        mol_b_heavy = mol_b
+        n_a_full = mol_a.GetNumAtoms()
+        n_b_full = mol_b.GetNumAtoms()
+        old_to_new_a = {i: i for i in range(n_a_full)}
+        old_to_new_b = {i: i for i in range(n_b_full)}
+        new_to_old_a = {i: i for i in range(n_a_full)}
+        new_to_old_b = {i: i for i in range(n_b_full)}
+        removed_h_a = set()
+        removed_h_b = set()
+        heavy_initial_mapping = initial_mapping.copy() if len(initial_mapping) > 0 else initial_mapping
 
     # Handle the n_a <= n_b requirement for the MCS.
     # get_cores_and_diagnostics already ensures the full mol_a <= mol_b,
@@ -535,17 +547,20 @@ def _get_cores_impl(
             conf_a_full, conf_b_full = conf_b_full, conf_a_full
             removed_h_a, removed_h_b = removed_h_b, removed_h_a
 
-        # Build full-molecule chiral sets for H augmentation (only if enforce_chiral)
-        chiral_set_a_full = None
-        chiral_set_b_full = None
-        if enforce_chiral:
-            chiral_set_a_full = ChiralRestrIdxSet.from_mol(mol_a_full, conf_a_full)
-            chiral_set_b_full = ChiralRestrIdxSet.from_mol(mol_b_full, conf_b_full)
+        if heavy_matches_heavy_only:
+            # Build full-molecule chiral sets for H augmentation (only if enforce_chiral)
+            chiral_set_a_full = None
+            chiral_set_b_full = None
+            if enforce_chiral:
+                chiral_set_a_full = ChiralRestrIdxSet.from_mol(mol_a_full, conf_a_full)
+                chiral_set_b_full = ChiralRestrIdxSet.from_mol(mol_b_full, conf_b_full)
 
-        augmented = _augment_core_with_hydrogens(
-            mol_a_full, mol_b_full, orig_core, conf_a_full, conf_b_full, removed_h_a, removed_h_b,
-            chiral_set_a=chiral_set_a_full, chiral_set_b=chiral_set_b_full, enforce_chiral=enforce_chiral,
-        )
+            augmented = _augment_core_with_hydrogens(
+                mol_a_full, mol_b_full, orig_core, conf_a_full, conf_b_full, removed_h_a, removed_h_b,
+                chiral_set_a=chiral_set_a_full, chiral_set_b=chiral_set_b_full, enforce_chiral=enforce_chiral,
+            )
+        else:
+            augmented = orig_core
         return [augmented], mcgregor.MCSDiagnostics(
             total_nodes_visited=1, total_leaves_visited=1, core_size=len(augmented), num_cores=1
         )
@@ -660,26 +675,27 @@ def _get_cores_impl(
         conf_a_full, conf_b_full = conf_b_full, conf_a_full
         removed_h_a, removed_h_b = removed_h_b, removed_h_a
 
-    # Build full-molecule chiral sets for H augmentation (only if enforce_chiral)
-    chiral_set_a_full = None
-    chiral_set_b_full = None
-    if enforce_chiral:
-        chiral_set_a_full = ChiralRestrIdxSet.from_mol(mol_a_full, conf_a_full)
-        chiral_set_b_full = ChiralRestrIdxSet.from_mol(mol_b_full, conf_b_full)
+    if heavy_matches_heavy_only:
+        # Build full-molecule chiral sets for H augmentation (only if enforce_chiral)
+        chiral_set_a_full = None
+        chiral_set_b_full = None
+        if enforce_chiral:
+            chiral_set_a_full = ChiralRestrIdxSet.from_mol(mol_a_full, conf_a_full)
+            chiral_set_b_full = ChiralRestrIdxSet.from_mol(mol_b_full, conf_b_full)
 
-    # --- Phase 2: Augment each core with hydrogen mappings ---
-    augmented_cores = [
-        _augment_core_with_hydrogens(
-            mol_a_full, mol_b_full, core, conf_a_full, conf_b_full, removed_h_a, removed_h_b,
-            chiral_set_a=chiral_set_a_full, chiral_set_b=chiral_set_b_full, enforce_chiral=enforce_chiral,
-        )
-        for core in augmented_cores
-    ]
+        # --- Phase 2: Augment each core with hydrogen mappings ---
+        augmented_cores = [
+            _augment_core_with_hydrogens(
+                mol_a_full, mol_b_full, core, conf_a_full, conf_b_full, removed_h_a, removed_h_b,
+                chiral_set_a=chiral_set_a_full, chiral_set_b=chiral_set_b_full, enforce_chiral=enforce_chiral,
+            )
+            for core in augmented_cores
+        ]
 
-    # Different heavy-atom cores may augment with different numbers of Hs,
-    # so re-apply size filtering to keep only the largest augmented cores
-    augmented_cores = remove_cores_smaller_than_largest(augmented_cores)
-    augmented_cores = _deduplicate_all_cores(augmented_cores)
+        # Different heavy-atom cores may augment with different numbers of Hs,
+        # so re-apply size filtering to keep only the largest augmented cores
+        augmented_cores = remove_cores_smaller_than_largest(augmented_cores)
+        augmented_cores = _deduplicate_all_cores(augmented_cores)
 
     # --- Score and sort augmented cores on the original (full-H) molecules ---
     mean_sq_distances = []
