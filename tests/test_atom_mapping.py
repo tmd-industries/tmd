@@ -1684,3 +1684,197 @@ M  END""",
         assert (atom_a.GetAtomicNum() == 1 and atom_b.GetAtomicNum() == 1) or (
             atom_a.GetAtomicNum() > 1 and atom_b.GetAtomicNum() > 1
         )
+
+
+def test_chiral_filtering_on_h_stripped_molecules():
+    """Verify that chiral filtering on H-stripped molecules (via Chem.RemoveHs) produces
+    results consistent with chiral filtering on full-H molecules, for heavy-atom-only cores.
+
+    This validates the planned atom-mapper optimization where the MCS search runs on
+    H-stripped molecules with chiral filters applied during the search (not post-hoc).
+
+    Key properties tested:
+    1. find_chiral_atoms finds the same chiral centers after RemoveHs (because [X4:1]
+       counts total degree including implicit Hs).
+    2. ChiralRestrIdxSet built from H-stripped molecules produces fewer but sufficient
+       restraint tuples (e.g., C(3,3)=1 instead of C(4,3)=4 for a center with 1 implicit H).
+    3. has_chiral_atom_flips on a heavy-atom core using H-stripped chiral sets gives the
+       same answer as the full-H chiral sets for all heavy-atom-only mappings.
+    4. Planar torsion flip detection works correctly on H-stripped molecules.
+    """
+    from tmd.fe.chiral_utils import (
+        ChiralRestrIdxSet,
+        find_chiral_atoms,
+        has_chiral_atom_flips,
+        setup_find_flipped_planar_torsions,
+    )
+    from tmd.fe.mcgregor import UNMAPPED, core_to_perm
+
+    # --- Part 1: Chiral center detection is preserved after RemoveHs ---
+
+    # FC(Cl)Br: carbon has 4 neighbors (F, Cl, Br, H) -> X4 with Hs, X4 after RemoveHs (3 explicit + 1 implicit)
+    mol_with_h = Chem.AddHs(Chem.MolFromSmiles("FC(Cl)Br"))
+    AllChem.EmbedMolecule(mol_with_h, randomSeed=42)
+    mol_no_h = Chem.RemoveHs(mol_with_h)
+
+    chiral_with_h = find_chiral_atoms(mol_with_h)
+    chiral_no_h = find_chiral_atoms(mol_no_h)
+
+    # The chiral carbon (index 1 in both) should be found in both cases
+    assert len(chiral_with_h) > 0, "Should find chiral center with Hs"
+    assert len(chiral_no_h) > 0, "Should find chiral center after RemoveHs"
+    # The carbon index should be the same (it's heavy atom index 1 in both)
+    assert 1 in chiral_with_h
+    assert 1 in chiral_no_h
+
+    # --- Part 2: Restraint tuples are fewer but sufficient ---
+
+    conf_with_h = get_romol_conf(mol_with_h)
+    conf_no_h = get_romol_conf(mol_no_h)
+
+    chiral_set_with_h = ChiralRestrIdxSet.from_mol(mol_with_h, conf_with_h)
+    chiral_set_no_h = ChiralRestrIdxSet.from_mol(mol_no_h, conf_no_h)
+
+    # With Hs: carbon has 4 neighbors -> C(4,3) = 4 restraint tuples
+    assert len(chiral_set_with_h.restr_idxs) == 4
+    # Without Hs: carbon has 3 neighbors (F, Cl, Br) -> C(3,3) = 1 restraint tuple
+    assert len(chiral_set_no_h.restr_idxs) == 1
+
+    # The single H-stripped tuple should reference only heavy atoms
+    center, i, j, k = chiral_set_no_h.restr_idxs[0]
+    assert center == 1  # the chiral carbon
+    assert all(mol_no_h.GetAtomWithIdx(idx).GetAtomicNum() != 1 for idx in [center, i, j, k])
+
+    # --- Part 3: Chiral flip detection agrees for heavy-atom-only cores ---
+
+    # Create two copies of FC(Cl)Br and test identity vs. chirality-flipping maps
+    mol_a = Chem.AddHs(Chem.MolFromSmiles("FC(Cl)Br"))
+    mol_b = Chem.AddHs(Chem.MolFromSmiles("FC(Cl)Br"))
+    AllChem.EmbedMolecule(mol_a, randomSeed=42)
+    AllChem.EmbedMolecule(mol_b, randomSeed=42)
+
+    mol_a_no_h = Chem.RemoveHs(mol_a)
+    mol_b_no_h = Chem.RemoveHs(mol_b)
+
+    conf_a = get_romol_conf(mol_a)
+    conf_b = get_romol_conf(mol_b)
+    conf_a_no_h = get_romol_conf(mol_a_no_h)
+    conf_b_no_h = get_romol_conf(mol_b_no_h)
+
+    chiral_set_a_full = ChiralRestrIdxSet.from_mol(mol_a, conf_a)
+    chiral_set_b_full = ChiralRestrIdxSet.from_mol(mol_b, conf_b)
+    chiral_set_a_no_h = ChiralRestrIdxSet.from_mol(mol_a_no_h, conf_a_no_h)
+    chiral_set_b_no_h = ChiralRestrIdxSet.from_mol(mol_b_no_h, conf_b_no_h)
+
+    n_a_full = mol_a.GetNumAtoms()
+    n_a_no_h = mol_a_no_h.GetNumAtoms()
+
+    # Identity core (heavy atoms only): F->F, C->C, Cl->Cl, Br->Br
+    identity_core_heavy = np.array([[0, 0], [1, 1], [2, 2], [3, 3]])
+
+    # Chirality-flipping core: swap F and Cl (indices 0 and 2)
+    flipped_core_heavy = np.array([[0, 2], [1, 1], [2, 0], [3, 3]])
+
+    # Test with full-H chiral sets (using heavy-atom core embedded in full-H perm)
+    identity_perm_full = core_to_perm(identity_core_heavy, n_a_full)
+    flipped_perm_full = core_to_perm(flipped_core_heavy, n_a_full)
+
+    identity_has_flip_full = has_chiral_atom_flips(identity_perm_full, chiral_set_a_full, chiral_set_b_full)
+    flipped_has_flip_full = has_chiral_atom_flips(flipped_perm_full, chiral_set_a_full, chiral_set_b_full)
+
+    # Test with H-stripped chiral sets
+    identity_perm_no_h = core_to_perm(identity_core_heavy, n_a_no_h)
+    flipped_perm_no_h = core_to_perm(flipped_core_heavy, n_a_no_h)
+
+    identity_has_flip_no_h = has_chiral_atom_flips(identity_perm_no_h, chiral_set_a_no_h, chiral_set_b_no_h)
+    flipped_has_flip_no_h = has_chiral_atom_flips(flipped_perm_no_h, chiral_set_a_no_h, chiral_set_b_no_h)
+
+    # Both should agree: identity is not a flip, swapping F/Cl is a flip
+    assert not identity_has_flip_full, "Identity map should not be a chiral flip (full-H)"
+    assert not identity_has_flip_no_h, "Identity map should not be a chiral flip (no-H)"
+    assert flipped_has_flip_full, "Swapping F/Cl should be a chiral flip (full-H)"
+    assert flipped_has_flip_no_h, "Swapping F/Cl should be a chiral flip (no-H)"
+
+    # --- Part 4: Test with a more complex molecule (ethanol: CC(O)F with chiral C) ---
+
+    mol_a2 = Chem.AddHs(Chem.MolFromSmiles("CC(O)F"))
+    mol_b2 = Chem.AddHs(Chem.MolFromSmiles("CC(O)F"))
+    AllChem.EmbedMolecule(mol_a2, randomSeed=42)
+    AllChem.EmbedMolecule(mol_b2, randomSeed=42)
+
+    mol_a2_no_h = Chem.RemoveHs(mol_a2)
+    mol_b2_no_h = Chem.RemoveHs(mol_b2)
+
+    n_a2_full = mol_a2.GetNumAtoms()
+    n_a2_no_h = mol_a2_no_h.GetNumAtoms()
+
+    conf_a2 = get_romol_conf(mol_a2)
+    conf_b2 = get_romol_conf(mol_b2)
+    conf_a2_no_h = get_romol_conf(mol_a2_no_h)
+    conf_b2_no_h = get_romol_conf(mol_b2_no_h)
+
+    chiral_a2_full = ChiralRestrIdxSet.from_mol(mol_a2, conf_a2)
+    chiral_b2_full = ChiralRestrIdxSet.from_mol(mol_b2, conf_b2)
+    chiral_a2_no_h = ChiralRestrIdxSet.from_mol(mol_a2_no_h, conf_a2_no_h)
+    chiral_b2_no_h = ChiralRestrIdxSet.from_mol(mol_b2_no_h, conf_b2_no_h)
+
+    # CC(O)F: C0 has 4 neighbors (C1, H, H, H) -> X4; C1 has 4 neighbors (C0, O, F, H) -> X4
+    # After RemoveHs: C0 has 1 heavy neighbor -> no C(1,3) restraints; C1 has 3 heavy neighbors -> C(3,3)=1
+    chiral_atoms_full = find_chiral_atoms(mol_a2)
+    chiral_atoms_no_h = find_chiral_atoms(mol_a2_no_h)
+    assert 0 in chiral_atoms_full  # methyl C
+    assert 1 in chiral_atoms_full  # chiral C
+    assert 0 in chiral_atoms_no_h  # still X4 (1 explicit + 3 implicit)
+    assert 1 in chiral_atoms_no_h  # still X4 (3 explicit + 1 implicit)
+
+    # But only C1 (with 3 heavy neighbors) gets restraint tuples after H removal
+    # C0 only has 1 heavy neighbor -> C(1,3) = 0 tuples
+    assert len(chiral_a2_no_h.restr_idxs) == 1  # only from C1
+    center, _, _, _ = chiral_a2_no_h.restr_idxs[0]
+    assert center == 1  # the chiral carbon with 3 heavy neighbors
+
+    # Identity heavy-atom core: C->C, C->C, O->O, F->F
+    identity_heavy = np.array([[0, 0], [1, 1], [2, 2], [3, 3]])
+    # Flip: swap O and F (indices 2 and 3) on the chiral center
+    flipped_heavy = np.array([[0, 0], [1, 1], [2, 3], [3, 2]])
+
+    id_perm_full = core_to_perm(identity_heavy, n_a2_full)
+    fl_perm_full = core_to_perm(flipped_heavy, n_a2_full)
+    id_perm_no_h = core_to_perm(identity_heavy, n_a2_no_h)
+    fl_perm_no_h = core_to_perm(flipped_heavy, n_a2_no_h)
+
+    assert not has_chiral_atom_flips(id_perm_full, chiral_a2_full, chiral_b2_full)
+    assert not has_chiral_atom_flips(id_perm_no_h, chiral_a2_no_h, chiral_b2_no_h)
+    assert has_chiral_atom_flips(fl_perm_full, chiral_a2_full, chiral_b2_full)
+    assert has_chiral_atom_flips(fl_perm_no_h, chiral_a2_no_h, chiral_b2_no_h)
+
+    # --- Part 5: Planar torsion detection works on H-stripped molecules ---
+
+    # Cl/C=N\F has a defined planar torsion around the C=N double bond
+    mol_a3 = Chem.AddHs(Chem.MolFromSmiles(r"Cl/C=N\F"))
+    mol_b3 = Chem.AddHs(Chem.MolFromSmiles(r"Cl/C=N/F"))  # opposite E/Z config
+    AllChem.EmbedMolecule(mol_a3, randomSeed=42)
+    AllChem.EmbedMolecule(mol_b3, randomSeed=42)
+
+    mol_a3_no_h = Chem.RemoveHs(mol_a3)
+    mol_b3_no_h = Chem.RemoveHs(mol_b3)
+
+    # Full-H planar torsion check
+    find_flipped_full = setup_find_flipped_planar_torsions(mol_a3, mol_b3)
+    # H-stripped planar torsion check
+    find_flipped_no_h = setup_find_flipped_planar_torsions(mol_a3_no_h, mol_b3_no_h)
+
+    n_a3_full = mol_a3.GetNumAtoms()
+    n_a3_no_h = mol_a3_no_h.GetNumAtoms()
+
+    # Identity heavy-atom core: Cl->Cl, C->C, N->N, F->F
+    identity_core_3 = np.array([[0, 0], [1, 1], [2, 2], [3, 3]])
+    id_perm_full_3 = core_to_perm(identity_core_3, n_a3_full)
+    id_perm_no_h_3 = core_to_perm(identity_core_3, n_a3_no_h)
+
+    flips_full = list(find_flipped_full(id_perm_full_3))
+    flips_no_h = list(find_flipped_no_h(id_perm_no_h_3))
+
+    # Both should detect planar torsion flips between cis and trans isomers
+    assert len(flips_full) > 0, "Should detect planar torsion flip with full Hs"
+    assert len(flips_no_h) > 0, "Should detect planar torsion flip with H-stripped molecules"
