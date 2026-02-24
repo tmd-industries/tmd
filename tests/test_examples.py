@@ -482,19 +482,19 @@ def test_run_rbfe_legs(
             "428f5b97fd2208589e2dc82d85cfa50ca0b97ed33e25bbe1d303981aa25ccd7f",
         ),
         (True, "vacuum"): (
-            "eedbdcb6b04caffe9a5831046157072d61223cb7e8052be68182e95ccc2a080c",
-            "b3b5b57f3bed86dfa7b57f4061e87b2978f5a8dd621690c56931ffdce3576db5",
-            "6bb4e41a57c64eb9ac857021690affb565754f570a8aa258ccaee8111c156dd6",
+            "5b6631c0f44d555e52b39cda5d696789ab22df517d7c223fe44e7bc2807be4fd",
+            "aa4b3014573d9b969559eb0460fea320657de48237690f5de175b5d2f97312ef",
+            "b6c75d5d37939196c3271e7db56299b07e8e9b856ace03e4d9b42f11cf30c220",
         ),
         (True, "solvent"): (
-            "ef16042e6dd01a63d4d5e196060931f89d73554b5e1e0cc171c9d7636b8db862",
-            "f89514856113919745fa7d5cb5ff9a1f13e3ac87d3d6c1a97ba1404ca67f048a",
-            "5546774570c9342c941e001600dd918a3d399e6ad345499a65d6a24b30079241",
+            "f48b346de44978ab82de3e84426f737c316bd19290336fe1de362a6a45e4742e",
+            "366265ed5cd703a047a6cc286cca4fca3d6de0200ee622ace0dd16a2c00091db",
+            "f7fcc5fc8571124a4e92190ad4513a88d32c80d54988d689989e81b944f67c5a",
         ),
         (True, "complex"): (
-            "05df595296141d7130d9fba460c62210f7780d2276dd6137659c32468939fa08",
-            "d741cb2bbc5751eca83f14cdc57d893359e44660cadc548ddcfaedb62b75a53f",
-            "f7f0654adfc391a70cea70a364fe893d53ec724d4707569d8bab3133e58abf22",
+            "69a8bc2c8805d63f63a9644f72506e7a63d67542e283abb6c77669963446546b",
+            "eb310d39f759652b9577d48082f5ea801c154e877aafbec5f2cd09c7a006c530",
+            "9a8c2ad004f8dbe2183b389401f0bc0f8faf03f25bc4acb88de9e3c6010ef2a2",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -559,7 +559,12 @@ def test_run_rbfe_legs(
 
             assert results["n_windows"].size == 1
             assert results["n_windows"].dtype == np.intp
-            assert 2 <= results["n_windows"] <= config["n_windows"]
+            if not enable_batching:
+                assert 2 <= results["n_windows"] <= config["n_windows"]
+            else:
+                batch_size = 8
+                # If batching, can get config["n_windows"] // 8
+                assert 2 <= results["n_windows"] <= max(1, config["n_windows"] // batch_size) * batch_size
             assert isinstance(results["overlaps"], np.ndarray)
             assert all(isinstance(overlap, float) for overlap in results["overlaps"])
 
@@ -676,24 +681,24 @@ def test_run_rbfe_legs_local(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         ("solvent", 400, True): (
-            "06393b7bf1e060a03fc501fb840f93723c7215b05abfd5583fc1d75bd7567259",
-            "8e8a4a983e93eef8ad2bddd591785751fe08e2970854e733b68ba215981eb0d4",
-            "1147b911fd490ea443db33be7076157bfda92e3a339d1b80150f026cd9a28612",
+            "c8898ed64d11e62e73756c647392e8259826a8d2090767e2a7b5b7647de40e47",
+            "1671020ce0132d5e768f49d9e9465bfa423eae7ebccf3387c9f103e857ad4afb",
+            "f64baf3d6890cb44884faa37d1a8744b52f48e330eaa50b2afced046b8d49e7e",
         ),
         ("complex", 400, True): (
-            "05cdb26da906ef582440c71a51725ec76ec5aeab8eea7ef617931fda91bdd8cc",
-            "affc8f7dc7054f1b0b29199168bdbc93322676d7e56de6a9a17fe8675a6db579",
-            "d336a4fff7aea6cf190e43451f7701f35df9f1e6a95f24cbd17337736a0164ca",
+            "a78e7eb672e7216146ce28894fc61668fef0a612ccf43c1f5788e1e753c79724",
+            "0b64047ca0edfa86013c055589568784d29d5a7d88b78d67ba0108d26dc62ed6",
+            "0b9bf19f609be0279c6d19beec7462916d56ce0abdbd79bb38039f58fbf87802",
         ),
         ("solvent", 390, True): (
-            "30140f144869ac973cafa3048b4f721d4c1ecc4f9f416ce7772e716916467c18",
-            "47306c2f0019a8ce002d4f4a6081c1a0e97f5807fcdb5121ac5301207068fdbb",
-            "a1edcc2f8b3be509656edd4556ae0995fb3e91be8f63678e1ca14c5da3cc8c88",
+            "bbc8a787df42dc7a5871165bccce480a5ecb36ab5ae28771b84f41c17ed4d62e",
+            "ae8ec3d4d817406c4f43a94e7da643bbaa55d43a337a81ad54967ceb6e305b7f",
+            "de726992de6e28805868d1b4511c54ef4397856c3417a72efd3596372d08f719",
         ),
         ("complex", 390, True): (
-            "4b90a4dbe8bf4b9d7b2362b9e8041c7afb5fc2dadb96cf6504a59de97802436e",
-            "4cca45375401019197a61f6beb6419b5b8ad6c485d416d490e19958cc0575b3b",
-            "1d566d1fb470996ea12ffcc8dddb665c56d8ca636cb0b81f548f7d3346aedbff",
+            "7c11cbb89ef053f6eea266cf9239ec86b180df79743a8bd486cf1da789fd9b0f",
+            "e486366583e587806d6b6a3afa97dfd3f5193c0e09fc89d2cc38214146282260",
+            "f0d05cfa63086d08fc528df13a96b226871826c061750b04a59ab8ada5800fdd",
         ),
         ("solvent", 400, False): (
             "88a47c42da84db9ded4b5c75b405d8f53e1e1b54737fd4ba89a557f269809302",
@@ -778,7 +783,12 @@ def test_run_rbfe_legs_local(
 
             assert results["n_windows"].size == 1
             assert results["n_windows"].dtype == np.intp
-            assert 2 <= results["n_windows"] <= config["n_windows"]
+            if not enable_batching:
+                assert 2 <= results["n_windows"] <= config["n_windows"]
+            else:
+                batch_size = 8
+                # If batching, can get config["n_windows"] // 8
+                assert 2 <= results["n_windows"] <= max(1, config["n_windows"] // batch_size) * batch_size
             assert isinstance(results["overlaps"], np.ndarray)
             assert all(isinstance(overlap, float) for overlap in results["overlaps"])
 

@@ -595,6 +595,59 @@ def test_get_context_with_non_contiguous_waters():
     assert isinstance(movers[1], custom_ops.TIBDExchangeMove_f32)
 
 
+@pytest.mark.parametrize("batch_size", [2, 4, 8, 16])
+def test_run_sims_bisection_batched(batch_size, hif2a_ligand_pair_single_topology_lam0_state):
+    initial_state = hif2a_ligand_pair_single_topology_lam0_state
+
+    def make_initial_state(lamb: float):
+        # Replace the lambda, but the actual parameters implied by lambda aren't changed
+        return replace(initial_state, lamb=lamb)
+
+    md_params = MDParams(1, 1, 1, 2026)
+
+    n_bisections = 3
+
+    rng = np.random.default_rng(md_params.seed)
+
+    lambda_schedule = (rng.random(batch_size).astype(np.float32) + np.arange(batch_size)) / batch_size
+
+    run_sims_batched_bisection = partial(
+        run_sims_bisection,
+        lambda_schedule.tolist(),
+        make_initial_state,
+        md_params,
+        n_bisections=n_bisections,
+        temperature=DEFAULT_TEMP,
+        verbose=False,
+        batch_size=batch_size,
+    )
+
+    expected_bisections = n_bisections // batch_size
+
+    # runs all n_bisections iterations by default
+    results = run_sims_batched_bisection()[0]
+    final_lambdas = [float(state.lamb) for state in results[-1].initial_states]
+    # Verify the input lambda schedule is in the final lambda schedule
+    assert len(set(lambda_schedule).intersection(final_lambdas)) == len(lambda_schedule)
+
+    # Min overlap is none, should run to the end
+    assert len(results) == 1 + expected_bisections  # initial result + bisection iterations
+
+    def result_with_overlap(overlap):
+        return BarResult(np.nan, np.nan, np.empty, overlap, np.empty, np.empty)
+
+    with patch("tmd.fe.free_energy.estimate_free_energy_bar") as mock_estimate_free_energy_bar:
+        # overlap does not improve; should run all n_bisections iterations
+        mock_estimate_free_energy_bar.return_value = result_with_overlap(0.0)
+        with pytest.warns(MinOverlapWarning):
+            results = run_sims_batched_bisection(min_overlap=0.4)[0]
+        assert len(results) == 1 + expected_bisections
+
+    # Should immediately finish after running the input states, since the initial states are identical
+    results = run_sims_batched_bisection(min_overlap=0.1)[0]
+    assert len(results) == 1
+
+
 def test_run_sims_bisection_early_stopping(hif2a_ligand_pair_single_topology_lam0_state):
     initial_state = hif2a_ligand_pair_single_topology_lam0_state
 
