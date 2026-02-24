@@ -23,7 +23,12 @@ from rdkit import Chem
 from scipy.optimize import linear_sum_assignment
 
 from tmd.fe import mcgregor
-from tmd.fe.chiral_utils import ChiralRestrIdxSet, has_chiral_atom_flips, setup_find_flipped_planar_torsions
+from tmd.fe.chiral_utils import (
+    ChiralRestrIdxSet,
+    find_atom_map_chiral_conflicts,
+    has_chiral_atom_flips,
+    setup_find_flipped_planar_torsions,
+)
 from tmd.fe.utils import get_romol_bonds, get_romol_conf
 
 # (ytz): Just like how one should never re-write an MD engine, one should never rewrite an MCS library.
@@ -347,12 +352,21 @@ def _get_removable_h_neighbors(mol, atom_idx, removed_h_set):
     ]
 
 
-def _augment_core_with_hydrogens(mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b):
+def _augment_core_with_hydrogens(
+    mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
+    chiral_set_a=None, chiral_set_b=None, enforce_chiral=False,
+):
     """Augment a heavy-atom core with optimal hydrogen mappings.
 
     For each mapped heavy-atom pair (a_i, b_j), finds hydrogen neighbors of a_i
     that were removed and hydrogen neighbors of b_j that were removed, then uses
     the Hungarian algorithm on squared distances to optimally match them.
+
+    When ``enforce_chiral`` is True and full-molecule chiral sets are provided,
+    the augmentation checks for chiral conflicts introduced by the H assignments.
+    Any H pairs at parent atoms involved in a chiral conflict are removed
+    (unmapped) from the core rather than kept with a potentially incorrect
+    assignment.
 
     Parameters
     ----------
@@ -364,13 +378,19 @@ def _augment_core_with_hydrogens(mol_a, mol_b, heavy_core, conf_a, conf_b, remov
         Conformer coordinates, shape (N, 3), in nm.
     removed_h_a, removed_h_b : set[int]
         Sets of atom indices removed by RemoveHs.
+    chiral_set_a, chiral_set_b : ChiralRestrIdxSet or None
+        Chiral restraint index sets built from the full-H molecules.
+    enforce_chiral : bool
+        If True and chiral sets are provided, repair H assignments that
+        would introduce chiral conflicts.
 
     Returns
     -------
     NDArray
         Augmented core including hydrogen mappings, shape (K + M, 2).
     """
-    h_pairs = []
+    # Phase 1: Hungarian assignment per parent pair
+    h_pairs_by_parent = {}  # (a_i, b_j) -> list of [ha, hb] pairs
 
     for a_i, b_j in heavy_core:
         a_i, b_j = int(a_i), int(b_j)
@@ -388,11 +408,33 @@ def _augment_core_with_hydrogens(mol_a, mol_b, heavy_core, conf_a, conf_b, remov
                 cost[ii, jj] = np.dot(diff, diff)
 
         row_ind, col_ind = linear_sum_assignment(cost)
-        for r, c in zip(row_ind, col_ind):
-            h_pairs.append([h_neighbors_a[r], h_neighbors_b[c]])
+        h_pairs_by_parent[(a_i, b_j)] = [[h_neighbors_a[r], h_neighbors_b[c]] for r, c in zip(row_ind, col_ind)]
 
-    if h_pairs:
-        return np.concatenate([heavy_core, np.array(h_pairs)], axis=0)
+    # Phase 2: Chiral conflict detection and per-parent repair
+    if enforce_chiral and chiral_set_a is not None and chiral_set_b is not None:
+        all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
+        if all_h:
+            augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
+            conflicts = find_atom_map_chiral_conflicts(augmented, chiral_set_a, chiral_set_b)
+
+            if conflicts:
+                # Collect conflicting center atoms in both mol spaces
+                conflicting_centers_a = set()
+                conflicting_centers_b = set()
+                for tuple_a, tuple_b in conflicts:
+                    conflicting_centers_a.add(tuple_a[0])
+                    conflicting_centers_b.add(tuple_b[0])
+
+                # Remove H pairs at conflicting centers
+                for (a_i, b_j) in list(h_pairs_by_parent.keys()):
+                    if a_i not in conflicting_centers_a and b_j not in conflicting_centers_b:
+                        continue  # this parent is not involved in any conflict
+                    del h_pairs_by_parent[(a_i, b_j)]
+
+    # Phase 3: Build final augmented core
+    all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
+    if all_h:
+        return np.concatenate([heavy_core, np.array(all_h)], axis=0)
     return heavy_core
 
 
@@ -493,8 +535,16 @@ def _get_cores_impl(
             conf_a_full, conf_b_full = conf_b_full, conf_a_full
             removed_h_a, removed_h_b = removed_h_b, removed_h_a
 
+        # Build full-molecule chiral sets for H augmentation (only if enforce_chiral)
+        chiral_set_a_full = None
+        chiral_set_b_full = None
+        if enforce_chiral:
+            chiral_set_a_full = ChiralRestrIdxSet.from_mol(mol_a_full, conf_a_full)
+            chiral_set_b_full = ChiralRestrIdxSet.from_mol(mol_b_full, conf_b_full)
+
         augmented = _augment_core_with_hydrogens(
-            mol_a_full, mol_b_full, orig_core, conf_a_full, conf_b_full, removed_h_a, removed_h_b
+            mol_a_full, mol_b_full, orig_core, conf_a_full, conf_b_full, removed_h_a, removed_h_b,
+            chiral_set_a=chiral_set_a_full, chiral_set_b=chiral_set_b_full, enforce_chiral=enforce_chiral,
         )
         return [augmented], mcgregor.MCSDiagnostics(
             total_nodes_visited=1, total_leaves_visited=1, core_size=len(augmented), num_cores=1
@@ -610,10 +660,18 @@ def _get_cores_impl(
         conf_a_full, conf_b_full = conf_b_full, conf_a_full
         removed_h_a, removed_h_b = removed_h_b, removed_h_a
 
+    # Build full-molecule chiral sets for H augmentation (only if enforce_chiral)
+    chiral_set_a_full = None
+    chiral_set_b_full = None
+    if enforce_chiral:
+        chiral_set_a_full = ChiralRestrIdxSet.from_mol(mol_a_full, conf_a_full)
+        chiral_set_b_full = ChiralRestrIdxSet.from_mol(mol_b_full, conf_b_full)
+
     # --- Phase 2: Augment each core with hydrogen mappings ---
     augmented_cores = [
         _augment_core_with_hydrogens(
-            mol_a_full, mol_b_full, core, conf_a_full, conf_b_full, removed_h_a, removed_h_b
+            mol_a_full, mol_b_full, core, conf_a_full, conf_b_full, removed_h_a, removed_h_b,
+            chiral_set_a=chiral_set_a_full, chiral_set_b=chiral_set_b_full, enforce_chiral=enforce_chiral,
         )
         for core in augmented_cores
     ]

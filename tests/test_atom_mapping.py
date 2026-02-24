@@ -839,6 +839,9 @@ def test_cyclohexane_stereo():
             fh.write(res)
 
     # 1-indexed
+    # With chiral enforcement, conflicting H pairs at ring -CH₂- centers
+    # are unmapped.  Only centers where the Hungarian assignment happens to
+    # be chirally consistent keep their H mappings.
     expected_core = np.array(
         [
             [1, 1],  # C
@@ -847,18 +850,14 @@ def test_cyclohexane_stereo():
             [4, 4],  # C
             [5, 5],  # C
             [6, 6],  # C
-            [12, 11],  # C6H (Hungarian assignment)
-            [13, 18],  # C6H
-            [11, 17],  # C5H
-            [14, 12],  # C5H
-            [9, 10],  # C4H (swapped vs old)
-            [10, 9],  # C4H
-            [7, 7],  # C3H
-            [8, 8],  # C3H
-            [17, 15],  # C2H
-            [18, 16],  # C2H
-            [15, 13],  # C1H
-            [16, 14],  # C1H
+            [7, 7],  # C3H  (consistent)
+            [8, 8],  # C3H  (consistent)
+            [12, 11],  # C6H (consistent)
+            [13, 18],  # C6H (consistent)
+            [15, 13],  # C1H (consistent)
+            [16, 14],  # C1H (consistent)
+            [17, 15],  # C2H (consistent)
+            [18, 16],  # C2H (consistent)
         ]
     )
 
@@ -1904,3 +1903,168 @@ def test_chiral_filtering_on_h_stripped_molecules():
     # Both should detect planar torsion flips between cis and trans isomers
     assert len(flips_full) > 0, "Should detect planar torsion flip with full Hs"
     assert len(flips_no_h) > 0, "Should detect planar torsion flip with H-stripped molecules"
+
+
+def test_chiral_h_augmentation_ring_ch2():
+    """Verify that chiral-aware H augmentation detects and removes conflicting
+    H mappings at ring -CH₂- centers.
+
+    Ring -CH₂- carbons have only 2 heavy neighbors, producing 0 restraint tuples
+    on H-stripped molecules (C(2,3)=0).  After H augmentation restores 4 neighbors,
+    C(4,3)=4 tuples exist.  If the Hungarian distance-based assignment picks the
+    wrong H pairing, a chiral conflict is introduced.  The chiral repair should
+    detect the conflict and unmap the offending H pairs.
+    """
+    from tmd.fe.atom_mapping import (
+        _augment_core_with_hydrogens,
+        _build_h_removal_index_maps,
+        _get_removable_h_neighbors,
+    )
+    from tmd.fe.chiral_utils import ChiralRestrIdxSet, find_atom_map_chiral_conflicts
+
+    # Build two cyclohexane molecules with DIFFERENT conformers so that
+    # the Hungarian algorithm cross-maps some Hs, creating chiral conflicts.
+    mol_a = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1"))
+    mol_b = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1"))
+    AllChem.EmbedMolecule(mol_a, randomSeed=42)
+    AllChem.EmbedMolecule(mol_b, randomSeed=123)
+
+    conf_a = get_romol_conf(mol_a)
+    conf_b = get_romol_conf(mol_b)
+
+    # Build chiral sets from the full-H molecules
+    chiral_set_a = ChiralRestrIdxSet.from_mol(mol_a, conf_a)
+    chiral_set_b = ChiralRestrIdxSet.from_mol(mol_b, conf_b)
+
+    # Each ring carbon has 4 neighbors (2 heavy + 2 H) → 6 carbons × C(4,3) = 6×4 = 24 restraint tuples
+    assert len(chiral_set_a.restr_idxs) == 24, f"Expected 24 restraint tuples, got {len(chiral_set_a.restr_idxs)}"
+
+    # H-stripped versions should have 0 restraint tuples for ring carbons
+    # because each carbon only has 2 heavy neighbors → C(2,3) = 0
+    mol_a_no_h = Chem.RemoveHs(mol_a)
+    conf_a_no_h = get_romol_conf(mol_a_no_h)
+    chiral_set_no_h = ChiralRestrIdxSet.from_mol(mol_a_no_h, conf_a_no_h)
+    assert len(chiral_set_no_h.restr_idxs) == 0, "H-stripped ring CH₂ should have 0 chiral tuples"
+
+    # Identity heavy core: carbon 0→0, 1→1, ..., 5→5
+    heavy_core = np.array([[i, i] for i in range(6)])
+
+    _, _, removed_h_a = _build_h_removal_index_maps(mol_a, mol_a_no_h)
+    _, _, removed_h_b = _build_h_removal_index_maps(mol_b, Chem.RemoveHs(mol_b))
+
+    # Augment WITHOUT chiral enforcement — should produce conflicts
+    augmented_no_chiral = _augment_core_with_hydrogens(
+        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
+    )
+    conflicts_before = find_atom_map_chiral_conflicts(augmented_no_chiral, chiral_set_a, chiral_set_b)
+    assert len(conflicts_before) > 0, "Different conformers should produce chiral conflicts without enforcement"
+
+    # Augment WITH chiral enforcement
+    augmented_chiral = _augment_core_with_hydrogens(
+        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
+        chiral_set_a=chiral_set_a, chiral_set_b=chiral_set_b, enforce_chiral=True,
+    )
+
+    # The chiral-enforced core should be smaller: conflicting H pairs were removed
+    assert len(augmented_chiral) < len(augmented_no_chiral), (
+        f"Expected chiral enforcement to remove some H pairs, but got "
+        f"{len(augmented_chiral)} >= {len(augmented_no_chiral)}"
+    )
+
+    # Verify no chiral conflicts remain in the augmented core
+    conflicts = find_atom_map_chiral_conflicts(augmented_chiral, chiral_set_a, chiral_set_b)
+    assert len(conflicts) == 0, f"Expected 0 chiral conflicts with enforcement, got {len(conflicts)}"
+
+
+def test_chiral_h_augmentation_through_get_cores():
+    """Integration test: verify that get_cores with enforce_chiral=True produces
+    augmented cores with no chiral conflicts on the full-H molecules.
+
+    This tests the complete pipeline: H-stripped MCS → H augmentation → chiral repair.
+    """
+    from tmd.fe.chiral_utils import ChiralRestrIdxSet, find_atom_map_chiral_conflicts
+
+    # Use cyclohexane pair — the ring -CH₂- centers are the key case
+    mol_a = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1"))
+    mol_b = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1"))
+    AllChem.EmbedMolecule(mol_a, randomSeed=42)
+    AllChem.EmbedMolecule(mol_b, randomSeed=42)
+
+    cores = atom_mapping.get_cores(
+        mol_a, mol_b,
+        ring_cutoff=0.15,
+        chain_cutoff=0.30,
+        max_visits=1e6,
+        max_connected_components=1,
+        min_connected_component_size=1,
+        max_cores=100,
+        enforce_core_core=True,
+        ring_matches_ring_only=True,
+        heavy_matches_heavy_only=True,
+        enforce_chiral=True,
+        disallow_planar_torsion_flips=False,
+        min_threshold=0,
+        initial_mapping=None,
+    )
+
+    assert len(cores) > 0, "Should find at least one core"
+
+    conf_a = get_romol_conf(mol_a)
+    conf_b = get_romol_conf(mol_b)
+    chiral_set_a = ChiralRestrIdxSet.from_mol(mol_a, conf_a)
+    chiral_set_b = ChiralRestrIdxSet.from_mol(mol_b, conf_b)
+
+    for i, core in enumerate(cores):
+        conflicts = find_atom_map_chiral_conflicts(core, chiral_set_a, chiral_set_b)
+        assert len(conflicts) == 0, f"Core {i} has {len(conflicts)} chiral conflicts, expected 0"
+
+
+def test_chiral_h_augmentation_no_conflict_case():
+    """Verify that when the Hungarian assignment does not introduce chiral
+    conflicts, the augmented core is identical with and without enforcement.
+
+    Uses methanol (C(H₃)-OH) with identical conformers — the identity
+    assignment is chirally correct so no Hs should be unmapped.
+    """
+    from tmd.fe.atom_mapping import (
+        _augment_core_with_hydrogens,
+        _build_h_removal_index_maps,
+    )
+    from tmd.fe.chiral_utils import ChiralRestrIdxSet
+
+    # Methanol: C(H₃)-OH — the methyl carbon has 3 removable Hs
+    mol_a = Chem.AddHs(Chem.MolFromSmiles("CO"))
+    mol_b = Chem.AddHs(Chem.MolFromSmiles("CO"))
+    AllChem.EmbedMolecule(mol_a, randomSeed=42)
+    AllChem.EmbedMolecule(mol_b, randomSeed=42)
+
+    conf_a = get_romol_conf(mol_a)
+    conf_b = get_romol_conf(mol_b)
+
+    chiral_set_a = ChiralRestrIdxSet.from_mol(mol_a, conf_a)
+    chiral_set_b = ChiralRestrIdxSet.from_mol(mol_b, conf_b)
+
+    mol_a_no_h = Chem.RemoveHs(mol_a)
+    mol_b_no_h = Chem.RemoveHs(mol_b)
+    _, _, removed_h_a = _build_h_removal_index_maps(mol_a, mol_a_no_h)
+    _, _, removed_h_b = _build_h_removal_index_maps(mol_b, mol_b_no_h)
+
+    # Heavy core: C→C, O→O
+    heavy_core = np.array([[0, 0], [1, 1]])
+
+    # Augment without chiral enforcement (distance-only)
+    augmented_no_chiral = _augment_core_with_hydrogens(
+        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
+    )
+
+    # Augment with chiral enforcement
+    augmented_chiral = _augment_core_with_hydrogens(
+        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
+        chiral_set_a=chiral_set_a, chiral_set_b=chiral_set_b, enforce_chiral=True,
+    )
+
+    # No conflicts on identical molecules → both augmented cores should be identical
+    np.testing.assert_array_equal(
+        augmented_no_chiral, augmented_chiral,
+        err_msg="No-conflict case: chiral enforcement should not change the core",
+    )
