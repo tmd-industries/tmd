@@ -20,6 +20,7 @@ from typing import Optional
 import numpy as np
 from numpy.typing import NDArray
 from rdkit import Chem
+from scipy.optimize import linear_sum_assignment
 
 from tmd.fe import mcgregor
 from tmd.fe.chiral_utils import ChiralRestrIdxSet, has_chiral_atom_flips, setup_find_flipped_planar_torsions
@@ -269,6 +270,132 @@ def core_bonds_broken_count(mol_a, mol_b, core):
     return count
 
 
+def _build_h_removal_index_maps(mol_with_h, mol_without_h):
+    """Build bidirectional index maps between a molecule and its H-stripped version.
+
+    Chem.RemoveHs() may retain some Hs (e.g. those defining double-bond stereochemistry).
+    This function identifies which atoms survived removal and builds the mapping.
+
+    Parameters
+    ----------
+    mol_with_h : Chem.Mol
+        Original molecule with all explicit Hs.
+    mol_without_h : Chem.Mol
+        Molecule after Chem.RemoveHs().
+
+    Returns
+    -------
+    old_to_new : dict[int, int]
+        Maps original atom index -> H-stripped atom index. Only contains atoms
+        that survived removal.
+    new_to_old : dict[int, int]
+        Maps H-stripped atom index -> original atom index.
+    removed_h_set : set[int]
+        Set of original atom indices that were removed (all are hydrogens).
+    """
+    # RDKit's RemoveHs preserves the relative order of retained atoms,
+    # so we can build the mapping by iterating and skipping removed Hs.
+    n_old = mol_with_h.GetNumAtoms()
+    n_new = mol_without_h.GetNumAtoms()
+
+    old_to_new = {}
+    new_to_old = {}
+    removed_h_set = set()
+    new_idx = 0
+
+    for old_idx in range(n_old):
+        atom = mol_with_h.GetAtomWithIdx(old_idx)
+        if atom.GetAtomicNum() == 1:
+            # Check if this H was retained (e.g. double-bond stereo H)
+            if new_idx < n_new and mol_without_h.GetAtomWithIdx(new_idx).GetAtomicNum() == 1:
+                # This H was retained
+                old_to_new[old_idx] = new_idx
+                new_to_old[new_idx] = old_idx
+                new_idx += 1
+            else:
+                removed_h_set.add(old_idx)
+        else:
+            old_to_new[old_idx] = new_idx
+            new_to_old[new_idx] = old_idx
+            new_idx += 1
+
+    assert new_idx == n_new
+    return old_to_new, new_to_old, removed_h_set
+
+
+def _get_removable_h_neighbors(mol, atom_idx, removed_h_set):
+    """Return indices of hydrogen neighbors of atom_idx that were removed by RemoveHs.
+
+    Parameters
+    ----------
+    mol : Chem.Mol
+        Original molecule (with all Hs).
+    atom_idx : int
+        Atom index in the original molecule.
+    removed_h_set : set[int]
+        Set of atom indices that were removed by RemoveHs.
+
+    Returns
+    -------
+    list[int]
+        Indices of removed H neighbors, in original molecule numbering.
+    """
+    return [
+        nb.GetIdx()
+        for nb in mol.GetAtomWithIdx(atom_idx).GetNeighbors()
+        if nb.GetIdx() in removed_h_set
+    ]
+
+
+def _augment_core_with_hydrogens(mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b):
+    """Augment a heavy-atom core with optimal hydrogen mappings.
+
+    For each mapped heavy-atom pair (a_i, b_j), finds hydrogen neighbors of a_i
+    that were removed and hydrogen neighbors of b_j that were removed, then uses
+    the Hungarian algorithm on squared distances to optimally match them.
+
+    Parameters
+    ----------
+    mol_a, mol_b : Chem.Mol
+        Original molecules with all Hs.
+    heavy_core : NDArray
+        Shape (K, 2) array of mapped atom pairs in original molecule indices.
+    conf_a, conf_b : NDArray
+        Conformer coordinates, shape (N, 3), in nm.
+    removed_h_a, removed_h_b : set[int]
+        Sets of atom indices removed by RemoveHs.
+
+    Returns
+    -------
+    NDArray
+        Augmented core including hydrogen mappings, shape (K + M, 2).
+    """
+    h_pairs = []
+
+    for a_i, b_j in heavy_core:
+        a_i, b_j = int(a_i), int(b_j)
+        h_neighbors_a = _get_removable_h_neighbors(mol_a, a_i, removed_h_a)
+        h_neighbors_b = _get_removable_h_neighbors(mol_b, b_j, removed_h_b)
+
+        if len(h_neighbors_a) == 0 or len(h_neighbors_b) == 0:
+            continue
+
+        # Build squared-distance cost matrix
+        cost = np.zeros((len(h_neighbors_a), len(h_neighbors_b)))
+        for ii, ha in enumerate(h_neighbors_a):
+            for jj, hb in enumerate(h_neighbors_b):
+                diff = conf_a[ha] - conf_b[hb]
+                cost[ii, jj] = np.dot(diff, diff)
+
+        row_ind, col_ind = linear_sum_assignment(cost)
+        for r, c in zip(row_ind, col_ind):
+            h_pairs.append([h_neighbors_a[r], h_neighbors_b[c]])
+
+    if h_pairs:
+        return np.concatenate([heavy_core, np.array(h_pairs)], axis=0)
+    return heavy_core
+
+
 def _get_cores_impl(
     mol_a,
     mol_b,
@@ -286,44 +413,114 @@ def _get_cores_impl(
     min_threshold,
     initial_mapping,
 ) -> tuple[list[NDArray], mcgregor.MCSDiagnostics]:
+    assert heavy_matches_heavy_only, "heavy_matches_heavy_only must be True"
+
     if initial_mapping is None:
-        initial_mapping = np.zeros((0, 2))
+        initial_mapping = np.zeros((0, 2), dtype=np.intp)
 
-    mol_a, perm, initial_mapping = reorder_atoms_by_degree_and_initial_mapping(mol_a, initial_mapping)
+    # Keep references to the original (full-H) molecules and their conformers
+    # for H augmentation and scoring at the end
+    mol_a_full = mol_a
+    mol_b_full = mol_b
+    conf_a_full = get_romol_conf(mol_a_full)
+    conf_b_full = get_romol_conf(mol_b_full)
 
-    bonds_a = get_romol_bonds(mol_a)
-    bonds_b = get_romol_bonds(mol_b)
-    conf_a = get_romol_conf(mol_a)
-    conf_b = get_romol_conf(mol_b)
+    # --- Phase 1: Build H-stripped molecules for the MCS search ---
+    mol_a_heavy = Chem.RemoveHs(mol_a)
+    mol_b_heavy = Chem.RemoveHs(mol_b)
 
-    priority_idxs = []  # ordered list of atoms to consider
+    old_to_new_a, new_to_old_a, removed_h_a = _build_h_removal_index_maps(mol_a_full, mol_a_heavy)
+    old_to_new_b, new_to_old_b, removed_h_b = _build_h_removal_index_maps(mol_b_full, mol_b_heavy)
 
-    # setup co-domain for each atom in mol_a, if an initial mapping is provided, it overrides
-    # the priority_idxs
+    # Translate initial_mapping from original indices to H-stripped indices,
+    # skipping any pairs where either atom was a removed hydrogen
+    heavy_initial_pairs = []
+    for a_old, b_old in initial_mapping:
+        a_old, b_old = int(a_old), int(b_old)
+        if a_old in old_to_new_a and b_old in old_to_new_b:
+            heavy_initial_pairs.append([old_to_new_a[a_old], old_to_new_b[b_old]])
+    heavy_initial_mapping = np.array(heavy_initial_pairs, dtype=np.intp).reshape(-1, 2)
+
+    # Handle the n_a <= n_b requirement for the MCS.
+    # get_cores_and_diagnostics already ensures the full mol_a <= mol_b,
+    # but after H removal the relative sizes could change.
+    swapped_heavy = False
+    if mol_a_heavy.GetNumAtoms() > mol_b_heavy.GetNumAtoms():
+        mol_a_heavy, mol_b_heavy = mol_b_heavy, mol_a_heavy
+        old_to_new_a, old_to_new_b = old_to_new_b, old_to_new_a
+        new_to_old_a, new_to_old_b = new_to_old_b, new_to_old_a
+        removed_h_a, removed_h_b = removed_h_b, removed_h_a
+        mol_a_full, mol_b_full = mol_b_full, mol_a_full
+        conf_a_full, conf_b_full = conf_b_full, conf_a_full
+        heavy_initial_mapping = heavy_initial_mapping[:, ::-1] if len(heavy_initial_mapping) > 0 else heavy_initial_mapping
+        swapped_heavy = True
+
+    # Reorder atoms by degree for MCS efficiency
+    mol_a_heavy, perm, heavy_initial_mapping = reorder_atoms_by_degree_and_initial_mapping(
+        mol_a_heavy, heavy_initial_mapping
+    )
+
+    bonds_a = get_romol_bonds(mol_a_heavy)
+    bonds_b = get_romol_bonds(mol_b_heavy)
+    conf_a = get_romol_conf(mol_a_heavy)
+    conf_b = get_romol_conf(mol_b_heavy)
+
+    n_a = len(conf_a)
+    n_b = len(conf_b)
+
+    # Edge case: if the smaller molecule has only 1 heavy atom (e.g. methane),
+    # there are no bonds and the MCS search cannot run. Map the single atom
+    # to the nearest compatible atom in mol_b directly.
+    if n_a == 1:
+        # Find the closest atom in mol_b (they're all compatible since n_a=1)
+        dists = np.linalg.norm(conf_b - conf_a[0], axis=1)
+        best_b = int(np.argmin(dists))
+        # The single atom after reorder is index 0; undo the reorder
+        orig_a = int(perm[0])
+        heavy_core = np.array([[orig_a, best_b]])
+
+        # Translate to original indices
+        orig_pairs = []
+        for a_new, b_new in heavy_core:
+            a_old = new_to_old_a[int(a_new)]
+            b_old = new_to_old_b[int(b_new)]
+            orig_pairs.append([a_old, b_old])
+        orig_core = np.array(orig_pairs)
+
+        if swapped_heavy:
+            orig_core = orig_core[:, ::-1]
+            mol_a_full, mol_b_full = mol_b_full, mol_a_full
+            conf_a_full, conf_b_full = conf_b_full, conf_a_full
+            removed_h_a, removed_h_b = removed_h_b, removed_h_a
+
+        augmented = _augment_core_with_hydrogens(
+            mol_a_full, mol_b_full, orig_core, conf_a_full, conf_b_full, removed_h_a, removed_h_b
+        )
+        return [augmented], mcgregor.MCSDiagnostics(
+            total_nodes_visited=1, total_leaves_visited=1, core_size=len(augmented), num_cores=1
+        )
+
+    # Build priority_idxs for the H-stripped molecules
+    priority_idxs = []
+
     initial_mapping_kv = {}
-    for src, dst in initial_mapping:
+    for src, dst in heavy_initial_mapping:
         initial_mapping_kv[src] = dst
 
-    def _is_hydrogen(atom):
-        return atom.GetAtomicNum() == 1
-
     for idx, a_xyz in enumerate(conf_a):
-        if idx < len(initial_mapping):
+        if idx < len(heavy_initial_mapping):
             priority_idxs.append([initial_mapping_kv[idx]])  # used to initialize marcs and nothing else
         else:
-            atom_i = mol_a.GetAtomWithIdx(idx)
+            atom_i = mol_a_heavy.GetAtomWithIdx(idx)
             dijs = []
 
             allowed_idxs = set()
             for jdx, b_xyz in enumerate(conf_b):
-                atom_j = mol_b.GetAtomWithIdx(jdx)
+                atom_j = mol_b_heavy.GetAtomWithIdx(jdx)
                 dij = np.linalg.norm(a_xyz - b_xyz)
                 dijs.append(dij)
 
                 if ring_matches_ring_only and (atom_i.IsInRing() != atom_j.IsInRing()):
-                    continue
-                # Either heavy atoms match with other heavy atoms or hydrogens match hydrogens
-                if heavy_matches_heavy_only and _is_hydrogen(atom_i) != _is_hydrogen(atom_j):
                     continue
 
                 cutoff = ring_cutoff if (atom_i.IsInRing() or atom_j.IsInRing()) else chain_cutoff
@@ -337,13 +534,15 @@ def _get_cores_impl(
 
             priority_idxs.append(final_idxs)
 
-    n_a = len(conf_a)
-    n_b = len(conf_b)
-
+    # Build chiral and planar torsion filters on the H-stripped molecules.
+    # These work correctly because:
+    # - [X4:1] SMARTS counts total degree (including implicit Hs)
+    # - Reduced restraint tuples (e.g. C(3,3)=1 for 3-heavy-neighbor centers) are sufficient
+    # - Unmapped atoms (-1) never appear in disallowed_set
     filter_fxns = []
     if enforce_chiral:
-        chiral_set_a = ChiralRestrIdxSet.from_mol(mol_a, conf_a)
-        chiral_set_b = ChiralRestrIdxSet.from_mol(mol_b, conf_b)
+        chiral_set_a = ChiralRestrIdxSet.from_mol(mol_a_heavy, conf_a)
+        chiral_set_b = ChiralRestrIdxSet.from_mol(mol_b_heavy, conf_b)
 
         def chiral_filter(trial_core):
             passed = not has_chiral_atom_flips(trial_core, chiral_set_a, chiral_set_b)
@@ -352,7 +551,7 @@ def _get_cores_impl(
         filter_fxns.append(chiral_filter)
 
     if disallow_planar_torsion_flips:
-        find_flipped_planar_torsions = setup_find_flipped_planar_torsions(mol_a, mol_b)
+        find_flipped_planar_torsions = setup_find_flipped_planar_torsions(mol_a_heavy, mol_b_heavy)
 
         def planar_torsion_flip_filter(trial_core):
             flipped = find_flipped_planar_torsions(trial_core)
@@ -364,6 +563,7 @@ def _get_cores_impl(
     def filter_fxn(trial_core):
         return all(f(trial_core) for f in filter_fxns)
 
+    # --- Run MCS on H-stripped molecules ---
     all_cores, _, mcs_diagnostics = mcgregor.mcs(
         n_a,
         n_b,
@@ -376,20 +576,61 @@ def _get_cores_impl(
         max_connected_components,
         min_connected_component_size,
         min_threshold,
-        initial_mapping,
+        heavy_initial_mapping,
         filter_fxn,
     )
 
     all_cores = remove_cores_smaller_than_largest(all_cores)
     all_cores = _deduplicate_all_cores(all_cores)
 
+    # --- Translate cores back to original indices and augment with Hs ---
+    # First undo the atom reorder (perm), then translate H-stripped -> original indices
+    augmented_cores = []
+    for core in all_cores:
+        # Undo atom reorder for column 0 (mol_a_heavy was reordered)
+        core[:, 0] = perm[core[:, 0]]
+
+        # Translate from H-stripped indices to original (full-H) indices
+        orig_pairs = []
+        for a_new, b_new in core:
+            a_old = new_to_old_a[int(a_new)]
+            b_old = new_to_old_b[int(b_new)]
+            orig_pairs.append([a_old, b_old])
+        orig_core = np.array(orig_pairs)
+
+        # Undo the heavy swap if we swapped for the n_a <= n_b requirement
+        if swapped_heavy:
+            orig_core = orig_core[:, ::-1]
+
+        augmented_cores.append(orig_core)
+
+    # Restore the canonical mol_a_full / mol_b_full references after potential swap
+    if swapped_heavy:
+        mol_a_full, mol_b_full = mol_b_full, mol_a_full
+        conf_a_full, conf_b_full = conf_b_full, conf_a_full
+        removed_h_a, removed_h_b = removed_h_b, removed_h_a
+
+    # --- Phase 2: Augment each core with hydrogen mappings ---
+    augmented_cores = [
+        _augment_core_with_hydrogens(
+            mol_a_full, mol_b_full, core, conf_a_full, conf_b_full, removed_h_a, removed_h_b
+        )
+        for core in augmented_cores
+    ]
+
+    # Different heavy-atom cores may augment with different numbers of Hs,
+    # so re-apply size filtering to keep only the largest augmented cores
+    augmented_cores = remove_cores_smaller_than_largest(augmented_cores)
+    augmented_cores = _deduplicate_all_cores(augmented_cores)
+
+    # --- Score and sort augmented cores on the original (full-H) molecules ---
     mean_sq_distances = []
     valence_mismatches = []
     cb_counts = []
 
-    for core in all_cores:
-        r_i = conf_a[core[:, 0]]
-        r_j = conf_b[core[:, 1]]
+    for core in augmented_cores:
+        r_i = conf_a_full[core[:, 0]]
+        r_j = conf_b_full[core[:, 1]]
 
         # distance score
         r2_ij = np.sum((r_i - r_j) ** 2)
@@ -400,12 +641,14 @@ def _get_cores_impl(
         v_count = 0
         for idx, jdx in core:
             v_count += abs(
-                mol_a.GetAtomWithIdx(int(idx)).GetTotalValence() - mol_b.GetAtomWithIdx(int(jdx)).GetTotalValence()
+                mol_a_full.GetAtomWithIdx(int(idx)).GetTotalValence()
+                - mol_b_full.GetAtomWithIdx(int(jdx)).GetTotalValence()
             )
 
         valence_mismatches.append(v_count)
         cb_counts.append(
-            core_bonds_broken_count(mol_a, mol_b, core) + core_bonds_broken_count(mol_b, mol_a, core[:, [1, 0]])
+            core_bonds_broken_count(mol_a_full, mol_b_full, core)
+            + core_bonds_broken_count(mol_b_full, mol_a_full, core[:, [1, 0]])
         )
 
     sort_vals = np.array(
@@ -415,10 +658,7 @@ def _get_cores_impl(
 
     sort_order = np.argsort(sort_vals, order=["cb", "valence", "msd"])
     for p in sort_order:
-        core = all_cores[p]
-        # undo the sort
-        core[:, 0] = perm[core[:, 0]]
-        sorted_cores.append(core)
+        sorted_cores.append(augmented_cores[p])
 
     return sorted_cores, mcs_diagnostics
 
