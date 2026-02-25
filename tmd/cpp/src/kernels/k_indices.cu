@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,6 +14,7 @@
 // limitations under the License.
 
 #include "k_indices.cuh"
+#include "stdio.h"
 
 namespace tmd {
 // Takes a source and destination array.
@@ -43,21 +45,56 @@ void __global__ k_invert_indices(const int N, unsigned int *__restrict__ arr) {
   arr[idx] = arr[idx] >= N ? idx : N;
 }
 
-void __global__ k_arange(const int N, unsigned int *__restrict__ arr,
-                         unsigned int offset) {
-  const int atom_idx = blockIdx.x * blockDim.x + threadIdx.x;
+template <typename T>
+void __global__ k_arange(const size_t N, T *__restrict__ arr) {
+  const T atom_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (atom_idx >= N) {
     return;
   }
-  arr[atom_idx] = atom_idx + offset;
+  arr[atom_idx] = atom_idx;
 }
 
-void __global__ k_arange(const int N, int *__restrict__ arr, int offset) {
-  const int atom_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (atom_idx >= N) {
-    return;
+template void __global__ k_arange<int>(const size_t, int *__restrict__ arr);
+template void __global__ k_arange<unsigned int>(const size_t,
+                                                unsigned int *__restrict__ arr);
+
+template <typename T>
+void __global__ k_fill(const size_t N, T *__restrict__ arr, const T val) {
+  auto idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (idx < N) {
+    arr[idx] = val;
+    idx += gridDim.x * blockDim.x;
   }
-  arr[atom_idx] = atom_idx + offset;
 }
+
+template void __global__ k_fill<int>(const size_t, int *__restrict__ arr,
+                                     const int);
+template void __global__ k_fill<unsigned int>(const size_t,
+                                              unsigned int *__restrict__ arr,
+                                              const unsigned int);
+template void __global__ k_fill<float>(const size_t, float *__restrict__ arr,
+                                       const float);
+template void __global__ k_fill<double>(const size_t, double *__restrict__ arr,
+                                        const double);
+
+template <typename T>
+void __global__ k_segment_arange(const size_t num_segments,
+                                 const size_t elements_per_segment,
+                                 T *__restrict__ arr) {
+  int segment_idx = blockIdx.y;
+  while (segment_idx < num_segments) {
+    T arr_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    while (arr_idx < elements_per_segment) {
+      arr[elements_per_segment * segment_idx + arr_idx] = arr_idx;
+      arr_idx += gridDim.x * blockDim.x;
+    }
+    segment_idx += gridDim.y * blockDim.y;
+  }
+}
+
+template void __global__ k_segment_arange<int>(const size_t, const size_t,
+                                               int *__restrict__ arr);
+template void __global__ k_segment_arange<unsigned int>(
+    const size_t, const size_t, unsigned int *__restrict__ arr);
 
 } // namespace tmd

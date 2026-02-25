@@ -246,6 +246,23 @@ def hilbert_sort(conf, box):
     return perm
 
 
+def shift_random_coordinates_by_box(
+    coords: NDArray, box: NDArray, subset: NDArray | None = None, seed: int = 2025
+) -> NDArray:
+    """Utility function to shift random particles in coords by the box dimensions. Useful for verifying that PBCs are honored"""
+    assert box.shape == (3, 3)
+    assert coords.shape[-1] == 3 and len(coords.shape) == 2
+    coords_copy = np.array(coords)
+    rng = np.random.default_rng(seed)
+    if subset is None:
+        subset = np.arange(len(coords))
+    assert len(subset) <= len(coords)
+    particles_to_image = rng.choice(subset, size=rng.integers(1, len(coords)))
+    # Shift by 1 to 4 boxes away
+    coords_copy[particles_to_image] += rng.integers(1, 4, size=(len(particles_to_image), 3)) * np.diagonal(box)
+    return coords_copy
+
+
 class GradientTest(unittest.TestCase):
     def get_random_coords(self, N, D):
         x = np.random.rand(N, D).astype(dtype=np.float64)
@@ -374,11 +391,15 @@ def gen_nonbonded_params_with_4d_offsets(
     if w_min is None:
         w_min = -w_max
 
-    num_atoms, _ = params.shape
+    assert len(params.shape) in (2, 3)
+    if len(params.shape) == 2:
+        num_atoms = params.shape[0]
+    else:
+        num_atoms = params.shape[1]
 
     def params_with_w_coords(w_coords):
         params_ = np.array(params)
-        params_[:, 3] = w_coords
+        params_[..., 3] = w_coords
         return params_
 
     # all zero
@@ -393,7 +414,7 @@ def gen_nonbonded_params_with_4d_offsets(
     yield params_with_w_coords(w_coords)
 
     # random uniform in [w_min, w_max]
-    w_coords = rng.uniform(w_min, w_max, (num_atoms,))
+    w_coords = rng.uniform(w_min, w_max, size=num_atoms)
     yield params_with_w_coords(w_coords)
 
     # sparse with half zero

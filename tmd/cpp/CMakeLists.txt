@@ -101,7 +101,9 @@ pybind11_add_module(${LIBRARY_NAME} SHARED NO_EXTRAS
   src/potential.cu
   src/bound_potential.cu
   src/potential_executor.cu
+  src/potential_utils.cpp
   src/centroid_restraint.cu
+  src/cub_utils.cuh
   src/gpu_utils.cu
   src/vendored/hilbert.cpp
   src/mol_utils.cpp
@@ -109,6 +111,7 @@ pybind11_add_module(${LIBRARY_NAME} SHARED NO_EXTRAS
   src/nonbonded_precomputed.cu
   src/nonbonded_pair_list.cu
   src/nonbonded_interaction_group.cu
+  src/energy_accum.cu
   src/local_md_utils.cu
   src/neighborlist.cu
   src/segmented_sumexp.cu
@@ -145,6 +148,7 @@ pybind11_add_module(${LIBRARY_NAME} SHARED NO_EXTRAS
   src/kernels/k_rotations.cu
   src/kernels/k_exchange.cu
   src/kernels/k_sampling.cu
+  src/kernels/k_nonbonded.cu
   src/all_atom_energies.cu
   src/exchange.cu
   src/translations.cu

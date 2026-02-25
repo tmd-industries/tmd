@@ -1,4 +1,4 @@
-// Copyright 2019-2025, Relay Therapeutics
+// Copyright 2025 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,13 +11,21 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 #pragma once
+
+#include "bound_potential.hpp"
+#include "potential.hpp"
+#include <memory>
+#include <vector>
 
 namespace tmd {
 
-int __forceinline__ __host__ __device__ ceil_divide(int x, int y) {
-  return (x + y - 1) / y;
-};
+template <typename RealType>
+void verify_potentials_are_compatible(
+    const std::vector<std::shared_ptr<BoundPotential<RealType>>> &potentials);
+
+template <typename RealType>
+void verify_potentials_are_compatible(
+    const std::vector<std::shared_ptr<Potential<RealType>>> &potentials);
 
 } // namespace tmd

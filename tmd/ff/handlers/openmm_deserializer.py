@@ -192,7 +192,7 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
 
         bond_idxs = np.array(bond_idxs_, dtype=np.int32)
         bond_params = np.array(bond_params_, dtype=np.float64)
-        bond = potentials.HarmonicBond(bond_idxs).bind(bond_params)
+        bond = potentials.HarmonicBond(N, bond_idxs).bind(bond_params)
 
     angle_forces = get_forces_by_type(omm_forces, mm.HarmonicAngleForce)
     if len(angle_forces) > 0:
@@ -210,7 +210,7 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
 
         angle_idxs = np.array(angle_idxs_, dtype=np.int32)
         angle_params = np.array(angle_params_, dtype=np.float64)
-        angle = potentials.HarmonicAngle(angle_idxs).bind(angle_params)
+        angle = potentials.HarmonicAngle(N, angle_idxs).bind(angle_params)
 
     torsion_forces = get_forces_by_type(omm_forces, mm.PeriodicTorsionForce)
     if len(torsion_forces) > 0:
@@ -253,8 +253,10 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
                 improper_idxs.append(idxs)
                 improper_params.append(params)
 
-        proper = potentials.PeriodicTorsion(np.array(proper_idxs, dtype=np.int32)).bind(np.array(proper_params))
-        improper = potentials.PeriodicTorsion(np.array(improper_idxs, dtype=np.int32)).bind(np.array(improper_params))
+        proper = potentials.PeriodicTorsion(N, np.array(proper_idxs, dtype=np.int32)).bind(np.array(proper_params))
+        improper = potentials.PeriodicTorsion(N, np.array(improper_idxs, dtype=np.int32)).bind(
+            np.array(improper_params)
+        )
 
     nb_forces = get_forces_by_type(omm_forces, mm.NonbondedForce)
     if len(nb_forces) > 0:
@@ -268,11 +270,11 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
     assert nonbonded
 
     if proper is None:
-        proper = potentials.PeriodicTorsion(np.array([], dtype=np.int32).reshape(-1, 4)).bind(
+        proper = potentials.PeriodicTorsion(N, np.array([], dtype=np.int32).reshape(-1, 4)).bind(
             np.array([], dtype=np.float64).reshape(-1, 3)
         )
     if improper is None:
-        improper = potentials.PeriodicTorsion(np.array([], dtype=np.int32).reshape(-1, 4)).bind(
+        improper = potentials.PeriodicTorsion(N, np.array([], dtype=np.int32).reshape(-1, 4)).bind(
             np.array([], dtype=np.float64).reshape(-1, 3)
         )
 

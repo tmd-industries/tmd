@@ -20,26 +20,35 @@ namespace tmd {
 
 template <typename RealType, bool COMPUTE_U, bool COMPUTE_DU_DX,
           bool COMPUTE_DU_DP>
-void __global__ k_harmonic_bond(const int B, // number of bonds
-                                const RealType *__restrict__ coords,
-                                const RealType *__restrict__ box,    // [3, 3]
-                                const RealType *__restrict__ params, // [B, 2]
-                                const int *__restrict__ bond_idxs,   // [B, 2]
-                                unsigned long long *__restrict__ du_dx,
-                                unsigned long long *__restrict__ du_dp,
-                                __int128 *__restrict__ u) {
+void __global__ k_harmonic_bond(
+    const int N,                              // Atoms in each system
+    const int B,                              // number of bonds
+    const RealType *__restrict__ coords,      // [K, N, 3]
+    const RealType *__restrict__ box,         // [K, 3, 3]
+    const RealType *__restrict__ params,      // [B, 2]
+    const int *__restrict__ bond_idxs,        // [B, 2]
+    const int *__restrict__ bond_system_idxs, // [B],
+    unsigned long long *__restrict__ du_dx,
+    unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u) {
 
   int b_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
   while (b_idx < B) {
+    const int system_idx = bond_system_idxs[b_idx];
+    const int coord_offset = system_idx * N;
+
     int src_idx = bond_idxs[b_idx * 2 + 0];
     int dst_idx = bond_idxs[b_idx * 2 + 1];
+
+    src_idx += coord_offset;
+    dst_idx += coord_offset;
     RealType dx[3];
     RealType d2ij = 0;
 #pragma unroll
     for (int d = 0; d < 3; d++) {
       RealType delta = coords[src_idx * 3 + d] - coords[dst_idx * 3 + d];
-      delta -= box[d * 3 + d] * nearbyint(delta / box[d * 3 + d]);
+      delta -= box[system_idx * 9 + d * 3 + d] *
+               nearbyint(delta / box[system_idx * 9 + d * 3 + d]);
       dx[d] = delta;
       d2ij += delta * delta;
     }

@@ -443,13 +443,15 @@ def verify_leg_results_hashes(leg_dir: Path, expected_hash: str):
 
 
 @pytest.mark.fixed_output
+@pytest.mark.parametrize("enable_batching", [False, True])
 @pytest.mark.parametrize(
     "leg, n_windows, n_frames, n_eq_steps",
-    [("vacuum", 6, 50, 1000), ("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
+    [("vacuum", 24, 50, 1000), ("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
 )
 @pytest.mark.parametrize("mol_a, mol_b", [("15", "30")])
 @pytest.mark.parametrize("seed", [2025])
 def test_run_rbfe_legs(
+    enable_batching,
     leg,
     n_windows,
     n_frames,
@@ -464,20 +466,35 @@ def test_run_rbfe_legs(
     # which can be used to investigate the results that generated the hashes.
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
-        "vacuum": (
-            "b3f57397afd56b463f186886101e7174e2e1828f5e8a93017e08883708132be0",
-            "aa26d81859757608960c67db26fe123a2847cd903591c5b7d268fc17450c99cb",
-            "1799c91715d0b4560b7500ed13087fbadd1bf0d2310c5ac847e56cff39e989f4",
+        (False, "vacuum"): (
+            "f6037bbd113c54ce3b06b2c50a61a015502866341a35ce9883e5f710db4389df",
+            "6886f74df3d0899980fe4cc3f7b4b00a37db6f7ef05ee6169a537ff656f5295a",
+            "5812eb125a0ec707bb169536f506cef18f53fe4c92f59ed0c889ab669dbcde66",
         ),
-        "solvent": (
+        (False, "solvent"): (
             "0486b647802e4c03186b509d1d89c2f91cf9fb6a3e4ef0e8ce4d968c0f5f9d2f",
             "15f07065aa84affde2adb3d10f40bed2f20028148a1c66e77650f0ea599a3cbd",
             "675dcc01e335616cd8544bc0a87bab895b0a3310c5c17ccf15f65636f6ebdd2a",
         ),
-        "complex": (
+        (False, "complex"): (
             "215d806c89acb78bd43d168558f64f170e41564177b5b0a80b85baec50fd37ea",
             "d89bf4811f0635ad240052a12cdbacb8eb68075598be2a784a3f4588167ec5fe",
             "428f5b97fd2208589e2dc82d85cfa50ca0b97ed33e25bbe1d303981aa25ccd7f",
+        ),
+        (True, "vacuum"): (
+            "5b6631c0f44d555e52b39cda5d696789ab22df517d7c223fe44e7bc2807be4fd",
+            "aa4b3014573d9b969559eb0460fea320657de48237690f5de175b5d2f97312ef",
+            "b6c75d5d37939196c3271e7db56299b07e8e9b856ace03e4d9b42f11cf30c220",
+        ),
+        (True, "solvent"): (
+            "f48b346de44978ab82de3e84426f737c316bd19290336fe1de362a6a45e4742e",
+            "366265ed5cd703a047a6cc286cca4fca3d6de0200ee622ace0dd16a2c00091db",
+            "f7fcc5fc8571124a4e92190ad4513a88d32c80d54988d689989e81b944f67c5a",
+        ),
+        (True, "complex"): (
+            "69a8bc2c8805d63f63a9644f72506e7a63d67542e283abb6c77669963446546b",
+            "eb310d39f759652b9577d48082f5ea801c154e877aafbec5f2cd09c7a006c530",
+            "9a8c2ad004f8dbe2183b389401f0bc0f8faf03f25bc4acb88de9e3c6010ef2a2",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -492,7 +509,7 @@ def test_run_rbfe_legs(
             n_frames=n_frames,
             n_windows=n_windows,
             forcefield=DEFAULT_FF,
-            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_{mol_a}_{mol_b}_{leg}_{seed}",
+            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_{mol_a}_{mol_b}_{leg}_{seed}_{enable_batching}",
             force_overwrite=None,  # Force overwrite any existing data
             experimental_field="IC50[uM](SPA)",
             experimental_units="uM",
@@ -542,7 +559,12 @@ def test_run_rbfe_legs(
 
             assert results["n_windows"].size == 1
             assert results["n_windows"].dtype == np.intp
-            assert 2 <= results["n_windows"] <= config["n_windows"]
+            if not enable_batching:
+                assert 2 <= results["n_windows"] <= config["n_windows"]
+            else:
+                batch_size = 8
+                # If batching, can get config["n_windows"] // 8
+                assert 2 <= results["n_windows"] <= max(1, config["n_windows"] // batch_size) * batch_size
             assert isinstance(results["overlaps"], np.ndarray)
             assert all(isinstance(overlap, float) for overlap in results["overlaps"])
 
@@ -567,17 +589,19 @@ def test_run_rbfe_legs(
             assert ddg_rows[0]["mol_a"] == mol_a
             assert ddg_rows[0]["mol_b"] == mol_b
 
+        env = {"TMD_BATCH_MODE": "on" if enable_batching else "off"}
+
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[leg])
+        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(enable_batching, leg)])
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
         assert config_b["output_dir"] != config_a["output_dir"], "Runs are writing to the same output directory"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_b["output_dir"]))
 
@@ -627,6 +651,7 @@ def test_run_rbfe_legs(
 
 
 @pytest.mark.fixed_output
+@pytest.mark.parametrize("enable_batching", [False, True])
 @pytest.mark.parametrize(
     "leg, n_windows, n_frames, n_eq_steps, local_steps",
     [
@@ -639,6 +664,7 @@ def test_run_rbfe_legs(
 @pytest.mark.parametrize("mol_a, mol_b", [("15", "30")])
 @pytest.mark.parametrize("seed", [2025])
 def test_run_rbfe_legs_local(
+    enable_batching,
     leg,
     n_windows,
     n_frames,
@@ -654,22 +680,42 @@ def test_run_rbfe_legs_local(
     # which can be used to investigate the results that generated the hashes.
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
-        ("solvent", 400): (
+        ("solvent", 400, True): (
+            "c8898ed64d11e62e73756c647392e8259826a8d2090767e2a7b5b7647de40e47",
+            "1671020ce0132d5e768f49d9e9465bfa423eae7ebccf3387c9f103e857ad4afb",
+            "f64baf3d6890cb44884faa37d1a8744b52f48e330eaa50b2afced046b8d49e7e",
+        ),
+        ("complex", 400, True): (
+            "a78e7eb672e7216146ce28894fc61668fef0a612ccf43c1f5788e1e753c79724",
+            "0b64047ca0edfa86013c055589568784d29d5a7d88b78d67ba0108d26dc62ed6",
+            "0b9bf19f609be0279c6d19beec7462916d56ce0abdbd79bb38039f58fbf87802",
+        ),
+        ("solvent", 390, True): (
+            "bbc8a787df42dc7a5871165bccce480a5ecb36ab5ae28771b84f41c17ed4d62e",
+            "ae8ec3d4d817406c4f43a94e7da643bbaa55d43a337a81ad54967ceb6e305b7f",
+            "de726992de6e28805868d1b4511c54ef4397856c3417a72efd3596372d08f719",
+        ),
+        ("complex", 390, True): (
+            "7c11cbb89ef053f6eea266cf9239ec86b180df79743a8bd486cf1da789fd9b0f",
+            "e486366583e587806d6b6a3afa97dfd3f5193c0e09fc89d2cc38214146282260",
+            "f0d05cfa63086d08fc528df13a96b226871826c061750b04a59ab8ada5800fdd",
+        ),
+        ("solvent", 400, False): (
             "88a47c42da84db9ded4b5c75b405d8f53e1e1b54737fd4ba89a557f269809302",
             "ae3c13799a2b3de54e776bf21a15a6937303ea5b7168415a9f22fec7c85fb34b",
             "9896a66cb47e22d457b48ab6f03c2dcb85a13ec01a28988b2c57cb7ed1a7ec2f",
         ),
-        ("complex", 400): (
+        ("complex", 400, False): (
             "3197ffe103a435efb4f1ebb7a385eb7a52e1e0d07cdf9edf52dd19258f905a5e",
             "3f5362bae67f81be6c1cf1ede79614a7b3e40994981efa177cc9038d153d74e6",
             "2615c28622911c7b77d643a14b937382a0bdba79f42e27e9422da12eb25f4b90",
         ),
-        ("solvent", 390): (
+        ("solvent", 390, False): (
             "67f2c6c5c360b30ff569868e725c43c8aafdbf04b660e7827d0dfa75f2aa9a8c",
             "fb83a54cb54629d503b2c6ec2c29f7c930fca484e1ecf71838207fc1700a95db",
             "d9262eb53e230dda24dbee9f909f8d55680bf62f1d8521c8a5a05a44a26713eb",
         ),
-        ("complex", 390): (
+        ("complex", 390, False): (
             "7d93d2e93bf66c29b49fc352fbf0ea0f41240a00348c41babeac1de3978ec540",
             "8c4c196e786b69cf55b59773ad26f460f82cbe099abe9f1856957d405dc80980",
             "2c8f88cb93cf5e2926982a8486f8d772dd34c07d81baaf13ce1f82ab33769368",
@@ -687,7 +733,7 @@ def test_run_rbfe_legs_local(
             n_frames=n_frames,
             n_windows=n_windows,
             forcefield=DEFAULT_FF,
-            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}_{local_steps}",
+            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_local_{mol_a}_{mol_b}_{leg}_{seed}_{local_steps}_{enable_batching}",
             local_md_steps=local_steps,
             local_md_radius=2.0,
             force_overwrite=None,  # Force overwrite any existing data
@@ -737,7 +783,12 @@ def test_run_rbfe_legs_local(
 
             assert results["n_windows"].size == 1
             assert results["n_windows"].dtype == np.intp
-            assert 2 <= results["n_windows"] <= config["n_windows"]
+            if not enable_batching:
+                assert 2 <= results["n_windows"] <= config["n_windows"]
+            else:
+                batch_size = 8
+                # If batching, can get config["n_windows"] // 8
+                assert 2 <= results["n_windows"] <= max(1, config["n_windows"] // batch_size) * batch_size
             assert isinstance(results["overlaps"], np.ndarray)
             assert all(isinstance(overlap, float) for overlap in results["overlaps"])
 
@@ -746,17 +797,21 @@ def test_run_rbfe_legs_local(
                 assert len(traj_data["coords"]) == n_frames
                 assert len(traj_data["boxes"]) == n_frames
 
+        env = {"TMD_BATCH_MODE": "on" if enable_batching else "off"}
+
         config_a = config.copy()
         config_a["output_dir"] = config["output_dir"] + "_a"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_a), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(leg, local_steps)])
+        verify_leg_results_hashes(
+            Path(config_a["output_dir"]) / leg, leg_results_hashes[(leg, local_steps, enable_batching)]
+        )
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
         assert config_b["output_dir"] != config_a["output_dir"], "Runs are writing to the same output directory"
-        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b))
+        proc = run_example("run_rbfe_legs.py", get_cli_args(config_b), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_b["output_dir"]))
 

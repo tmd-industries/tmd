@@ -26,6 +26,7 @@ template <typename RealType>
 class VelocityVerletIntegrator : public Integrator<RealType> {
 
 private:
+  const int batch_size_;
   const int N_;
   const RealType dt_;
   bool initialized_;
@@ -34,9 +35,12 @@ private:
   StreamedPotentialRunner<RealType> runner_;
 
 public:
-  VelocityVerletIntegrator(int N, RealType dt, const RealType *h_cbs);
+  VelocityVerletIntegrator(const int batch_size, const int N, const RealType dt,
+                           const RealType *h_cbs);
 
   virtual ~VelocityVerletIntegrator();
+
+  virtual int num_systems() const override { return batch_size_; };
 
   virtual void
   step_fwd(std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,

@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -57,7 +58,7 @@ protected:
   const int batch_size_;
   const int num_intermediates_per_reduce_; // Number of intermediate values to
                                            // reduce mol weights
-  size_t num_attempted_;
+  std::vector<size_t> num_attempted_;
   NonbondedMolEnergyPotential<RealType> mol_potential_;
   SegmentedWeightedRandomSampler<RealType> sampler_;
   SegmentedSumExp<RealType> logsumexp_;
@@ -89,7 +90,7 @@ protected:
       d_quaternions_; // Normal noise for uniform random rotations
   DeviceBuffer<RealType>
       d_mh_noise_; // Noise used in the Metropolis-Hastings check
-  DeviceBuffer<size_t> d_num_accepted_;    // [1]
+  DeviceBuffer<size_t> d_num_accepted_;    // [num_systems]
   DeviceBuffer<int> d_target_mol_atoms_;   // [batch_size_, mol_size_]
   DeviceBuffer<int> d_target_mol_offsets_; // [num_target_mols + 1]
   DeviceBuffer<__int128>
@@ -115,10 +116,13 @@ protected:
   curandGenerator_t cr_rng_samples_;      // Generate noise for selecting waters
   curandGenerator_t cr_rng_mh_; // Generate noise for Metropolis-Hastings
 
-  void compute_initial_log_weights_device(const int N, RealType *d_coords,
-                                          RealType *d_box, cudaStream_t stream);
+  void compute_initial_log_weights_device(const int N, const RealType *d_coords,
+                                          const RealType *d_box,
+                                          const RealType *d_params,
+                                          cudaStream_t stream);
 
-  BDExchangeMove(const int N, const std::vector<std::vector<int>> &target_mols,
+  BDExchangeMove(const int num_system, const int N,
+                 const std::vector<std::vector<int>> &target_mols,
                  const std::vector<RealType> &params,
                  const RealType temperature, const RealType nb_beta,
                  const RealType cutoff, const int seed,
@@ -126,7 +130,8 @@ protected:
                  const int batch_size, const int translation_buffer_size);
 
 public:
-  BDExchangeMove(const int N, const std::vector<std::vector<int>> &target_mols,
+  BDExchangeMove(const int num_system, const int N,
+                 const std::vector<std::vector<int>> &target_mols,
                  const std::vector<RealType> &params,
                  const RealType temperature, const RealType nb_beta,
                  const RealType cutoff, const int seed,
@@ -136,6 +141,7 @@ public:
   void compute_incremental_log_weights_device(const int N, const bool scale,
                                               const RealType *d_box,
                                               const RealType *d_coords,
+                                              const RealType *d_params,
                                               const RealType *d_quaternions,
                                               const RealType *d_translations,
                                               cudaStream_t stream);
@@ -163,19 +169,21 @@ public:
 
   ~BDExchangeMove();
 
-  virtual void move(const int N,
-                    RealType *d_coords, // [N, 3]
-                    RealType *d_box,    // [3, 3]
+  virtual void move(const int num_systems, const int N,
+                    RealType *d_coords, // [num_systems, N, 3]
+                    RealType *d_box,    // [num_systems, 3, 3]
                     cudaStream_t stream) override;
 
   virtual RealType log_probability_host();
   virtual RealType raw_log_probability_host();
 
-  size_t batch_size() const { return batch_size_; }
+  size_t num_systems() const { return this->num_systems_; }
 
-  size_t n_proposed() const { return num_attempted_; }
+  size_t batch_size() const { return this->batch_size_; }
 
-  size_t n_accepted() const;
+  std::vector<size_t> n_proposed() const { return num_attempted_; }
+
+  std::vector<size_t> n_accepted() const;
 
   std::vector<RealType> get_params();
 
@@ -184,9 +192,16 @@ public:
   void set_params_device(const int size, const RealType *d_p,
                          const cudaStream_t stream);
 
-  RealType acceptance_fraction() const {
-    return static_cast<RealType>(this->n_accepted()) /
-           static_cast<RealType>(this->n_proposed());
+  std::vector<RealType> acceptance_fraction() const {
+    std::vector<RealType> ratio(this->num_systems_);
+    std::vector<size_t> accepted = this->n_accepted();
+    std::vector<size_t> proposed = this->n_proposed();
+
+    for (auto i = 0; i < this->num_systems_; i++) {
+      ratio[i] = static_cast<RealType>(accepted[i]) /
+                 static_cast<RealType>(proposed[i]);
+    }
+    return ratio;
   }
 };
 

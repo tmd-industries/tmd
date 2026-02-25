@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,6 +28,7 @@
 #include "math_utils.cuh"
 #include "nonbonded_common.hpp"
 #include "pinned_host_buffer.hpp"
+#include "potential_utils.hpp"
 #include "set_utils.hpp"
 
 namespace tmd {
@@ -43,13 +45,21 @@ static bool is_barostat(std::shared_ptr<Mover<RealType>> &mover) {
 
 template <typename RealType>
 Context<RealType>::Context(
-    int N, const RealType *x_0, const RealType *v_0, const RealType *box_0,
+    const int num_systems, const int N, const RealType *x_0,
+    const RealType *v_0, const RealType *box_0,
     std::shared_ptr<Integrator<RealType>> intg,
     std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
     std::vector<std::shared_ptr<Mover<RealType>>> &movers)
-    : N_(N), movers_(movers), step_(0), intg_(intg), bps_(bps),
-      nonbonded_pots_(0) {
-
+    : num_systems_(num_systems), N_(N), movers_(movers), step_(0), intg_(intg),
+      bps_(bps), nonbonded_pots_(0) {
+  verify_potentials_are_compatible(bps);
+  for (auto mover : movers) {
+    if (mover->num_systems() != num_systems_) {
+      throw std::runtime_error("Movers must have same number of systems, got " +
+                               std::to_string(mover->num_systems()) +
+                               ", expected " + std::to_string(num_systems_));
+    }
+  }
   std::vector<std::shared_ptr<Potential<RealType>>> pots;
   for (auto bp : bps_) {
     pots.push_back(bp->potential);
@@ -58,9 +68,9 @@ Context<RealType>::Context(
   // potentials
   get_nonbonded_ixn_group_potentials(pots, nonbonded_pots_);
 
-  d_x_t_ = gpuErrchkCudaMallocAndCopy(x_0, N * 3);
-  d_v_t_ = gpuErrchkCudaMallocAndCopy(v_0, N * 3);
-  d_box_t_ = gpuErrchkCudaMallocAndCopy(box_0, 3 * 3);
+  d_x_t_ = gpuErrchkCudaMallocAndCopy(x_0, num_systems * N * 3);
+  d_v_t_ = gpuErrchkCudaMallocAndCopy(v_0, num_systems * N * 3);
+  d_box_t_ = gpuErrchkCudaMallocAndCopy(box_0, num_systems * 3 * 3);
 
   gpuErrchk(cudaStreamCreate(&stream_));
 };
@@ -81,30 +91,36 @@ void Context<RealType>::_verify_coords_and_box(const RealType *coords_buffer,
   if (nonbonded_pots_.size() == 0) {
     return;
   }
-  gpuErrchk(cudaStreamSynchronize(stream));
+  RealType db_cutoff = 0.0;
   for (auto pot : nonbonded_pots_) {
-    RealType cutoff = get_nonbonded_ixn_group_cutoff_with_padding(pot);
-    RealType db_cutoff = 2 * cutoff;
-    for (int i = 0; i < 3; i++) {
-      if (box_buffer[i * 3 + i] < db_cutoff) {
+    const RealType cutoff = get_nonbonded_ixn_group_cutoff_with_padding(pot);
+    db_cutoff = max(2 * cutoff, db_cutoff);
+  }
+  gpuErrchk(cudaStreamSynchronize(stream));
+
+  for (int i = 0; i < num_systems_; i++) {
+    for (int j = 0; j < 3; j++) {
+      if (box_buffer[9 * i + j * 3 + j] < db_cutoff) {
         throw std::runtime_error(
             "cutoff with padding is more than half of the box width, "
-            "neighborlist is no longer reliable");
+            "neighborlist is no longer reliable. Batch " +
+            std::to_string(i));
       }
     }
-  }
-
-  const double max_box_dim = max(
-      box_buffer[0 * 3 + 0], max(box_buffer[1 * 3 + 1], box_buffer[2 * 3 + 2]));
-  const auto [min_coord, max_coord] =
-      std::minmax_element(coords_buffer, coords_buffer + N_ * 3);
-  // Look at the largest difference in all dimensions, since coordinates are not
-  // imaged into the home box per se, rather into the nearest periodic box
-  const double max_coord_delta = *max_coord - *min_coord;
-  if (max_box_dim * 100.0 < max_coord_delta) {
-    throw std::runtime_error(
-        "simulation unstable: dimensions of coordinates two orders of "
-        "magnitude larger than max box dimension");
+    const RealType max_box_dim =
+        max(box_buffer[9 * i + 0 * 3 + 0],
+            max(box_buffer[9 * i + 1 * 3 + 1], box_buffer[9 * i + 2 * 3 + 2]));
+    const auto [min_coord, max_coord] = std::minmax_element(
+        coords_buffer + i * N_ * 3, coords_buffer + (i + 1) * N_ * 3);
+    // Look at the largest difference in all dimensions, since coordinates are
+    // not imaged into the home box per se, rather into the nearest periodic box
+    const RealType max_coord_delta = *max_coord - *min_coord;
+    if (max_box_dim * 100.0 < max_coord_delta) {
+      throw std::runtime_error(
+          "simulation unstable: dimensions of coordinates two orders of "
+          "magnitude larger than max box dimension. Batch " +
+          std::to_string(i));
+    }
   }
 }
 
@@ -138,7 +154,7 @@ void Context<RealType>::setup_local_md(RealType temperature,
     return;
   }
   this->local_md_pots_.reset(new LocalMDPotentials<RealType>(
-      N_, bps_, nonbonded_pots_, freeze_reference, temperature,
+      num_systems_, N_, bps_, nonbonded_pots_, freeze_reference, temperature,
       nblist_padding));
 }
 
@@ -182,11 +198,15 @@ void Context<RealType>::multiple_steps_local(const int n_steps,
     for (int i = 1; i <= n_steps; i++) {
       this->_step(local_pots, d_free_idxs, stream_);
       if (i % store_x_interval == 0) {
-        RealType *box_ptr = h_box + ((i / store_x_interval) - 1) * 3 * 3;
-        RealType *coord_ptr = h_x + ((i / store_x_interval) - 1) * N_ * 3;
-        gpuErrchk(cudaMemcpyAsync(coord_ptr, d_x_t_, N_ * 3 * sizeof(*d_x_t_),
+        RealType *box_ptr =
+            h_box + ((i / store_x_interval) - 1) * num_systems_ * 3 * 3;
+        RealType *coord_ptr =
+            h_x + ((i / store_x_interval) - 1) * num_systems_ * N_ * 3;
+        gpuErrchk(cudaMemcpyAsync(coord_ptr, d_x_t_,
+                                  num_systems_ * N_ * 3 * sizeof(*d_x_t_),
                                   cudaMemcpyDeviceToHost, stream_));
-        gpuErrchk(cudaMemcpyAsync(box_ptr, d_box_t_, 3 * 3 * sizeof(*d_box_t_),
+        gpuErrchk(cudaMemcpyAsync(box_ptr, d_box_t_,
+                                  num_systems_ * 3 * 3 * sizeof(*d_box_t_),
                                   cudaMemcpyDeviceToHost, stream_));
         this->_verify_coords_and_box(coord_ptr, box_ptr, stream_);
       }
@@ -211,8 +231,8 @@ Context<RealType>::truncate_potentials_local_selection(
 
   this->_ensure_local_md_intialized();
 
-  local_md_pots_->setup_from_selection(reference_idx, selection_idxs, radius, k,
-                                       stream_);
+  local_md_pots_->setup_from_selection(std::vector<int>({reference_idx}),
+                                       selection_idxs, radius, k, stream_);
 
   gpuErrchk(cudaStreamSynchronize(stream_));
 
@@ -238,8 +258,8 @@ void Context<RealType>::multiple_steps_local_selection(
 
   try {
 
-    local_md_pots_->setup_from_selection(reference_idx, selection_idxs, radius,
-                                         k, stream_);
+    local_md_pots_->setup_from_selection(std::vector<int>({reference_idx}),
+                                         selection_idxs, radius, k, stream_);
 
     unsigned int *d_free_idxs = local_md_pots_->get_free_idxs();
 
@@ -251,11 +271,15 @@ void Context<RealType>::multiple_steps_local_selection(
     for (int i = 1; i <= n_steps; i++) {
       this->_step(local_pots, d_free_idxs, stream_);
       if (i % store_x_interval == 0) {
-        RealType *box_ptr = h_box + ((i / store_x_interval) - 1) * 3 * 3;
-        RealType *coord_ptr = h_x + ((i / store_x_interval) - 1) * N_ * 3;
-        gpuErrchk(cudaMemcpyAsync(coord_ptr, d_x_t_, N_ * 3 * sizeof(*d_x_t_),
+        RealType *box_ptr =
+            h_box + ((i / store_x_interval) - 1) * num_systems_ * 3 * 3;
+        RealType *coord_ptr =
+            h_x + ((i / store_x_interval) - 1) * num_systems_ * N_ * 3;
+        gpuErrchk(cudaMemcpyAsync(coord_ptr, d_x_t_,
+                                  num_systems_ * N_ * 3 * sizeof(*d_x_t_),
                                   cudaMemcpyDeviceToHost, stream_));
-        gpuErrchk(cudaMemcpyAsync(box_ptr, d_box_t_, 3 * 3 * sizeof(*d_box_t_),
+        gpuErrchk(cudaMemcpyAsync(box_ptr, d_box_t_,
+                                  num_systems_ * 3 * 3 * sizeof(*d_box_t_),
                                   cudaMemcpyDeviceToHost, stream_));
         this->_verify_coords_and_box(coord_ptr, box_ptr, stream_);
       }
@@ -290,11 +314,15 @@ void Context<RealType>::multiple_steps(const int n_steps, const int n_samples,
     this->_step(bps_, nullptr, stream_);
 
     if (i % store_x_interval == 0) {
-      RealType *box_ptr = h_box + ((i / store_x_interval) - 1) * 3 * 3;
-      RealType *coord_ptr = h_x + ((i / store_x_interval) - 1) * N_ * 3;
-      gpuErrchk(cudaMemcpyAsync(coord_ptr, d_x_t_, N_ * 3 * sizeof(*d_x_t_),
+      RealType *box_ptr =
+          h_box + ((i / store_x_interval) - 1) * num_systems_ * 3 * 3;
+      RealType *coord_ptr =
+          h_x + ((i / store_x_interval) - 1) * num_systems_ * N_ * 3;
+      gpuErrchk(cudaMemcpyAsync(coord_ptr, d_x_t_,
+                                num_systems_ * N_ * 3 * sizeof(*d_x_t_),
                                 cudaMemcpyDeviceToHost, stream_));
-      gpuErrchk(cudaMemcpyAsync(box_ptr, d_box_t_, 3 * 3 * sizeof(*d_box_t_),
+      gpuErrchk(cudaMemcpyAsync(box_ptr, d_box_t_,
+                                num_systems_ * 3 * 3 * sizeof(*d_box_t_),
                                 cudaMemcpyDeviceToHost, stream_));
       this->_verify_coords_and_box(coord_ptr, box_ptr, stream_);
     }
@@ -331,7 +359,7 @@ void Context<RealType>::_step(
   if (d_atom_idxs == nullptr) {
     for (auto mover : movers_) {
       // May modify coords and box size
-      mover->move(N_, d_x_t_, d_box_t_, stream);
+      mover->move(this->num_systems_, N_, d_x_t_, d_box_t_, stream);
     }
   }
 
@@ -344,37 +372,43 @@ template <typename RealType> int Context<RealType>::num_atoms() const {
 
 template <typename RealType>
 void Context<RealType>::set_x_t(const RealType *in_buffer) {
-  gpuErrchk(cudaMemcpy(d_x_t_, in_buffer, N_ * 3 * sizeof(*in_buffer),
+  gpuErrchk(cudaMemcpy(d_x_t_, in_buffer,
+                       num_systems_ * N_ * 3 * sizeof(*in_buffer),
                        cudaMemcpyHostToDevice));
 }
 
 template <typename RealType>
 void Context<RealType>::set_v_t(const RealType *in_buffer) {
-  gpuErrchk(cudaMemcpy(d_v_t_, in_buffer, N_ * 3 * sizeof(*in_buffer),
+  gpuErrchk(cudaMemcpy(d_v_t_, in_buffer,
+                       num_systems_ * N_ * 3 * sizeof(*in_buffer),
                        cudaMemcpyHostToDevice));
 }
 
 template <typename RealType>
 void Context<RealType>::set_box(const RealType *in_buffer) {
-  gpuErrchk(cudaMemcpy(d_box_t_, in_buffer, 3 * 3 * sizeof(*in_buffer),
+  gpuErrchk(cudaMemcpy(d_box_t_, in_buffer,
+                       num_systems_ * 3 * 3 * sizeof(*in_buffer),
                        cudaMemcpyHostToDevice));
 }
 
 template <typename RealType>
 void Context<RealType>::get_x_t(RealType *out_buffer) const {
-  gpuErrchk(cudaMemcpy(out_buffer, d_x_t_, N_ * 3 * sizeof(*out_buffer),
+  gpuErrchk(cudaMemcpy(out_buffer, d_x_t_,
+                       num_systems_ * N_ * 3 * sizeof(*out_buffer),
                        cudaMemcpyDeviceToHost));
 }
 
 template <typename RealType>
 void Context<RealType>::get_v_t(RealType *out_buffer) const {
-  gpuErrchk(cudaMemcpy(out_buffer, d_v_t_, N_ * 3 * sizeof(*out_buffer),
+  gpuErrchk(cudaMemcpy(out_buffer, d_v_t_,
+                       num_systems_ * N_ * 3 * sizeof(*out_buffer),
                        cudaMemcpyDeviceToHost));
 }
 
 template <typename RealType>
 void Context<RealType>::get_box(RealType *out_buffer) const {
-  gpuErrchk(cudaMemcpy(out_buffer, d_box_t_, 3 * 3 * sizeof(*out_buffer),
+  gpuErrchk(cudaMemcpy(out_buffer, d_box_t_,
+                       num_systems_ * 3 * 3 * sizeof(*out_buffer),
                        cudaMemcpyDeviceToHost));
 }
 
