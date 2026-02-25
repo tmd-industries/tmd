@@ -33,6 +33,7 @@ class FlatBottomRestraint : public Potential<RealType> {
 private:
   const int num_systems_;
   const int num_atoms_;
+
   const int max_idxs_;
   int cur_num_idxs_;
 
