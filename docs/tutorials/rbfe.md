@@ -24,6 +24,13 @@ Select the number of processes that yields the highest ns/day as indicated by th
 > [!WARNING]
 > Increasing the number of MPS processes also increases memory and disk usage, potentially leading to crashes. This is system and protocol dependent.
 
+## (optional) Experimental Batched MD
+
+As of 0.3.0 TMD supports batching simulations directly on the GPU without the need for MPS. This can be enabled setting environment variable `TMD_BATCH_MODE=on`. If using this option be sure to set `--mps_workers 1` when running a graph, else both MPS and batching will run which can hurt performance and lead to poor performance. The benefit of batching MD rather than using MPS is the ability to reduce the runtime of legs to below 1 hour, allowing better use of Spot Instances in the cloud.
+
+> [!WARNING]
+> The experimental batched mode currently can consume large amounts of GPU memory and can lead to OOMs. CDK8 (~70k atoms) has OOM'd on GPUs with 40GB, so it is suggested to test your system before committing to batching. In the future the memory consumption will be addressed and batching will become the standard for TMD.
+
 ## Build a RBFE Graph
 
 RBFE requires defining a series of edges connecting different compounds. This example builds a graph with a k min cut of 3, providing a robust estimate of node predictions at the cost of increased runtime.
