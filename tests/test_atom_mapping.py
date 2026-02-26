@@ -402,11 +402,9 @@ def test_all_pairs(dataset):
     key, filepath = dataset
     mols = read_sdf(filepath)
     cores_by_pair = dict()
-    print("MOLS:", len(mols))
     for idx, mol_a in enumerate(mols):
-        print(" testing", idx)
         mol_a_name = get_mol_name(mol_a)
-        for idb, mol_b in enumerate(mols[idx + 1 :]):
+        for mol_b in mols[idx + 1 :]:
             mol_b_name = get_mol_name(mol_b)
             # print("Processing", mol_a_name, "->", mol_b_name)
             start_time = time.time()
