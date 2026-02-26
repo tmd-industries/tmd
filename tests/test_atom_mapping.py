@@ -2184,3 +2184,21 @@ def test_chiral_h_augmentation_no_conflict_case():
         augmented_chiral,
         err_msg="No-conflict case: chiral enforcement should not change the core",
     )
+
+
+def test_hif2a_227_57_atom_map(hif2a_ligands):
+    molA = get_mol_by_name(hif2a_ligands, "227")
+    molB = get_mol_by_name(hif2a_ligands, "57")
+    opts = dict(DEFAULT_ATOM_MAPPING_KWARGS)
+    core = atom_mapping.get_cores(molA, molB, **opts)[0]
+    dummies = molA.GetNumAtoms() + molB.GetNumAtoms() - 2 * len(core)
+    assert dummies == 2
+
+
+def test_hif2a_1_227_atom_map(hif2a_ligands):
+    molA = get_mol_by_name(hif2a_ligands, "1")
+    molB = get_mol_by_name(hif2a_ligands, "227")
+    opts = dict(DEFAULT_ATOM_MAPPING_KWARGS)
+    core = atom_mapping.get_cores(molA, molB, **opts)[0]
+    dummies = molA.GetNumAtoms() + molB.GetNumAtoms() - 2 * len(core)
+    assert dummies == 5

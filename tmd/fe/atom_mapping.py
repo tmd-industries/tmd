@@ -15,6 +15,7 @@
 
 from collections import defaultdict
 from functools import partial
+from itertools import combinations, permutations
 from typing import Optional
 
 import numpy as np
@@ -24,9 +25,7 @@ from scipy.optimize import linear_sum_assignment
 
 from tmd.fe import mcgregor
 from tmd.fe.chiral_utils import (
-    ChiralCheckMode,
     ChiralRestrIdxSet,
-    _find_atom_map_chiral_conflicts_one_direction,
     has_chiral_atom_flips,
     setup_find_flipped_planar_torsions,
 )
@@ -416,44 +415,88 @@ def _augment_core_with_hydrogens(
 
     # Phase 2: Chiral conflict detection and per-parent repair
     #
-    # Uses a one-directional check (A→B) since FLIP mode is symmetric
-    # (confirmed by test_has_chiral_atom_flips_symmetric).
-    #
-    # For each conflicting center with exactly 2 paired Hs (-CH₂-),
-    # swap the two b-side Hs — the only alternative assignment.  For
-    # other counts (k=1 or k≥3), just remove.  Then re-check once and
-    # remove any remaining conflicts.
+    # Mirrors how ``has_chiral_atom_flips`` works: build a mapping from the
+    # augmented core, iterate over ``chiral_set_a.restr_idxs``, and call
+    # ``chiral_set_b.disallows`` on the mapped tuple.  When a conflict is
+    # detected at a parent center, all k-permutations of the available
+    # b-side Hs are tried (picking the lowest-cost valid one), falling
+    # back to removing the H pairs entirely if no permutation resolves the
+    # conflict.
     if enforce_chiral and chiral_set_a is not None and chiral_set_b is not None:
+
+        def _center_has_chiral_conflict(mapping_a_to_b, center_a):
+            """Check for a chiral flip at ``center_a``, following the same
+            pattern as ``has_chiral_atom_flips``."""
+            for c_a, i_a, j_a, k_a in chiral_set_a.restr_idxs:
+                if c_a != center_a:
+                    continue
+                c_b = mapping_a_to_b.get(c_a)
+                i_b = mapping_a_to_b.get(i_a)
+                j_b = mapping_a_to_b.get(j_a)
+                k_b = mapping_a_to_b.get(k_a)
+                if c_b is None or i_b is None or j_b is None or k_b is None:
+                    continue
+                if chiral_set_b.disallows((c_b, i_b, j_b, k_b)):
+                    return True
+            return False
+
+        # Build mapping from the current augmented core
         all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
         if all_h:
             augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
-            conflicts = _find_atom_map_chiral_conflicts_one_direction(
-                augmented, chiral_set_a, chiral_set_b, ChiralCheckMode.FLIP
-            )
-            if conflicts:
-                conflicting_centers_a = {t_a[0] for t_a, _t_b in conflicts}
-                for a_i, b_j in list(h_pairs_by_parent.keys()):
-                    if a_i not in conflicting_centers_a:
-                        continue
-                    pairs = h_pairs_by_parent[(a_i, b_j)]
-                    if len(pairs) == 2:
-                        # Swap the two b-side Hs
-                        pairs[0][1], pairs[1][1] = pairs[1][1], pairs[0][1]
-                    else:
-                        del h_pairs_by_parent[(a_i, b_j)]
+            mapping = {int(a): int(b) for a, b in augmented}
 
-                # Re-check after swaps; remove any that still conflict
-                all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
-                if all_h:
-                    augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
-                    conflicts = _find_atom_map_chiral_conflicts_one_direction(
-                        augmented, chiral_set_a, chiral_set_b, ChiralCheckMode.FLIP
-                    )
-                    if conflicts:
-                        conflicting_centers_a = {t_a[0] for t_a, _t_b in conflicts}
-                        for a_i, b_j in list(h_pairs_by_parent.keys()):
-                            if a_i in conflicting_centers_a:
-                                del h_pairs_by_parent[(a_i, b_j)]
+            # Identify parent pairs whose center has a chiral conflict
+            conflicting_parents = [
+                (a_i, b_j) for (a_i, b_j) in h_pairs_by_parent if _center_has_chiral_conflict(mapping, a_i)
+            ]
+
+            for a_i, b_j in conflicting_parents:
+                h_neighbors_a = _get_removable_h_neighbors(mol_a, a_i, removed_h_a)
+                h_neighbors_b = _get_removable_h_neighbors(mol_b, b_j, removed_h_b)
+                k = len(h_pairs_by_parent[(a_i, b_j)])
+
+                best_pairs = None
+                best_cost = float("inf")
+
+                # Try all k-subsets of A-side Hs x all k-permutations of B-side Hs
+                for combo_a in combinations(h_neighbors_a, k):
+                    for perm_b in permutations(h_neighbors_b, k):
+                        trial_pairs = [[ha, hb] for ha, hb in zip(combo_a, perm_b)]
+                        # Temporarily update the mapping with this alternative
+                        trial_mapping = dict(mapping)
+                        # Remove all old H mappings for this parent first
+                        for old_ha, _ in h_pairs_by_parent[(a_i, b_j)]:
+                            trial_mapping.pop(old_ha, None)
+                        for ha, hb in trial_pairs:
+                            trial_mapping[ha] = hb
+                        if not _center_has_chiral_conflict(trial_mapping, a_i):
+                            cost = sum(
+                                np.dot(conf_a[ha] - conf_b[hb], conf_a[ha] - conf_b[hb]) for ha, hb in trial_pairs
+                            )
+                            if cost < best_cost:
+                                best_cost = cost
+                                best_pairs = trial_pairs
+
+                if best_pairs is not None:
+                    h_pairs_by_parent[(a_i, b_j)] = best_pairs
+                    # Update mapping for subsequent parents
+                    for ha, hb in best_pairs:
+                        mapping[ha] = hb
+                else:
+                    # No valid permutation — remove H pairs for this parent
+                    for ha, _ in h_pairs_by_parent[(a_i, b_j)]:
+                        mapping.pop(ha, None)
+                    del h_pairs_by_parent[(a_i, b_j)]
+
+            # Final safety net: re-check and remove any remaining conflicts
+            all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
+            if all_h:
+                augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
+                mapping = {int(a): int(b) for a, b in augmented}
+                for a_i, b_j in list(h_pairs_by_parent.keys()):
+                    if _center_has_chiral_conflict(mapping, a_i):
+                        del h_pairs_by_parent[(a_i, b_j)]
 
     # Phase 3: Build final augmented core
     all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
