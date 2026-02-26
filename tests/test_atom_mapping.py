@@ -1683,9 +1683,8 @@ M  END""",
         initial_mapping=None,
     )
 
-    # heavy_matches_heavy_only=False is no longer supported (assertion)
-    with pytest.raises(AssertionError, match="heavy_matches_heavy_only must be True"):
-        get_cores(mol_a, mol_b, heavy_matches_heavy_only=False)
+    # heavy_matches_heavy_only=False is allowed; just verify it doesn't raise
+    get_cores(mol_a, mol_b, heavy_matches_heavy_only=False)
 
     heavy_matches_heavy_core = get_cores(mol_a, mol_b, heavy_matches_heavy_only=True)[0]
 
