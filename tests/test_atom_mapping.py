@@ -839,9 +839,9 @@ def test_cyclohexane_stereo():
             fh.write(res)
 
     # 1-indexed
-    # With chiral enforcement, conflicting H pairs at ring -CH₂- centers
-    # are unmapped.  Only centers where the Hungarian assignment happens to
-    # be chirally consistent keep their H mappings.
+    # With chiral enforcement and swap-based repair, all H pairs are preserved.
+    # At centers where the Hungarian distance-based assignment conflicts with
+    # chirality, the H assignment is swapped to the conflict-free permutation.
     expected_core = np.array(
         [
             [1, 1],  # C
@@ -850,14 +850,18 @@ def test_cyclohexane_stereo():
             [4, 4],  # C
             [5, 5],  # C
             [6, 6],  # C
-            [7, 7],  # C3H  (consistent)
-            [8, 8],  # C3H  (consistent)
-            [12, 11],  # C6H (consistent)
-            [13, 18],  # C6H (consistent)
-            [15, 13],  # C1H (consistent)
-            [16, 14],  # C1H (consistent)
-            [17, 15],  # C2H (consistent)
-            [18, 16],  # C2H (consistent)
+            [7, 7],  # C3H
+            [8, 8],  # C3H
+            [9, 9],  # C4H
+            [10, 10],  # C4H
+            [11, 12],  # C5H (swapped)
+            [12, 11],  # C5H (swapped)
+            [13, 18],  # C6H
+            [14, 17],  # C6H (swapped)
+            [15, 13],  # C1H
+            [16, 14],  # C1H
+            [17, 15],  # C2H
+            [18, 16],  # C2H
         ]
     )
 
@@ -1959,21 +1963,95 @@ def test_chiral_h_augmentation_ring_ch2():
     conflicts_before = find_atom_map_chiral_conflicts(augmented_no_chiral, chiral_set_a, chiral_set_b)
     assert len(conflicts_before) > 0, "Different conformers should produce chiral conflicts without enforcement"
 
-    # Augment WITH chiral enforcement
+    # Augment WITH chiral enforcement — should resolve conflicts by swapping Hs
     augmented_chiral = _augment_core_with_hydrogens(
         mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
         chiral_set_a=chiral_set_a, chiral_set_b=chiral_set_b, enforce_chiral=True,
     )
 
-    # The chiral-enforced core should be smaller: conflicting H pairs were removed
-    assert len(augmented_chiral) < len(augmented_no_chiral), (
-        f"Expected chiral enforcement to remove some H pairs, but got "
-        f"{len(augmented_chiral)} >= {len(augmented_no_chiral)}"
+    # The chiral-enforced core should keep all H pairs (swapped, not removed)
+    assert len(augmented_chiral) == len(augmented_no_chiral), (
+        f"Expected chiral enforcement to resolve conflicts via swap (same size), but got "
+        f"{len(augmented_chiral)} != {len(augmented_no_chiral)}"
     )
 
     # Verify no chiral conflicts remain in the augmented core
     conflicts = find_atom_map_chiral_conflicts(augmented_chiral, chiral_set_a, chiral_set_b)
     assert len(conflicts) == 0, f"Expected 0 chiral conflicts with enforcement, got {len(conflicts)}"
+
+    # Verify the swap actually changed some H assignments (not just identity)
+    # On different conformers, at least one parent center should have a different
+    # b-side assignment compared to the non-enforced (Hungarian-only) core.
+    changed = False
+    for idx in range(len(heavy_core), len(augmented_chiral)):
+        pair_enforced = tuple(augmented_chiral[idx])
+        # Check if this pair appears in the non-enforced core
+        found = any(
+            tuple(augmented_no_chiral[j]) == pair_enforced
+            for j in range(len(heavy_core), len(augmented_no_chiral))
+        )
+        if not found:
+            changed = True
+            break
+    assert changed, "Expected chiral enforcement to swap some H pairs, but assignments are identical"
+
+
+def test_chiral_h_augmentation_swap_preserves_all_pairs():
+    """Verify that the swap-based chiral repair preserves ALL H pairs at a
+    ring -CH₂- center when a valid alternative permutation exists, rather
+    than removing them.
+
+    This specifically tests that the fix resolves conflicts without shrinking
+    the core: for a center with 2 Hs, there are exactly 2 permutations, and
+    if one conflicts then the other must be conflict-free (the heavy-atom
+    mapping already passed chiral filtering).
+    """
+    from tmd.fe.atom_mapping import (
+        _augment_core_with_hydrogens,
+        _build_h_removal_index_maps,
+    )
+    from tmd.fe.chiral_utils import ChiralRestrIdxSet, find_atom_map_chiral_conflicts
+
+    # Cyclopentane: 5 ring -CH₂- centers, each with 2 Hs
+    mol_a = Chem.AddHs(Chem.MolFromSmiles("C1CCCC1"))
+    mol_b = Chem.AddHs(Chem.MolFromSmiles("C1CCCC1"))
+    AllChem.EmbedMolecule(mol_a, randomSeed=42)
+    AllChem.EmbedMolecule(mol_b, randomSeed=999)  # different conformer
+
+    conf_a = get_romol_conf(mol_a)
+    conf_b = get_romol_conf(mol_b)
+
+    chiral_set_a = ChiralRestrIdxSet.from_mol(mol_a, conf_a)
+    chiral_set_b = ChiralRestrIdxSet.from_mol(mol_b, conf_b)
+
+    mol_a_no_h = Chem.RemoveHs(mol_a)
+    mol_b_no_h = Chem.RemoveHs(mol_b)
+    _, _, removed_h_a = _build_h_removal_index_maps(mol_a, mol_a_no_h)
+    _, _, removed_h_b = _build_h_removal_index_maps(mol_b, mol_b_no_h)
+
+    heavy_core = np.array([[i, i] for i in range(5)])
+
+    # Without enforcement
+    augmented_no_chiral = _augment_core_with_hydrogens(
+        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
+    )
+    n_before = len(augmented_no_chiral)
+
+    # With enforcement
+    augmented_chiral = _augment_core_with_hydrogens(
+        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
+        chiral_set_a=chiral_set_a, chiral_set_b=chiral_set_b, enforce_chiral=True,
+    )
+
+    # All H pairs should still be present (swap, not remove)
+    assert len(augmented_chiral) == n_before, (
+        f"Swap-based repair should preserve all H pairs, "
+        f"but core shrank from {n_before} to {len(augmented_chiral)}"
+    )
+
+    # And no chiral conflicts should remain
+    conflicts = find_atom_map_chiral_conflicts(augmented_chiral, chiral_set_a, chiral_set_b)
+    assert len(conflicts) == 0, f"Expected 0 conflicts after swap repair, got {len(conflicts)}"
 
 
 def test_chiral_h_augmentation_through_get_cores():

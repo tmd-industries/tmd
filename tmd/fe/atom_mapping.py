@@ -24,7 +24,9 @@ from scipy.optimize import linear_sum_assignment
 
 from tmd.fe import mcgregor
 from tmd.fe.chiral_utils import (
+    ChiralCheckMode,
     ChiralRestrIdxSet,
+    _find_atom_map_chiral_conflicts_one_direction,
     find_atom_map_chiral_conflicts,
     has_chiral_atom_flips,
     setup_find_flipped_planar_torsions,
@@ -364,9 +366,8 @@ def _augment_core_with_hydrogens(
 
     When ``enforce_chiral`` is True and full-molecule chiral sets are provided,
     the augmentation checks for chiral conflicts introduced by the H assignments.
-    Any H pairs at parent atoms involved in a chiral conflict are removed
-    (unmapped) from the core rather than kept with a potentially incorrect
-    assignment.
+    For each conflicting parent center, alternative permutations of the H
+    assignment are tried before falling back to removing the H pairs entirely.
 
     Parameters
     ----------
@@ -411,25 +412,45 @@ def _augment_core_with_hydrogens(
         h_pairs_by_parent[(a_i, b_j)] = [[h_neighbors_a[r], h_neighbors_b[c]] for r, c in zip(row_ind, col_ind)]
 
     # Phase 2: Chiral conflict detection and per-parent repair
+    #
+    # Uses a one-directional check (A→B) since FLIP mode is symmetric
+    # (confirmed by test_has_chiral_atom_flips_symmetric).
+    #
+    # For each conflicting center with exactly 2 paired Hs (-CH₂-),
+    # swap the two b-side Hs — the only alternative assignment.  For
+    # other counts (k=1 or k≥3), just remove.  Then re-check once and
+    # remove any remaining conflicts.
     if enforce_chiral and chiral_set_a is not None and chiral_set_b is not None:
         all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
         if all_h:
             augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
-            conflicts = find_atom_map_chiral_conflicts(augmented, chiral_set_a, chiral_set_b)
-
+            conflicts = _find_atom_map_chiral_conflicts_one_direction(
+                augmented, chiral_set_a, chiral_set_b, ChiralCheckMode.FLIP
+            )
             if conflicts:
-                # Collect conflicting center atoms in both mol spaces
-                conflicting_centers_a = set()
-                conflicting_centers_b = set()
-                for tuple_a, tuple_b in conflicts:
-                    conflicting_centers_a.add(tuple_a[0])
-                    conflicting_centers_b.add(tuple_b[0])
-
-                # Remove H pairs at conflicting centers
+                conflicting_centers_a = {t_a[0] for t_a, _t_b in conflicts}
                 for (a_i, b_j) in list(h_pairs_by_parent.keys()):
-                    if a_i not in conflicting_centers_a and b_j not in conflicting_centers_b:
-                        continue  # this parent is not involved in any conflict
-                    del h_pairs_by_parent[(a_i, b_j)]
+                    if a_i not in conflicting_centers_a:
+                        continue
+                    pairs = h_pairs_by_parent[(a_i, b_j)]
+                    if len(pairs) == 2:
+                        # Swap the two b-side Hs
+                        pairs[0][1], pairs[1][1] = pairs[1][1], pairs[0][1]
+                    else:
+                        del h_pairs_by_parent[(a_i, b_j)]
+
+                # Re-check after swaps; remove any that still conflict
+                all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
+                if all_h:
+                    augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
+                    conflicts = _find_atom_map_chiral_conflicts_one_direction(
+                        augmented, chiral_set_a, chiral_set_b, ChiralCheckMode.FLIP
+                    )
+                    if conflicts:
+                        conflicting_centers_a = {t_a[0] for t_a, _t_b in conflicts}
+                        for (a_i, b_j) in list(h_pairs_by_parent.keys()):
+                            if a_i in conflicting_centers_a:
+                                del h_pairs_by_parent[(a_i, b_j)]
 
     # Phase 3: Build final augmented core
     all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
