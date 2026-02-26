@@ -359,6 +359,7 @@ def _augment_core_with_hydrogens(
     chiral_set_a=None,
     chiral_set_b=None,
     enforce_chiral=False,
+    chain_cutoff=None,
 ):
     """Augment a heavy-atom core with optimal hydrogen mappings.
 
@@ -386,6 +387,9 @@ def _augment_core_with_hydrogens(
     enforce_chiral : bool
         If True and chiral sets are provided, repair H assignments that
         would introduce chiral conflicts.
+    chain_cutoff : float or None
+        Maximum distance (in nm) for an H pair to be included.  Pairs
+        whose Euclidean distance exceeds this value are dropped.
 
     Returns
     -------
@@ -498,7 +502,18 @@ def _augment_core_with_hydrogens(
                     if _center_has_chiral_conflict(mapping, a_i):
                         del h_pairs_by_parent[(a_i, b_j)]
 
-    # Phase 3: Build final augmented core
+    # Phase 3: Apply chain cutoff to drop H pairs that are too far apart
+    if chain_cutoff is not None:
+        sq_cutoff = chain_cutoff * chain_cutoff
+        for key in list(h_pairs_by_parent.keys()):
+            h_pairs_by_parent[key] = [
+                p for p in h_pairs_by_parent[key]
+                if np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) < sq_cutoff
+            ]
+            if not h_pairs_by_parent[key]:
+                del h_pairs_by_parent[key]
+
+    # Phase 4: Build final augmented core
     all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
     if all_h:
         return np.concatenate([heavy_core, np.array(all_h)], axis=0)
@@ -635,6 +650,7 @@ def _get_cores_impl(
                 chiral_set_a=chiral_set_a_full,
                 chiral_set_b=chiral_set_b_full,
                 enforce_chiral=enforce_chiral,
+                chain_cutoff=chain_cutoff,
             )
         else:
             augmented = orig_core
@@ -773,6 +789,7 @@ def _get_cores_impl(
                 chiral_set_a=chiral_set_a_full,
                 chiral_set_b=chiral_set_b_full,
                 enforce_chiral=enforce_chiral,
+                chain_cutoff=chain_cutoff,
             )
             for core in augmented_cores
         ]
