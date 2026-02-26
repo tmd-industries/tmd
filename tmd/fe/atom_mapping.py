@@ -27,7 +27,6 @@ from tmd.fe.chiral_utils import (
     ChiralCheckMode,
     ChiralRestrIdxSet,
     _find_atom_map_chiral_conflicts_one_direction,
-    find_atom_map_chiral_conflicts,
     has_chiral_atom_flips,
     setup_find_flipped_planar_torsions,
 )
@@ -347,16 +346,20 @@ def _get_removable_h_neighbors(mol, atom_idx, removed_h_set):
     list[int]
         Indices of removed H neighbors, in original molecule numbering.
     """
-    return [
-        nb.GetIdx()
-        for nb in mol.GetAtomWithIdx(atom_idx).GetNeighbors()
-        if nb.GetIdx() in removed_h_set
-    ]
+    return [nb.GetIdx() for nb in mol.GetAtomWithIdx(atom_idx).GetNeighbors() if nb.GetIdx() in removed_h_set]
 
 
 def _augment_core_with_hydrogens(
-    mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
-    chiral_set_a=None, chiral_set_b=None, enforce_chiral=False,
+    mol_a,
+    mol_b,
+    heavy_core,
+    conf_a,
+    conf_b,
+    removed_h_a,
+    removed_h_b,
+    chiral_set_a=None,
+    chiral_set_b=None,
+    enforce_chiral=False,
 ):
     """Augment a heavy-atom core with optimal hydrogen mappings.
 
@@ -429,7 +432,7 @@ def _augment_core_with_hydrogens(
             )
             if conflicts:
                 conflicting_centers_a = {t_a[0] for t_a, _t_b in conflicts}
-                for (a_i, b_j) in list(h_pairs_by_parent.keys()):
+                for a_i, b_j in list(h_pairs_by_parent.keys()):
                     if a_i not in conflicting_centers_a:
                         continue
                     pairs = h_pairs_by_parent[(a_i, b_j)]
@@ -448,7 +451,7 @@ def _augment_core_with_hydrogens(
                     )
                     if conflicts:
                         conflicting_centers_a = {t_a[0] for t_a, _t_b in conflicts}
-                        for (a_i, b_j) in list(h_pairs_by_parent.keys()):
+                        for a_i, b_j in list(h_pairs_by_parent.keys()):
                             if a_i in conflicting_centers_a:
                                 del h_pairs_by_parent[(a_i, b_j)]
 
@@ -527,7 +530,9 @@ def _get_cores_impl(
         removed_h_a, removed_h_b = removed_h_b, removed_h_a
         mol_a_full, mol_b_full = mol_b_full, mol_a_full
         conf_a_full, conf_b_full = conf_b_full, conf_a_full
-        heavy_initial_mapping = heavy_initial_mapping[:, ::-1] if len(heavy_initial_mapping) > 0 else heavy_initial_mapping
+        heavy_initial_mapping = (
+            heavy_initial_mapping[:, ::-1] if len(heavy_initial_mapping) > 0 else heavy_initial_mapping  # type: ignore[assignment]
+        )
         swapped_heavy = True
 
     # Reorder atoms by degree for MCS efficiency
@@ -577,8 +582,16 @@ def _get_cores_impl(
                 chiral_set_b_full = ChiralRestrIdxSet.from_mol(mol_b_full, conf_b_full)
 
             augmented = _augment_core_with_hydrogens(
-                mol_a_full, mol_b_full, orig_core, conf_a_full, conf_b_full, removed_h_a, removed_h_b,
-                chiral_set_a=chiral_set_a_full, chiral_set_b=chiral_set_b_full, enforce_chiral=enforce_chiral,
+                mol_a_full,
+                mol_b_full,
+                orig_core,
+                conf_a_full,
+                conf_b_full,
+                removed_h_a,
+                removed_h_b,
+                chiral_set_a=chiral_set_a_full,
+                chiral_set_b=chiral_set_b_full,
+                enforce_chiral=enforce_chiral,
             )
         else:
             augmented = orig_core
@@ -707,8 +720,16 @@ def _get_cores_impl(
         # --- Phase 2: Augment each core with hydrogen mappings ---
         augmented_cores = [
             _augment_core_with_hydrogens(
-                mol_a_full, mol_b_full, core, conf_a_full, conf_b_full, removed_h_a, removed_h_b,
-                chiral_set_a=chiral_set_a_full, chiral_set_b=chiral_set_b_full, enforce_chiral=enforce_chiral,
+                mol_a_full,
+                mol_b_full,
+                core,
+                conf_a_full,
+                conf_b_full,
+                removed_h_a,
+                removed_h_b,
+                chiral_set_a=chiral_set_a_full,
+                chiral_set_b=chiral_set_b_full,
+                enforce_chiral=enforce_chiral,
             )
             for core in augmented_cores
         ]

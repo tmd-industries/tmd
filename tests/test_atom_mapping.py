@@ -442,7 +442,7 @@ def test_all_pairs(dataset):
 
             print(
                 f"{mol_a.GetProp('_Name')} -> {mol_b.GetProp('_Name')} has {len(all_cores)} cores of size {len(all_cores[0])} | total nodes visited: {diagnostics.total_nodes_visited} | wall clock time: {end_time - start_time:.3f}"
-                )
+            )
 
             # convert arrays to lists to simplify comparison with reference
             cores = [core.tolist() for core in all_cores]
@@ -459,7 +459,7 @@ def test_all_pairs(dataset):
 
     for i, (new, ref) in enumerate(zip(cores_by_pair, ref_cores_by_pair)):
         assert new == ref
-    #assert cores_by_pair == ref_cores_by_pair
+    # assert cores_by_pair == ref_cores_by_pair
 
 
 def get_mol_by_name(mols, name):
@@ -1734,7 +1734,7 @@ def test_chiral_filtering_on_h_stripped_molecules():
         has_chiral_atom_flips,
         setup_find_flipped_planar_torsions,
     )
-    from tmd.fe.mcgregor import UNMAPPED, core_to_perm
+    from tmd.fe.mcgregor import core_to_perm
 
     # --- Part 1: Chiral center detection is preserved after RemoveHs ---
 
@@ -1919,7 +1919,6 @@ def test_chiral_h_augmentation_ring_ch2():
     from tmd.fe.atom_mapping import (
         _augment_core_with_hydrogens,
         _build_h_removal_index_maps,
-        _get_removable_h_neighbors,
     )
     from tmd.fe.chiral_utils import ChiralRestrIdxSet, find_atom_map_chiral_conflicts
 
@@ -1937,7 +1936,7 @@ def test_chiral_h_augmentation_ring_ch2():
     chiral_set_a = ChiralRestrIdxSet.from_mol(mol_a, conf_a)
     chiral_set_b = ChiralRestrIdxSet.from_mol(mol_b, conf_b)
 
-    # Each ring carbon has 4 neighbors (2 heavy + 2 H) → 6 carbons × C(4,3) = 6×4 = 24 restraint tuples
+    # Each ring carbon has 4 neighbors (2 heavy + 2 H) → 6 carbons x C(4,3) = 6x4 = 24 restraint tuples
     assert len(chiral_set_a.restr_idxs) == 24, f"Expected 24 restraint tuples, got {len(chiral_set_a.restr_idxs)}"
 
     # H-stripped versions should have 0 restraint tuples for ring carbons
@@ -1955,15 +1954,29 @@ def test_chiral_h_augmentation_ring_ch2():
 
     # Augment WITHOUT chiral enforcement — should produce conflicts
     augmented_no_chiral = _augment_core_with_hydrogens(
-        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
+        mol_a,
+        mol_b,
+        heavy_core,
+        conf_a,
+        conf_b,
+        removed_h_a,
+        removed_h_b,
     )
     conflicts_before = find_atom_map_chiral_conflicts(augmented_no_chiral, chiral_set_a, chiral_set_b)
     assert len(conflicts_before) > 0, "Different conformers should produce chiral conflicts without enforcement"
 
     # Augment WITH chiral enforcement — should resolve conflicts by swapping Hs
     augmented_chiral = _augment_core_with_hydrogens(
-        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
-        chiral_set_a=chiral_set_a, chiral_set_b=chiral_set_b, enforce_chiral=True,
+        mol_a,
+        mol_b,
+        heavy_core,
+        conf_a,
+        conf_b,
+        removed_h_a,
+        removed_h_b,
+        chiral_set_a=chiral_set_a,
+        chiral_set_b=chiral_set_b,
+        enforce_chiral=True,
     )
 
     # The chiral-enforced core should keep all H pairs (swapped, not removed)
@@ -1984,8 +1997,7 @@ def test_chiral_h_augmentation_ring_ch2():
         pair_enforced = tuple(augmented_chiral[idx])
         # Check if this pair appears in the non-enforced core
         found = any(
-            tuple(augmented_no_chiral[j]) == pair_enforced
-            for j in range(len(heavy_core), len(augmented_no_chiral))
+            tuple(augmented_no_chiral[j]) == pair_enforced for j in range(len(heavy_core), len(augmented_no_chiral))
         )
         if not found:
             changed = True
@@ -2030,20 +2042,33 @@ def test_chiral_h_augmentation_swap_preserves_all_pairs():
 
     # Without enforcement
     augmented_no_chiral = _augment_core_with_hydrogens(
-        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
+        mol_a,
+        mol_b,
+        heavy_core,
+        conf_a,
+        conf_b,
+        removed_h_a,
+        removed_h_b,
     )
     n_before = len(augmented_no_chiral)
 
     # With enforcement
     augmented_chiral = _augment_core_with_hydrogens(
-        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
-        chiral_set_a=chiral_set_a, chiral_set_b=chiral_set_b, enforce_chiral=True,
+        mol_a,
+        mol_b,
+        heavy_core,
+        conf_a,
+        conf_b,
+        removed_h_a,
+        removed_h_b,
+        chiral_set_a=chiral_set_a,
+        chiral_set_b=chiral_set_b,
+        enforce_chiral=True,
     )
 
     # All H pairs should still be present (swap, not remove)
     assert len(augmented_chiral) == n_before, (
-        f"Swap-based repair should preserve all H pairs, "
-        f"but core shrank from {n_before} to {len(augmented_chiral)}"
+        f"Swap-based repair should preserve all H pairs, but core shrank from {n_before} to {len(augmented_chiral)}"
     )
 
     # And no chiral conflicts should remain
@@ -2066,7 +2091,8 @@ def test_chiral_h_augmentation_through_get_cores():
     AllChem.EmbedMolecule(mol_b, randomSeed=42)
 
     cores = atom_mapping.get_cores(
-        mol_a, mol_b,
+        mol_a,
+        mol_b,
         ring_cutoff=0.15,
         chain_cutoff=0.30,
         max_visits=1e6,
@@ -2129,17 +2155,32 @@ def test_chiral_h_augmentation_no_conflict_case():
 
     # Augment without chiral enforcement (distance-only)
     augmented_no_chiral = _augment_core_with_hydrogens(
-        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
+        mol_a,
+        mol_b,
+        heavy_core,
+        conf_a,
+        conf_b,
+        removed_h_a,
+        removed_h_b,
     )
 
     # Augment with chiral enforcement
     augmented_chiral = _augment_core_with_hydrogens(
-        mol_a, mol_b, heavy_core, conf_a, conf_b, removed_h_a, removed_h_b,
-        chiral_set_a=chiral_set_a, chiral_set_b=chiral_set_b, enforce_chiral=True,
+        mol_a,
+        mol_b,
+        heavy_core,
+        conf_a,
+        conf_b,
+        removed_h_a,
+        removed_h_b,
+        chiral_set_a=chiral_set_a,
+        chiral_set_b=chiral_set_b,
+        enforce_chiral=True,
     )
 
     # No conflicts on identical molecules → both augmented cores should be identical
     np.testing.assert_array_equal(
-        augmented_no_chiral, augmented_chiral,
+        augmented_no_chiral,
+        augmented_chiral,
         err_msg="No-conflict case: chiral enforcement should not change the core",
     )
