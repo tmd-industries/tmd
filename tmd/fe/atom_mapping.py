@@ -460,25 +460,41 @@ def _augment_core_with_hydrogens(
                 h_neighbors_b = _get_removable_h_neighbors(mol_b, b_j, removed_h_b)
                 k = len(h_pairs_by_parent[(a_i, b_j)])
 
+                sq_cut = chain_cutoff * chain_cutoff if chain_cutoff is not None else None
+
                 best_pairs = None
+                best_n_surviving = -1
                 best_cost = float("inf")
 
                 # Try all k-subsets of A-side Hs x all k-permutations of B-side Hs
                 for combo_a in combinations(h_neighbors_a, k):
                     for perm_b in permutations(h_neighbors_b, k):
                         trial_pairs = [[ha, hb] for ha, hb in zip(combo_a, perm_b)]
-                        # Temporarily update the mapping with this alternative
+
+                        # Apply cutoff to get the surviving subset
+                        if sq_cut is not None:
+                            surviving = [
+                                p for p in trial_pairs
+                                if np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) < sq_cut
+                            ]
+                        else:
+                            surviving = trial_pairs
+
+                        # Build trial mapping with only surviving pairs
                         trial_mapping = dict(mapping)
-                        # Remove all old H mappings for this parent first
                         for old_ha, _ in h_pairs_by_parent[(a_i, b_j)]:
                             trial_mapping.pop(old_ha, None)
-                        for ha, hb in trial_pairs:
+                        for ha, hb in surviving:
                             trial_mapping[ha] = hb
+
                         if not _center_has_chiral_conflict(trial_mapping, a_i):
+                            n_surv = len(surviving)
                             cost = sum(
-                                np.dot(conf_a[ha] - conf_b[hb], conf_a[ha] - conf_b[hb]) for ha, hb in trial_pairs
-                            )
-                            if cost < best_cost:
+                                np.dot(conf_a[ha] - conf_b[hb], conf_a[ha] - conf_b[hb]) for ha, hb in surviving
+                            ) if surviving else 0.0
+                            # Prefer more surviving pairs; tie-break by lower cost
+                            if n_surv > best_n_surviving or (n_surv == best_n_surviving and cost < best_cost):
+                                best_n_surviving = n_surv
                                 best_cost = cost
                                 best_pairs = trial_pairs
 
@@ -493,15 +509,6 @@ def _augment_core_with_hydrogens(
                         mapping.pop(ha, None)
                     del h_pairs_by_parent[(a_i, b_j)]
 
-            # Final safety net: re-check and remove any remaining conflicts
-            all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
-            if all_h:
-                augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
-                mapping = {int(a): int(b) for a, b in augmented}
-                for a_i, b_j in list(h_pairs_by_parent.keys()):
-                    if _center_has_chiral_conflict(mapping, a_i):
-                        del h_pairs_by_parent[(a_i, b_j)]
-
     # Phase 3: Apply chain cutoff to drop H pairs that are too far apart
     if chain_cutoff is not None:
         sq_cutoff = chain_cutoff * chain_cutoff
@@ -512,6 +519,16 @@ def _augment_core_with_hydrogens(
             ]
             if not h_pairs_by_parent[key]:
                 del h_pairs_by_parent[key]
+
+    if enforce_chiral:
+            # Final safety net: re-check and remove any remaining conflicts
+            all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
+            if all_h:
+                augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
+                mapping = {int(a): int(b) for a, b in augmented}
+                for a_i, b_j in list(h_pairs_by_parent.keys()):
+                    if _center_has_chiral_conflict(mapping, a_i):
+                        del h_pairs_by_parent[(a_i, b_j)]
 
     # Phase 4: Build final augmented core
     all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
