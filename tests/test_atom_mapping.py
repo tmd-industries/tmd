@@ -2211,3 +2211,12 @@ def test_hif2a_206_215_atom_map(hif2a_ligands):
     core = atom_mapping.get_cores(molA, molB, **opts)[0]
     dummies = molA.GetNumAtoms() + molB.GetNumAtoms() - 2 * len(core)
     assert dummies == 7
+
+
+def test_hif2a_206_336_atom_map(hif2a_ligands):
+    molA = get_mol_by_name(hif2a_ligands, "206")
+    molB = get_mol_by_name(hif2a_ligands, "336")
+    opts = dict(DEFAULT_ATOM_MAPPING_KWARGS)
+    core = atom_mapping.get_cores(molA, molB, **opts)[0]
+    dummies = molA.GetNumAtoms() + molB.GetNumAtoms() - 2 * len(core)
+    assert dummies == 8
