@@ -15,6 +15,15 @@ np.set_printoptions(linewidth=500)
 pytestmark = [pytest.mark.memcheck]
 
 
+def exclusion_atoms_to_exclusion_pairs(atoms):
+    exclusion_idxs = []
+
+    for idx, i in enumerate(atoms):
+        for j in atoms[idx + 1 :]:
+            exclusion_idxs.append((i, j))
+    return exclusion_idxs
+
+
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 def test_nblist_hilbert(example_conf, example_box, example_nonbonded_potential, precision):
     """
@@ -161,6 +170,94 @@ def test_correctness(
     )
 
 
+@pytest.mark.parametrize("select_atom_indices", [False, True])
+@pytest.mark.parametrize("num_atoms", [33, 65, 231, 1050])
+@pytest.mark.parametrize("precision", [np.float64, np.float32])
+@pytest.mark.parametrize("num_systems", [1, 2, 4, 8])
+@pytest.mark.parametrize("random_idx_lengths", [True, False])
+def test_batch_correctness(
+    rng,
+    example_conf,
+    example_box,
+    example_nonbonded_potential,
+    select_atom_indices,
+    num_atoms,
+    precision,
+    num_systems,
+    random_idx_lengths,
+):
+    """
+    Test against the unbatched GPU platform, which should be identical. Don't trust results if test_correctness does not also pass.
+    """
+    nonbonded_fn = example_nonbonded_potential.potential
+
+    # strip out parts of the system
+    test_exclusions = []
+    test_scales = []
+    for (i, j), (sa, sb) in zip(nonbonded_fn.exclusion_idxs, nonbonded_fn.scale_factors):
+        if i < num_atoms and j < num_atoms:
+            test_exclusions.append((i, j))
+            test_scales.append((sa, sb))
+
+    atom_idxs: Optional[NDArray] = None
+    if select_atom_indices:
+        if random_idx_lengths:
+            sizes = rng.integers(1, num_atoms, size=num_systems)
+            atom_idxs = [rng.choice(num_atoms, size, replace=False).astype(np.int32) for size in sizes]
+        else:
+            atom_idxs = [
+                np.asarray(rng.choice(num_atoms, num_atoms // 2, replace=False), dtype=np.int32)
+                for _ in range(num_systems)
+            ]
+
+    exclusion_idxs = [np.array(test_exclusions, dtype=np.int32)] * num_systems
+    scales = [np.array(test_scales, dtype=precision)] * num_systems
+
+    coords = np.stack(
+        [
+            (example_conf[:num_atoms] + rng.uniform(-1e3, 1e3, size=(num_atoms, 3))).astype(precision)
+            for _ in range(num_systems)
+        ]
+    ).astype(precision)
+    boxes = np.stack([example_box for _ in coords]).astype(precision)
+    params = np.stack(
+        [example_nonbonded_potential.params[:num_atoms, :].astype(precision) for _ in range(num_systems)]
+    ).astype(precision)
+
+    potential = potentials.Nonbonded(
+        num_atoms, exclusion_idxs, scales, nonbonded_fn.beta, nonbonded_fn.cutoff, atom_idxs=atom_idxs
+    )
+
+    non_zero_nrg = False
+    for w_params in gen_nonbonded_params_with_4d_offsets(rng, params, nonbonded_fn.cutoff):
+        batch_ub = potential.to_gpu(precision).unbound_impl
+        batch_du_dx, batch_du_dp, batch_u = batch_ub.execute_dim(coords, w_params, boxes, 1, 1, 1)
+
+        comp_batch_du_dx, comp_batch_du_dp, comp_batch_u = batch_ub.execute_dim(coords, w_params, boxes, 1, 1, 1)
+        # Verify running the potential twice gives the same result
+        np.testing.assert_array_equal(comp_batch_du_dx, batch_du_dx)
+        np.testing.assert_array_equal(comp_batch_du_dp, batch_du_dp)
+        np.testing.assert_array_equal(comp_batch_u, batch_u)
+        for i in range(num_systems):
+            ref_nb = potentials.Nonbonded(
+                num_atoms,
+                exclusion_idxs[i],
+                scales[i],
+                nonbonded_fn.beta,
+                nonbonded_fn.cutoff,
+                atom_idxs=atom_idxs[i] if atom_idxs is not None else None,
+            )
+            ref_du_dx, ref_du_dp, ref_u = ref_nb.to_gpu(precision).unbound_impl.execute(
+                coords[i], w_params[i], boxes[i]
+            )
+            np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx, err_msg=f"Batch {i}")
+            np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp, err_msg=f"Batch {i}")
+            np.testing.assert_array_equal(batch_u[i], ref_u, err_msg=f"Batch {i}")
+            if ref_u != 0.0:
+                non_zero_nrg = True
+    assert non_zero_nrg, "Didn't validate energies"
+
+
 @pytest.mark.parametrize(
     "precision, rtol, atol, du_dp_rtol, du_dp_atol",
     [
@@ -241,12 +338,7 @@ def test_nonbonded_exclusions(precision, rtol):
     # pick a set of atoms that will be mutually excluded from each other.
     # we will need to set their exclusions manually
     exclusion_atoms = np.random.choice(atom_idxs, size=EA, replace=False)
-    exclusion_idxs = []
-
-    for idx, i in enumerate(exclusion_atoms):
-        for jdx, j in enumerate(exclusion_atoms):
-            if jdx > idx:
-                exclusion_idxs.append((i, j))
+    exclusion_idxs = exclusion_atoms_to_exclusion_pairs(exclusion_atoms)
 
     E = len(exclusion_idxs)
     exclusion_idxs = np.array(exclusion_idxs, dtype=np.int32)

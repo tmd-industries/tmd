@@ -23,31 +23,32 @@
 
 namespace tmd {
 template <typename RealType>
-LangevinIntegrator<RealType>::LangevinIntegrator(int N, const RealType *masses,
-                                                 RealType temperature,
-                                                 RealType dt, RealType friction,
-                                                 int seed)
-    : N_(N), temperature_(temperature), dt_(dt), friction_(friction),
-      ca_(exp(-friction * dt)), d_rand_states_(N), runner_() {
+LangevinIntegrator<RealType>::LangevinIntegrator(
+    const int batch_size, const int N, const RealType *masses,
+    const RealType temperature, const RealType dt, const RealType friction,
+    const int seed)
+    : batch_size_(batch_size), N_(N), temperature_(temperature), dt_(dt),
+      friction_(friction), ca_(exp(-friction * dt)),
+      d_rand_states_(batch_size_ * N_), runner_() {
 
   const RealType kT = static_cast<RealType>(BOLTZ) * temperature;
   const RealType ccs_adjustment = sqrt(1 - exp(-2 * friction * dt));
 
-  std::vector<RealType> h_ccs(N_);
-  std::vector<RealType> h_cbs(N_);
-  for (int i = 0; i < N_; i++) {
+  std::vector<RealType> h_ccs(batch_size_ * N_);
+  std::vector<RealType> h_cbs(batch_size_ * N_);
+  for (int i = 0; i < batch_size_ * N_; i++) {
     h_cbs[i] = static_cast<RealType>(dt_ / masses[i]);
     h_ccs[i] = static_cast<RealType>(ccs_adjustment * sqrt(kT / masses[i]));
   }
 
-  d_cbs_ = gpuErrchkCudaMallocAndCopy(h_cbs.data(), N_);
-  d_ccs_ = gpuErrchkCudaMallocAndCopy(h_ccs.data(), N_);
+  d_cbs_ = gpuErrchkCudaMallocAndCopy(h_cbs.data(), batch_size_ * N_);
+  d_ccs_ = gpuErrchkCudaMallocAndCopy(h_ccs.data(), batch_size_ * N_);
 
-  cudaSafeMalloc(&d_du_dx_, N_ * 3 * sizeof(*d_du_dx_));
+  cudaSafeMalloc(&d_du_dx_, batch_size_ * N_ * 3 * sizeof(*d_du_dx_));
 
   // Only need to memset the forces to zero once at initialization;
   // k_update_forward_baoab will zero forces after every step
-  gpuErrchk(cudaMemset(d_du_dx_, 0, N_ * 3 * sizeof(*d_du_dx_)));
+  gpuErrchk(cudaMemset(d_du_dx_, 0, batch_size_ * N_ * 3 * sizeof(*d_du_dx_)));
 
   k_initialize_curand_states<<<ceil_divide(d_rand_states_.length,
                                            DEFAULT_THREADS_PER_BLOCK),
@@ -63,7 +64,7 @@ LangevinIntegrator<RealType>::~LangevinIntegrator() {
 }
 
 template <typename RealType>
-RealType LangevinIntegrator<RealType>::get_temperature() {
+RealType LangevinIntegrator<RealType>::get_temperature() const {
   return this->temperature_;
 }
 
@@ -74,16 +75,16 @@ void LangevinIntegrator<RealType>::step_fwd(
     cudaStream_t stream) {
   const int D = 3;
 
-  runner_.execute_potentials(bps, N_, d_x_t, d_box_t,
+  runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t,
                              d_du_dx_, // we only need the forces
                              nullptr, nullptr, stream);
 
-  const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
-  const size_t n_blocks = ceil_divide(N_, tpb);
+  constexpr size_t tpb = DEFAULT_THREADS_PER_BLOCK;
 
-  k_update_forward_baoab<RealType, D><<<n_blocks, tpb, 0, stream>>>(
-      N_, ca_, d_idxs, d_cbs_, d_ccs_, d_rand_states_.data, d_x_t, d_v_t,
-      d_du_dx_, dt_);
+  k_update_forward_baoab<RealType, D>
+      <<<dim3(ceil_divide(N_, tpb), batch_size_), tpb, 0, stream>>>(
+          batch_size_, N_, ca_, d_idxs, d_cbs_, d_ccs_, d_rand_states_.data,
+          d_x_t, d_v_t, d_du_dx_, dt_);
   gpuErrchk(cudaPeekAtLastError());
 }
 

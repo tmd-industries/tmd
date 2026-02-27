@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +17,7 @@ from typing import Any, Optional
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from numpy.typing import NDArray
 
 from tmd import potentials
@@ -28,7 +30,6 @@ from tmd.ff.handlers import nonbonded
 from tmd.potentials import ChiralAtomRestraint, ChiralBondRestraint
 from tmd.potentials.jax_utils import get_all_pairs_indices
 from tmd.potentials.nonbonded import combining_rule_epsilon, combining_rule_sigma
-from tmd.potentials.types import Params
 
 OpenMMTopology = Any
 
@@ -161,7 +162,7 @@ class HostGuestTopology:
         combined_idxs = np.concatenate([host_idxs, guest_idxs])
         ctor = type(guest_potential)
 
-        return combined_params, ctor(combined_idxs)
+        return combined_params, ctor(self.get_num_atoms(), combined_idxs)
 
     def parameterize_harmonic_bond(self, ff_params):
         guest_params, guest_potential = self.guest_topology.parameterize_harmonic_bond(ff_params)
@@ -227,9 +228,14 @@ class HostGuestTopology:
         guest_intra_params, guest_intra_pot = self.guest_topology.parameterize_nonbonded_pairlist(
             ff_q_params, ff_q_params_intra, ff_lj_params, ff_lj_params_intra, intramol_params=intramol_params
         )
-        # shift idxs because of the host
-        guest_intra_pot.idxs = guest_intra_pot.idxs + self.num_host_atoms
-        return guest_intra_params, guest_intra_pot
+        combined_intra_pot = potentials.NonbondedPairListPrecomputed(
+            self.get_num_atoms(),
+            # shift idxs to account for the host
+            guest_intra_pot.idxs + self.num_host_atoms,
+            guest_intra_pot.beta,
+            guest_intra_pot.cutoff,
+        )
+        return guest_intra_params, combined_intra_pot
 
 
 class BaseTopology:
@@ -330,6 +336,8 @@ class BaseTopology:
             q_params = self.ff.q_handle.partial_parameterize(ff_q_params, self.mol)
             lj_params = self.ff.lj_handle.partial_parameterize(ff_lj_params, self.mol)
 
+        N = len(q_params)
+
         sig_params = lj_params[:, 0]
         eps_params = lj_params[:, 1]
 
@@ -351,23 +359,23 @@ class BaseTopology:
         beta = _BETA
         cutoff = _CUTOFF  # solve for this analytically later
 
-        return params, potentials.NonbondedPairListPrecomputed(inclusion_idxs, beta, cutoff)
+        return params, potentials.NonbondedPairListPrecomputed(N, inclusion_idxs, beta, cutoff)
 
     def parameterize_harmonic_bond(self, ff_params):
         params, idxs = self.ff.hb_handle.partial_parameterize(ff_params, self.mol)
-        return params, potentials.HarmonicBond(idxs)
+        return params, potentials.HarmonicBond(self.get_num_atoms(), idxs)
 
     def parameterize_harmonic_angle(self, ff_params):
         params, idxs = self.ff.ha_handle.partial_parameterize(ff_params, self.mol)
-        return params, potentials.HarmonicAngle(idxs)
+        return params, potentials.HarmonicAngle(self.get_num_atoms(), idxs)
 
     def parameterize_proper_torsion(self, ff_params):
         params, idxs = self.ff.pt_handle.partial_parameterize(ff_params, self.mol)
-        return params, potentials.PeriodicTorsion(idxs)
+        return params, potentials.PeriodicTorsion(self.get_num_atoms(), idxs)
 
     def parameterize_improper_torsion(self, ff_params):
         params, idxs = self.ff.it_handle.partial_parameterize(ff_params, self.mol)
-        return params, potentials.PeriodicTorsion(idxs)
+        return params, potentials.PeriodicTorsion(self.get_num_atoms(), idxs)
 
     def setup_chiral_restraints(self, chiral_atom_restraint_k, chiral_bond_restraint_k):
         """
@@ -396,7 +404,9 @@ class BaseTopology:
 
         chiral_atom_params = chiral_atom_restraint_k * np.ones(len(chiral_atom_restr_idxs))
         assert len(chiral_atom_params) == len(chiral_atom_restr_idxs)  # TODO: can this be checked in Potential::bind ?
-        chiral_atom_potential = potentials.ChiralAtomRestraint(chiral_atom_restr_idxs).bind(chiral_atom_params)
+        chiral_atom_potential = potentials.ChiralAtomRestraint(self.get_num_atoms(), chiral_atom_restr_idxs).bind(
+            chiral_atom_params
+        )
 
         # chiral bonds
         chiral_bonds = chiral_utils.find_chiral_bonds(mol)
@@ -414,9 +424,9 @@ class BaseTopology:
         chiral_bond_restr_idxs = np.array(chiral_bond_restr_idxs, dtype=np.int32).reshape(-1, 4)
         chiral_bond_restr_signs = np.array(chiral_bond_restr_signs)
         chiral_bond_params = np.array(chiral_bond_params)
-        chiral_bond_potential = potentials.ChiralBondRestraint(chiral_bond_restr_idxs, chiral_bond_restr_signs).bind(
-            chiral_bond_params
-        )
+        chiral_bond_potential = potentials.ChiralBondRestraint(
+            self.get_num_atoms(), chiral_bond_restr_idxs, chiral_bond_restr_signs
+        ).bind(chiral_bond_params)
 
         return chiral_atom_potential, chiral_bond_potential
 
@@ -451,12 +461,14 @@ class BaseTopology:
         improper_potential = mol_it.bind(mol_improper_params)
         nonbonded_potential = mol_nbpl.bind(mol_nbpl_params)
 
-        chiral_atom = ChiralAtomRestraint(np.array([[]], dtype=np.int32).reshape(-1, 4)).bind(
+        chiral_atom = ChiralAtomRestraint(self.get_num_atoms(), np.array([[]], dtype=np.int32).reshape(-1, 4)).bind(
             np.array([], dtype=np.float64).reshape(-1)
         )
         idxs = np.array([[]], dtype=np.int32).reshape(-1, 4)
         signs = np.array([[]], dtype=np.int32).reshape(-1)
-        chiral_bond = ChiralBondRestraint(idxs, signs).bind(np.array([], dtype=np.float64).reshape(-1))
+        chiral_bond = ChiralBondRestraint(self.get_num_atoms(), idxs, signs).bind(
+            np.array([], dtype=np.float64).reshape(-1)
+        )
 
         return GuestSystem(
             bond=bond_potential,
@@ -614,7 +626,7 @@ class MultiTopology(BaseTopology):
 
         inclusion_idxs = np.concatenate(mol_idxs)
 
-        return params, potentials.NonbondedPairListPrecomputed(inclusion_idxs, beta, cutoff)
+        return params, potentials.NonbondedPairListPrecomputed(offset, inclusion_idxs, beta, cutoff)
 
     def _parameterize_bonded_term(self, ff_params, bonded_handle, potential):
         offset = 0
@@ -627,7 +639,7 @@ class MultiTopology(BaseTopology):
             offset += mol.GetNumAtoms()
         params_c = jnp.concatenate(mol_parameters)
         idxs_c = np.concatenate(mol_idxs)
-        return params_c, potential(idxs_c)
+        return params_c, potential(offset, idxs_c)
 
     def parameterize_harmonic_bond(self, ff_params):
         return self._parameterize_bonded_term(ff_params, self.ff.hb_handle, potentials.HarmonicBond)
@@ -698,11 +710,11 @@ def exclude_all_ligand_ligand_ixns(num_host_atoms: int, num_guest_atoms: int) ->
 def get_ligand_ixn_pots_params(
     lig_idxs: NDArray,
     env_idxs: Optional[NDArray],
-    host_nb_params: Params,
-    guest_params_ixn_env: Params,
+    host_nb_params: Array | NDArray,
+    guest_params_ixn_env: Array | NDArray,
     beta=2.0,
     cutoff=1.2,
-) -> tuple[potentials.NonbondedInteractionGroup, Params]:
+) -> tuple[potentials.NonbondedInteractionGroup, Array | NDArray]:
     """
     Return the interaction group potentials and corresponding parameters
     for the ligand-water and ligand-protein interaction terms.

@@ -75,7 +75,7 @@ def test_nonbonded_consistency(
         return NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs, disable_hilbert_sort)
 
     def make_exclusions_potential(exclusion_idxs, exclusion_scales):
-        return NonbondedExclusions(exclusion_idxs, exclusion_scales, beta, cutoff)
+        return NonbondedExclusions(num_atoms, exclusion_idxs, exclusion_scales, beta, cutoff)
 
     test_impl = (
         FanoutSummedPotential(

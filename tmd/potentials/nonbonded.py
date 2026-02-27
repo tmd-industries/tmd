@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -225,7 +226,7 @@ def filter_exclusions(
         filtered_exclusion_idxs_.append((i, j))
         filtered_scale_factors_.append(sf)
 
-    filtered_exclusion_idxs = np.array(filtered_exclusion_idxs_, dtype=np.int32)
+    filtered_exclusion_idxs = np.array(filtered_exclusion_idxs_, dtype=np.int32).reshape(-1, 2)
     filtered_scale_factors = np.array(filtered_scale_factors_)
     if not filtered_scale_factors.shape[0]:
         filtered_scale_factors = filtered_scale_factors.reshape((0, scale_factors.shape[1]))

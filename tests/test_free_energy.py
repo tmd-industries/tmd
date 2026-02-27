@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 from copy import deepcopy
 from dataclasses import replace
 from functools import partial
-from typing import Optional
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import jax.numpy as jnp
@@ -28,8 +28,9 @@ from jax import grad, jacfwd, jacrev, value_and_grad
 from scipy.optimize import check_grad, minimize
 
 import tmd._vendored.pymbar as pymbar
-from tmd.constants import BOLTZ, DEFAULT_TEMP, NBParamIdx
+from tmd.constants import BOLTZ, DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_TEMP, NBParamIdx
 from tmd.fe import free_energy, topology, utils
+from tmd.fe.atom_mapping import get_cores
 from tmd.fe.bar import DEFAULT_SOLVER_PROTOCOL, IndeterminateEnergyWarning, df_from_u_kln, ukln_to_ukn
 from tmd.fe.free_energy import (
     BarResult,
@@ -47,19 +48,21 @@ from tmd.fe.free_energy import (
     batches,
     compute_potential_matrix,
     estimate_free_energy_bar,
+    get_context,
     get_water_sampler_params,
     make_pair_bar_plots,
     run_sims_bisection,
+    run_sims_hrex,
     sample,
     trajectories_by_replica_to_by_state,
     verify_and_sanitize_potential_matrix,
 )
-from tmd.fe.rbfe import run_vacuum, setup_initial_state, setup_initial_states, setup_optimized_host
+from tmd.fe.rbfe import DEFAULT_HREX_PARAMS, run_vacuum, setup_initial_state, setup_initial_states, setup_optimized_host
 from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.single_topology import AtomMapFlags, SingleTopology
 from tmd.fe.stored_arrays import StoredArrays
 from tmd.ff import Forcefield
-from tmd.lib import LangevinIntegrator
+from tmd.lib import LangevinIntegrator, custom_ops
 from tmd.md import builders
 from tmd.md.hrex import HREX, HREXDiagnostics, ReplicaIdx
 from tmd.md.states import CoordsVelBox
@@ -310,6 +313,7 @@ def solvent_hif2a_ligand_pair_single_topology_lam0_state(hif2a_ligand_pair_singl
     return state
 
 
+@pytest.mark.memcheck
 @pytest.mark.parametrize("n_frames", [1, 10])
 @pytest.mark.parametrize("local_steps", [0, 1])
 @pytest.mark.parametrize("max_buffer_frames", [1])
@@ -361,6 +365,56 @@ def hif2a_ligand_pair_single_topology_lam0_state():
     return state
 
 
+@pytest.mark.parametrize("seed", [2026])
+def test_hrex_batching_determinism(seed):
+    # Lambdas should be close to ensure a high swap rate
+    lambdas = np.linspace(0.0, 0.1, 4)
+    forcefield = Forcefield.load_default()
+
+    mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
+
+    single_topology = SingleTopology(mol_a, mol_b, core, forcefield)
+
+    initial_states = setup_initial_states(
+        single_topology,
+        None,  # Can only test determinism in vacuum since the barostat randomness to each batch
+        DEFAULT_TEMP,
+        lambdas,
+        seed=seed,
+        verify_constraints=False,
+        min_cutoff=None,
+    )
+    # Set friction to be zero to ensure determinism between batched and sequential modes
+    initial_states = [
+        replace(initial_state, integrator=replace(initial_state.integrator, friction=0.0))
+        for initial_state in initial_states
+    ]
+
+    md_params = replace(DEFAULT_HREX_PARAMS, n_frames=100)
+    ref_pair_bar_result, ref_samples_by_state, ref_hrex_diagnostics, ref_ws_diagnostics = run_sims_hrex(
+        initial_states,
+        md_params,
+    )
+
+    # Verify that the swap rates are relatively high
+    final_swap_acceptance_rates = ref_hrex_diagnostics.cumulative_swap_acceptance_rates[-1]
+    assert np.all(final_swap_acceptance_rates > 0.1)
+
+    batch_pair_bar_result, batch_samples_by_state, batch_hrex_diagnostics, batch_ws_diagnostics = run_sims_hrex(
+        initial_states, md_params, batch_simulations=True
+    )
+    np.testing.assert_equal(batch_pair_bar_result.dGs, ref_pair_bar_result.dGs)
+    np.testing.assert_equal(
+        batch_hrex_diagnostics.replica_idx_by_state_by_iter, ref_hrex_diagnostics.replica_idx_by_state_by_iter
+    )
+    np.testing.assert_equal(
+        batch_hrex_diagnostics.fraction_accepted_by_pair_by_iter, ref_hrex_diagnostics.fraction_accepted_by_pair_by_iter
+    )
+    for batch_sample, ref_sample in zip(batch_samples_by_state, ref_samples_by_state):
+        np.testing.assert_equal(np.array(batch_sample.frames), np.array(ref_sample.frames))
+        np.testing.assert_equal(np.array(batch_sample.boxes), np.array(ref_sample.boxes))
+
+
 @pytest.mark.parametrize("seed", [2024])
 @pytest.mark.parametrize(
     "host_name",
@@ -373,8 +427,7 @@ def hif2a_ligand_pair_single_topology_lam0_state():
 def test_initial_state_interacting_ligand_atoms(host_name, seed):
     lambdas = np.linspace(0.0, 1.0, 4)
     forcefield = Forcefield.load_default()
-    host_config: Optional[builders.HostConfig] = None
-    host: Optional[builders.HostConfig] = None
+    host_config: builders.HostConfig | None = None
 
     mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
     if host_name == "complex":
@@ -386,18 +439,18 @@ def test_initial_state_interacting_ligand_atoms(host_name, seed):
         host_config = builders.build_water_system(4.0, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1)
     else:
         # vacuum
-        pass
+        assert host_name is None
 
     single_topology = SingleTopology(mol_a, mol_b, core, forcefield)
 
     host_atoms = 0
     if host_config is not None:
-        host = setup_optimized_host(host_config, [mol_a, mol_b], forcefield)
+        host_config = setup_optimized_host(host_config, [mol_a, mol_b], forcefield)
         host_atoms += len(host_config.conf)
 
     initial_states = setup_initial_states(
         single_topology,
-        host,
+        host_config,
         DEFAULT_TEMP,
         lambdas,
         seed=seed,
@@ -509,6 +562,90 @@ def test_get_water_sampler_params_complex():
     orig_prot_nb_params = nb_bp.params[state.protein_idxs][:]
 
     np.testing.assert_array_equal(orig_prot_nb_params, water_sampler_nb_params[state.protein_idxs])
+
+
+def test_get_context_with_non_contiguous_waters():
+    """Verify that the build_protein_system ensures waters are contiguous and that the water sampler can be
+    configured successfully."""
+    cdk8_system = Path(__file__).parent / "data" / "cdk8_incorrectly_ordered_waters.pdb"
+
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "ligands.sdf") as sdf_path:
+        mols_by_name = utils.read_sdf_mols_by_name(sdf_path)
+    mol_a = mols_by_name["43"]
+    mol_b = mols_by_name["44"]
+
+    forcefield = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    core = get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+    st = SingleTopology(mol_a, mol_b, core, forcefield)
+
+    host_config = builders.build_protein_system(
+        str(cdk8_system), forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
+    )
+
+    lamb = 0.5  # arbitrary
+
+    # Water sampling parameters required
+    md_params = MDParams(10, 0, 10, seed, water_sampling_params=WaterSamplingParams())
+
+    state = setup_initial_state(st, lamb, host_config, DEFAULT_TEMP, 2026, False)
+    ctxt = get_context(state, md_params=md_params)
+    movers = ctxt.get_movers()
+    assert len(movers) == 2
+    assert isinstance(movers[0], custom_ops.MonteCarloBarostat_f32)
+    assert isinstance(movers[1], custom_ops.TIBDExchangeMove_f32)
+
+
+@pytest.mark.parametrize("batch_size", [2, 4, 8, 16])
+def test_run_sims_bisection_batched(batch_size, hif2a_ligand_pair_single_topology_lam0_state):
+    initial_state = hif2a_ligand_pair_single_topology_lam0_state
+
+    def make_initial_state(lamb: float):
+        # Replace the lambda, but the actual parameters implied by lambda aren't changed
+        return replace(initial_state, lamb=lamb)
+
+    md_params = MDParams(1, 1, 1, 2026)
+
+    n_bisections = 3
+
+    rng = np.random.default_rng(md_params.seed)
+
+    lambda_schedule = (rng.random(batch_size).astype(np.float32) + np.arange(batch_size)) / batch_size
+
+    run_sims_batched_bisection = partial(
+        run_sims_bisection,
+        lambda_schedule.tolist(),
+        make_initial_state,
+        md_params,
+        n_bisections=n_bisections,
+        temperature=DEFAULT_TEMP,
+        verbose=False,
+        batch_size=batch_size,
+    )
+
+    expected_bisections = n_bisections // batch_size
+
+    # runs all n_bisections iterations by default
+    results = run_sims_batched_bisection()[0]
+    final_lambdas = [float(state.lamb) for state in results[-1].initial_states]
+    # Verify the input lambda schedule is in the final lambda schedule
+    assert len(set(lambda_schedule).intersection(final_lambdas)) == len(lambda_schedule)
+
+    # Min overlap is none, should run to the end
+    assert len(results) == 1 + expected_bisections  # initial result + bisection iterations
+
+    def result_with_overlap(overlap):
+        return BarResult(np.nan, np.nan, np.empty, overlap, np.empty, np.empty)
+
+    with patch("tmd.fe.free_energy.estimate_free_energy_bar") as mock_estimate_free_energy_bar:
+        # overlap does not improve; should run all n_bisections iterations
+        mock_estimate_free_energy_bar.return_value = result_with_overlap(0.0)
+        with pytest.warns(MinOverlapWarning):
+            results = run_sims_batched_bisection(min_overlap=0.4)[0]
+        assert len(results) == 1 + expected_bisections
+
+    # Should immediately finish after running the input states, since the initial states are identical
+    results = run_sims_batched_bisection(min_overlap=0.1)[0]
+    assert len(results) == 1
 
 
 def test_run_sims_bisection_early_stopping(hif2a_ligand_pair_single_topology_lam0_state):

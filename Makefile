@@ -43,7 +43,7 @@ verify:
 
 .PHONY: nocuda_tests
 nocuda_tests:
-	pytest -m '$(NOCUDA_MARKER) and not $(NIGHTLY_MARKER)' $(PYTEST_CI_ARGS)
+	pytest -m '$(NOCUDA_MARKER) and not $(NIGHTLY_MARKER)' $(PYTEST_CI_ARGS) --maxprocesses=6
 
 .PHONY: nogpu_tests
 nogpu_tests:
@@ -53,13 +53,11 @@ nogpu_tests:
 fixed_output_tests:
 	pytest -m '$(FIXED_OUTPUT_MARKER)' $(PYTEST_CI_ARGS)
 
-
-# Disabling compute sanitizer here because of memory constraints on the ci agent. Time to buy some ram sticks
+# Reduce the parallelism of the tests here, to reduce memory implications
 .PHONY: memcheck_tests
 memcheck_tests:
 	$(COMPUTE_SANITIZER_CMD) pytest -m '$(MEMCHECK_MARKER) and not $(NIGHTLY_MARKER)' $(PYTEST_CI_ARGS)
 
-# NOTE: unit_tests pass -x to pytest to exit after first failure
 .PHONY: unit_tests
 unit_tests:
 	pytest -m 'not $(NOCUDA_MARKER) and not $(NOGPU_MARKER) and not $(FIXED_OUTPUT_MARKER) and not $(MEMCHECK_MARKER) and not $(NIGHTLY_MARKER)' $(PYTEST_CI_ARGS)

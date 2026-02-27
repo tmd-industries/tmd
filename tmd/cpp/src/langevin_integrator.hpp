@@ -28,15 +28,13 @@ template <typename RealType>
 class LangevinIntegrator : public Integrator<RealType> {
 
 private:
+  const int batch_size_;
   const int N_;
   const RealType temperature_;
   const RealType dt_;
   const RealType friction_;
   const RealType ca_;
   DeviceBuffer<curandState_t> d_rand_states_;
-
-  // The offset into the current batch of noise
-  int noise_offset_;
 
   RealType *d_cbs_;
   RealType *d_ccs_;
@@ -48,12 +46,15 @@ private:
   StreamedPotentialRunner<RealType> runner_;
 
 public:
-  LangevinIntegrator(int N, const RealType *masses, RealType temperature,
-                     RealType dt, RealType friction, int seed);
+  LangevinIntegrator(const int batch_size, const int N, const RealType *masses,
+                     const RealType temperature, const RealType dt,
+                     const RealType friction, const int seed);
 
   virtual ~LangevinIntegrator();
 
-  RealType get_temperature();
+  RealType get_temperature() const;
+
+  virtual int num_systems() const override { return batch_size_; };
 
   virtual void
   step_fwd(std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,

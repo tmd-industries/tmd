@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,9 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import jax
 import numpy as np
 import pytest
 from common import ligand_from_smiles
@@ -36,6 +38,7 @@ from tmd.md.builders import (
     construct_default_omm_system,
     get_box_from_coords,
     load_pdb_system,
+    make_waters_contiguous,
     strip_units,
 )
 from tmd.md.minimizer import check_force_norm
@@ -93,7 +96,7 @@ def test_build_water_system_raises_on_water_ff_with_virtual_sites(water_ff):
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/spce", "amber14/opc3"])
+@pytest.mark.parametrize("water_ff", ["tip3p", "spce", "opc3", "amber14/tip3p", "amber14/spce", "amber14/opc3"])
 def test_build_water_system_different_water_ffs(water_ff):
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
     host_config = build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
@@ -148,6 +151,7 @@ def validate_host_config_ions_and_charge(
     if mol is not None:
         mol_formal_charge = Chem.GetFormalCharge(mol)
 
+    assert isinstance(host_config.host_system.nonbonded_all_pairs.params, (np.ndarray, jax.Array))
     test_charges = np.sum(host_config.host_system.nonbonded_all_pairs.params[:, NBParamIdx.Q_IDX]) / np.sqrt(
         ONE_4PI_EPS0
     )
@@ -362,7 +366,7 @@ def test_deserialize_protein_system_1_4_exclusions():
 @pytest.mark.nocuda
 def test_build_protein_system_waters_before_protein():
     num_waters = 100
-    # Construct a PDB file with the waters before the protein, should raise an exception
+    # Construct a PDB file with the waters before the protein, to verify that the code correctly handles it.
     with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = app.PDBFile(str(pdb_path))
 
@@ -380,8 +384,7 @@ def test_build_protein_system_waters_before_protein():
         with open(temp.name, "w") as ofs:
             app.PDBFile.writeFile(modeller.getTopology(), modeller.getPositions(), file=ofs)
 
-        with pytest.raises(AssertionError, match="Waters in PDB must be at the end of the file"):
-            build_protein_system(temp.name, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
+        build_protein_system(temp.name, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
 
 
 def test_build_protein_system():
@@ -560,3 +563,40 @@ def test_build_protein_wat_residue_names():
             res.name == WATER_RESIDUE_NAME for res in host_config.omm_topology.residues() if len(list(res.atoms())) == 3
         ]
         assert len(water_res_names_match) > 0 and all(water_res_names_match)
+
+
+@pytest.mark.nocuda
+def test_adjusting_water_order_doesnt_change_positions():
+    """Verify that adjusting the location of waters does not change the positions"""
+    cdk8_system = Path(__file__).parent / "data" / "cdk8_incorrectly_ordered_waters.pdb"
+
+    host_pdbfile = app.PDBFile(str(cdk8_system))
+
+    modeller = app.Modeller(host_pdbfile.topology, host_pdbfile.positions)
+    water_residues = [residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]
+    water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_residues])
+    assert np.any(np.diff(water_indices) != 1)
+
+    adjusted_modeller = deepcopy(modeller)
+    make_waters_contiguous(adjusted_modeller)
+    assert adjusted_modeller.topology.getNumAtoms() == modeller.topology.getNumAtoms()
+
+    updated_positions = strip_units(adjusted_modeller.positions)
+    ref_positions = strip_units(modeller.positions)
+
+    # Ordering has changed, so positions won't match
+    assert not np.all(updated_positions == ref_positions)
+
+    new_water_residues = [
+        residue for residue in adjusted_modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME
+    ]
+    new_water_indices = np.concatenate([[a.index for a in res.atoms()] for res in new_water_residues])
+
+    # Verify that the water positions are identical
+    np.testing.assert_equal(updated_positions[new_water_indices], ref_positions[water_indices])
+
+    all_idxs = np.arange(modeller.topology.getNumAtoms())
+    reference_other_idxs = np.delete(all_idxs, water_indices)
+    updated_other_idxs = np.delete(all_idxs, new_water_indices)
+
+    np.testing.assert_equal(updated_positions[updated_other_idxs], ref_positions[reference_other_idxs])

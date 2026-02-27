@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -507,3 +508,8 @@ AM1BCC_CHARGES: dict[str, list] = {
 
 
 PRECOMPUTED_CHARGES: dict[str, list] = {"patterns": []}
+
+# Zero out all of the CCCs for Amber AM1CCC charges.
+# This is to allow training the SMIRKS
+AMBER_AM1_CCC_CHARGES = AM1CCC_CHARGES.copy()
+AMBER_AM1_CCC_CHARGES["patterns"] = [(pattern, 0.0) for pattern, _ in AMBER_AM1_CCC_CHARGES["patterns"]]

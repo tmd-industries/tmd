@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,13 +16,14 @@
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from common import GradientTest
+from common import GradientTest, shift_random_coordinates_by_box
 
 from tmd.potentials import (
     CentroidRestraint,
     ChiralAtomRestraint,
     ChiralBondRestraint,
     FlatBottomBond,
+    FlatBottomRestraint,
     HarmonicAngle,
     HarmonicBond,
     LogFlatBottomBond,
@@ -109,13 +111,14 @@ def test_centroid_restraint_singularity():
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_harmonic_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     """Randomly connect pairs of particles, then validate the resulting HarmonicBond force"""
-    np.random.seed(125)  # TODO: where should this seed be set?
+    seed = 125
+    np.random.seed(seed)
 
     box = np.eye(3) * 10
     x = GradientTest().get_random_coords(n_particles, dim)
 
     atom_idxs = np.arange(n_particles)
-    params = np.random.rand(n_bonds, 2).astype(np.float64)
+    params = np.random.rand(n_bonds, 2).astype(precision)
 
     bond_idxs = []
     for _ in range(n_bonds):
@@ -125,22 +128,19 @@ def test_harmonic_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     # Shift half of the bond indices by a single box dimension to ensure testing PBCs
     x[bond_idxs[:, 1][: n_bonds // 2]] += np.diagonal(box)
 
-    box = np.eye(3) * 10
-
     # specific to harmonic bond force
-    potential = HarmonicBond(bond_idxs)
+    potential = HarmonicBond(n_particles, bond_idxs)
     test_impl = potential.to_gpu(precision)
     np.testing.assert_array_equal(potential.idxs, test_impl.unbound_impl.get_idxs())
 
     x = x.astype(precision)
-    params = params.astype(precision)
     box = box.astype(precision)
 
     GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
     GradientTest().assert_differentiable_interface_consistency(x, params, box, test_impl)
 
     # test bitwise commutativity
-    test_potential_rev = HarmonicBond(bond_idxs[:, ::-1])
+    test_potential_rev = HarmonicBond(n_particles, bond_idxs[:, ::-1])
 
     test_potential_rev_impl = test_potential_rev.to_gpu(precision).unbound_impl
 
@@ -152,11 +152,45 @@ def test_harmonic_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
 
+    if n_bonds > 0:
+        # Testing batching across multiple coords/params
+        num_systems = 3
+
+        coords = np.array(
+            [
+                shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+                for i in range(num_systems)
+            ],
+            dtype=precision,
+        )
+        rng = np.random.default_rng(seed)
+        batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_systems)]
+        batch_params = [rng.uniform(0.0, 1.0, size=(len(idxs), 2)).astype(precision) for idxs in batch_bond_idxs]
+        batch_boxes = [
+            (np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)
+        ]
+
+        batch_pot = HarmonicBond(n_particles, batch_bond_idxs)
+
+        batch_impl = batch_pot.to_gpu(precision).unbound_impl
+        assert batch_impl.num_systems() == num_systems
+        batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+        assert batch_du_dx.shape[0] == num_systems
+        assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+        for i, (idxs, x, box, params) in enumerate(zip(batch_bond_idxs, coords, batch_boxes, batch_params)):
+            potential = HarmonicBond(n_particles, idxs)
+            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+            np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+            np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+            np.testing.assert_array_equal(batch_u[i], ref_u)
+
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     """Randomly connect pairs of particles, then validate the resulting FlatBottomBond force"""
-    np.random.seed(2022)
+    seed = 2022
+    np.random.seed(seed)
 
     # TODO(deboggle) : reduce code duplication between HarmonicBond and FlatBottomBond
     box = np.eye(3) * 10
@@ -178,7 +212,7 @@ def test_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     # Shift half of the bond indices by a single box dimension to ensure testing PBCs
     x[bond_idxs[:, 1][: n_bonds // 2]] += np.diagonal(box)
 
-    potential = FlatBottomBond(bond_idxs)
+    potential = FlatBottomBond(n_particles, bond_idxs)
     test_impl = potential.to_gpu(precision)
 
     x = x.astype(precision)
@@ -189,8 +223,8 @@ def test_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     GradientTest().assert_differentiable_interface_consistency(x, params, box, test_impl)
 
     # test bitwise commutativity
-    test_potential = FlatBottomBond(bond_idxs)
-    test_potential_rev = FlatBottomBond(bond_idxs[:, ::-1])
+    test_potential = FlatBottomBond(n_particles, bond_idxs)
+    test_potential_rev = FlatBottomBond(n_particles, bond_idxs[:, ::-1])
 
     test_potential_impl = test_potential.to_gpu(precision).unbound_impl
     test_potential_rev_impl = test_potential_rev.to_gpu(precision).unbound_impl
@@ -203,11 +237,121 @@ def test_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
 
+    # Testing batching across multiple coords/params
+    num_systems = 3
+
+    rng = np.random.default_rng(seed)
+
+    coords = np.array(
+        [
+            shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+            for i in range(num_systems)
+        ],
+        dtype=precision,
+    )
+    batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_systems)]
+
+    batch_params = [rng.choice(params, size=len(idxs), replace=True).astype(precision) for idxs in batch_bond_idxs]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
+
+    batch_pot = FlatBottomBond(n_particles, batch_bond_idxs)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.num_systems() == num_systems
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_systems
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+    for i, (idxs, x, box, params) in enumerate(zip(batch_bond_idxs, coords, batch_boxes, batch_params)):
+        potential = FlatBottomBond(n_particles, idxs)
+        ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
+
+
+@pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
+def test_flat_bottom_restraint(precision, rtol, n_particles=5, n_atoms=3, dim=3):
+    """Randomly connect pairs of particles, then validate the resulting FlatBottomRestraint force"""
+    seed = 2026
+    np.random.seed(seed)
+
+    box = np.eye(3) * 100
+    x = GradientTest().get_random_coords(n_particles, dim)
+
+    atom_idxs = np.arange(n_particles)
+
+    k = np.random.rand(n_atoms) * 1000  # k large
+    r_min = np.random.rand(n_atoms)  # r_min non-negative
+    r_max = r_min + np.random.rand(n_atoms)  # r_max >= r_min
+    params = np.array([k, r_min, r_max]).astype(np.float64).T
+    assert params.shape == (n_atoms, 3)
+
+    if n_atoms > 0:
+        atom_idxs = np.random.choice(np.arange(n_particles, dtype=np.int32), size=n_atoms)
+    else:
+        atom_idxs = np.zeros((0, 2), dtype=np.int32)
+
+    # Shift half of the bond indices by a single box dimension to ensure testing PBCs
+    x[atom_idxs[: n_atoms // 2]] += np.diagonal(box)
+
+    restrained_coords = GradientTest().get_random_coords(n_atoms, dim)
+
+    potential = FlatBottomRestraint(n_particles, atom_idxs, restrained_coords.astype(precision))
+    test_impl = potential.to_gpu(precision)
+
+    x = x.astype(precision)
+    params = params.astype(precision)
+    box = box.astype(precision)
+
+    GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
+    GradientTest().assert_differentiable_interface_consistency(x, params, box, test_impl)
+
+    # Testing batching across multiple coords/params
+    num_systems = 3
+
+    rng = np.random.default_rng(seed)
+
+    coords = np.array(
+        [
+            shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+            for i in range(num_systems)
+        ],
+        dtype=precision,
+    )
+    batch_atom_indices = [rng.choice(atom_idxs, size=rng.integers(1, n_atoms)) for _ in range(num_systems)]
+    batch_atom_coords = [
+        GradientTest().get_random_coords(len(idxs), dim).astype(precision) for idxs in batch_atom_indices
+    ]
+
+    batch_params = [rng.choice(params, size=len(idxs), replace=True).astype(precision) for idxs in batch_atom_indices]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
+
+    batch_pot = FlatBottomRestraint(n_particles, batch_atom_indices, batch_atom_coords)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.num_systems() == num_systems
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_systems
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+
+    for i, (idxs, atom_coords, x, box, params) in enumerate(
+        zip(batch_atom_indices, batch_atom_coords, coords, batch_boxes, batch_params)
+    ):
+        potential = FlatBottomRestraint(n_particles, idxs, atom_coords)
+
+        ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
+
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_log_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3):
     """Randomly connect pairs of particles, then validate the resulting LogFlatBottomBond force"""
-    np.random.seed(2022)
+    seed = 2022
+    np.random.seed(seed)
 
     # TODO(deboggle) : reduce code duplication between HarmonicBond, FlatBottomBond, and LogFlatBottomBond
     box = np.eye(3) * 10
@@ -236,14 +380,14 @@ def test_log_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3
     params = params.astype(precision)
     box = box.astype(precision)
 
-    potential = LogFlatBottomBond(bond_idxs, beta)
+    potential = LogFlatBottomBond(n_particles, bond_idxs, beta)
     test_impl = potential.to_gpu(precision)
     GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
     GradientTest().assert_differentiable_interface_consistency(x, params, box, test_impl)
 
     # test bitwise commutativity
-    test_potential = LogFlatBottomBond(bond_idxs, beta)
-    test_potential_rev = LogFlatBottomBond(bond_idxs[:, ::-1], beta)
+    test_potential = LogFlatBottomBond(n_particles, bond_idxs, beta)
+    test_potential_rev = LogFlatBottomBond(n_particles, bond_idxs[:, ::-1], beta)
 
     test_potential_impl = test_potential.to_gpu(precision).unbound_impl
     test_potential_rev_impl = test_potential_rev.to_gpu(precision).unbound_impl
@@ -255,6 +399,38 @@ def test_log_flat_bottom_bond(precision, rtol, n_particles=64, n_bonds=35, dim=3
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
 
+    # Testing batching across multiple coords/params
+    num_systems = 3
+
+    rng = np.random.default_rng(seed)
+
+    coords = np.array(
+        [
+            shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+            for i in range(num_systems)
+        ],
+        dtype=precision,
+    )
+    batch_bond_idxs = [rng.choice(bond_idxs, size=rng.integers(1, n_bonds), axis=0) for _ in range(num_systems)]
+
+    batch_params = [rng.choice(params, size=len(idxs), replace=True).astype(precision) for idxs in batch_bond_idxs]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
+
+    batch_pot = LogFlatBottomBond(n_particles, batch_bond_idxs, beta)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.num_systems() == num_systems
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_systems
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+    for i, (idxs, x, box, params) in enumerate(zip(batch_bond_idxs, coords, batch_boxes, batch_params)):
+        potential = LogFlatBottomBond(n_particles, idxs, beta)
+        ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
+
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_harmonic_bond_singularity(precision, rtol):
@@ -264,11 +440,12 @@ def test_harmonic_bond_singularity(precision, rtol):
     box = np.array(np.eye(3) * 100, dtype=precision)
 
     bond_idxs = np.array([[0, 1]], dtype=np.int32)
-    potential = HarmonicBond(bond_idxs)
+    potential = HarmonicBond(len(x), bond_idxs)
     GradientTest().compare_forces(x, params, box, potential, potential.to_gpu(precision), rtol)
 
     # test with both zero and non zero terms
     x = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=precision)
+    potential = HarmonicBond(len(x), bond_idxs)
     GradientTest().compare_forces(x, params, box, potential, potential.to_gpu(precision), rtol)
 
 
@@ -309,7 +486,8 @@ def test_harmonic_angle_jax_impl(n_particles=64, n_angles=25, dim=3):
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_harmonic_angle(precision, rtol, n_particles=64, n_angles=25, dim=3):
     """Randomly connect triples of particles, then validate the resulting HarmonicAngle force"""
-    np.random.seed(125)
+    seed = 125
+    np.random.seed(seed)
 
     x = GradientTest().get_random_coords(n_particles, dim)
     box = np.eye(3) * 10
@@ -327,7 +505,7 @@ def test_harmonic_angle(precision, rtol, n_particles=64, n_angles=25, dim=3):
 
     # specific to harmonic angle force
 
-    potential = HarmonicAngle(angle_idxs)
+    potential = HarmonicAngle(n_particles, angle_idxs)
 
     x = x.astype(precision)
     params = params.astype(precision)
@@ -342,8 +520,8 @@ def test_harmonic_angle(precision, rtol, n_particles=64, n_angles=25, dim=3):
     # even the angle computation itself is not guaranteed to be identical (let alone energies and forces).
     # this isn't a deal breaker, but was just a nice to have.
 
-    test_potential = HarmonicAngle(angle_idxs)
-    test_potential_rev = HarmonicAngle(angle_idxs[:, ::-1])
+    test_potential = HarmonicAngle(n_particles, angle_idxs)
+    test_potential_rev = HarmonicAngle(n_particles, angle_idxs[:, ::-1])
 
     test_potential_impl = test_potential.to_gpu(precision).unbound_impl
     test_potential_rev_impl = test_potential_rev.to_gpu(precision).unbound_impl
@@ -355,11 +533,45 @@ def test_harmonic_angle(precision, rtol, n_particles=64, n_angles=25, dim=3):
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
 
+    if n_angles > 0:
+        # Testing batching across multiple coords/params
+        num_systems = 3
+
+        coords = np.array(
+            [
+                shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+                for i in range(num_systems)
+            ],
+            dtype=precision,
+        )
+        rng = np.random.default_rng(seed)
+        batch_angle_idxs = [rng.choice(angle_idxs, size=rng.integers(1, n_angles), axis=0) for _ in range(num_systems)]
+        batch_params = [rng.uniform(0.0, 1.0, size=(len(idxs), 3)).astype(precision) for idxs in batch_angle_idxs]
+        batch_boxes = [
+            (np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)
+        ]
+
+        batch_pot = HarmonicAngle(n_particles, batch_angle_idxs)
+
+        batch_impl = batch_pot.to_gpu(precision).unbound_impl
+        assert batch_impl.num_systems() == num_systems
+        batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+        assert batch_du_dx.shape[0] == num_systems
+        assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+        for i, (idxs, x, box, params) in enumerate(zip(batch_angle_idxs, coords, batch_boxes, batch_params)):
+            potential = HarmonicAngle(n_particles, idxs)
+            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+            np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+            np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+            np.testing.assert_array_equal(batch_u[i], ref_u)
+
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_periodic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3):
     """Randomly connect quadruples of particles, then validate the resulting PeriodicTorsion force"""
-    np.random.seed(125)
+    seed = 125
+    np.random.seed(seed)
 
     box = np.eye(3) * 10
     x = GradientTest().get_random_coords(n_particles, dim)
@@ -379,14 +591,14 @@ def test_periodic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3)
     params = params.astype(precision)
     box = box.astype(precision)
 
-    potential = PeriodicTorsion(torsion_idxs)
+    potential = PeriodicTorsion(n_particles, torsion_idxs)
     test_impl = potential.to_gpu(precision)
     np.testing.assert_array_equal(potential.idxs, test_impl.unbound_impl.get_idxs())
     GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
 
     # test bitwise commutativity
-    test_potential = PeriodicTorsion(torsion_idxs)
-    test_potential_rev = PeriodicTorsion(torsion_idxs[:, ::-1])
+    test_potential = PeriodicTorsion(n_particles, torsion_idxs)
+    test_potential_rev = PeriodicTorsion(n_particles, torsion_idxs[:, ::-1])
 
     test_potential_impl = test_potential.to_gpu(precision).unbound_impl
     test_potential_rev_impl = test_potential_rev.to_gpu(precision).unbound_impl
@@ -398,6 +610,41 @@ def test_periodic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3)
     np.testing.assert_array_equal(test_u, test_u_rev)
     np.testing.assert_array_equal(test_du_dx, test_du_dx_rev)
     np.testing.assert_array_equal(test_du_dp, test_du_dp_rev)
+
+    if n_torsions > 0:
+        # Testing batching across multiple coords/params
+        num_systems = 3
+
+        coords = np.array(
+            [
+                shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+                for i in range(num_systems)
+            ],
+            dtype=precision,
+        )
+        rng = np.random.default_rng(seed)
+        batch_torsion_idxs = [
+            rng.choice(torsion_idxs, size=rng.integers(1, n_torsions), axis=0) for _ in range(num_systems)
+        ]
+        batch_params = [rng.uniform(0.0, 1.0, size=(len(idxs), 3)).astype(precision) for idxs in batch_torsion_idxs]
+        batch_boxes = [
+            (np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)
+        ]
+
+        batch_pot = PeriodicTorsion(n_particles, batch_torsion_idxs)
+
+        batch_impl = batch_pot.to_gpu(precision).unbound_impl
+        assert batch_impl.num_systems() == num_systems
+        batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+        assert batch_du_dx.shape[0] == num_systems
+        assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+        for i, (idxs, x, box, params) in enumerate(zip(batch_torsion_idxs, coords, batch_boxes, batch_params)):
+            potential = PeriodicTorsion(n_particles, idxs)
+            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+            np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+            np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+            np.testing.assert_array_equal(batch_u[i], ref_u)
 
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
@@ -411,7 +658,8 @@ def test_empty_potentials(precision, rtol):
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_chiral_atom_restraint(precision, rtol, n_particles=64, n_restraints=35, dim=3):
     """Randomly connect 4 particles, then validate the resulting forces"""
-    np.random.seed(125)  # TODO: where should this seed be set?
+    seed = 125
+    np.random.seed(seed)
 
     x = GradientTest().get_random_coords(n_particles, dim)
     params = np.random.rand(n_restraints)
@@ -426,22 +674,55 @@ def test_chiral_atom_restraint(precision, rtol, n_particles=64, n_restraints=35,
     params = params.astype(precision)
     box = box.astype(precision)
 
-    potential = ChiralAtomRestraint(restr_idxs)
+    potential = ChiralAtomRestraint(n_particles, restr_idxs)
     test_impl = potential.to_gpu(precision)
     GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="idxs must be of length 4"):
         # wrong length
         bad_idxs = np.array([[0, 1, 2, 3, 4], [4, 4, 3, 2, 1]], dtype=np.int32)
-        bad_potential = ChiralAtomRestraint(bad_idxs)
+        bad_potential = ChiralAtomRestraint(n_particles, bad_idxs)
         bad_potential.to_gpu(precision)
+
+    # Testing batching across multiple coords/params
+    num_systems = 3
+
+    coords = np.array(
+        [
+            shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+            for i in range(num_systems)
+        ],
+        dtype=precision,
+    )
+    rng = np.random.default_rng(seed)
+    batch_restraint_idxs = [
+        rng.choice(restr_idxs, size=rng.integers(1, n_restraints), axis=0) for _ in range(num_systems)
+    ]
+    batch_params = [rng.uniform(0.0, 1.0, size=len(idxs)).astype(precision) for idxs in batch_restraint_idxs]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
+
+    batch_pot = ChiralAtomRestraint(n_particles, batch_restraint_idxs)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.num_systems() == num_systems
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_systems
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+    for i, (idxs, x, box, params) in enumerate(zip(batch_restraint_idxs, coords, batch_boxes, batch_params)):
+        potential = ChiralAtomRestraint(n_particles, idxs)
+        ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
 
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_chiral_bond_restraint(precision, rtol, n_particles=64, n_restraints=35, dim=3):
     """Randomly connect 4 particles, then validate the resulting forces. Also test
     that scrambling the sign is sufficient"""
-    np.random.seed(125)  # TODO: where should this seed be set?
+    seed = 125
+    np.random.seed(seed)
 
     x = GradientTest().get_random_coords(n_particles, dim)
     params = np.random.rand(n_restraints)
@@ -456,7 +737,7 @@ def test_chiral_bond_restraint(precision, rtol, n_particles=64, n_restraints=35,
 
     box = np.eye(3) * 10
 
-    potential = ChiralBondRestraint(restr_idxs, signs)
+    potential = ChiralBondRestraint(n_particles, restr_idxs, signs)
 
     x = x.astype(precision)
     params = params.astype(precision)
@@ -464,16 +745,50 @@ def test_chiral_bond_restraint(precision, rtol, n_particles=64, n_restraints=35,
 
     GradientTest().compare_forces(x, params, box, potential, potential.to_gpu(precision), rtol)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="idxs must be of length 4"):
         # wrong length idxs
         bad_idxs = np.array([[0, 1, 2, 3, 4], [4, 4, 3, 2, 1]], dtype=np.int32)
         bad_signs = np.array([1, -1], dtype=np.int32)
-        bad_potential = ChiralBondRestraint(bad_idxs, bad_signs)
+        bad_potential = ChiralBondRestraint(n_particles, bad_idxs, bad_signs)
         bad_potential.to_gpu(precision).unbound_impl
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match=r"signs.size\(\) must be exactly R!"):
         # inconsistent lengths between idxs and signs
         bad_idxs = np.array([[0, 1, 2, 3], [4, 5, 3, 2]], dtype=np.int32)
         bad_signs = np.array([1, -1, 1], dtype=np.int32)
-        bad_potential = ChiralBondRestraint(bad_idxs, bad_signs)
+        bad_potential = ChiralBondRestraint(n_particles, bad_idxs, bad_signs)
         bad_potential.to_gpu(precision).unbound_impl
+
+    # Testing batching across multiple coords/params
+    num_systems = 3
+
+    coords = np.array(
+        [
+            shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+            for i in range(num_systems)
+        ],
+        dtype=precision,
+    )
+    rng = np.random.default_rng(seed)
+    batch_restraint_idxs = [
+        rng.choice(restr_idxs, size=rng.integers(1, n_restraints), axis=0) for _ in range(num_systems)
+    ]
+    batch_params = [rng.uniform(0.0, 1.0, size=len(idxs)).astype(precision) for idxs in batch_restraint_idxs]
+    batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
+    batch_signs = [rng.choice([-1, 1], size=len(idxs), replace=True).astype(np.int32) for idxs in batch_restraint_idxs]
+    batch_pot = ChiralBondRestraint(n_particles, batch_restraint_idxs, batch_signs)
+
+    batch_impl = batch_pot.to_gpu(precision).unbound_impl
+    assert batch_impl.num_systems() == num_systems
+    batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+    assert batch_du_dx.shape[0] == num_systems
+    assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+    for i, (idxs, signs, x, box, params) in enumerate(
+        zip(batch_restraint_idxs, batch_signs, coords, batch_boxes, batch_params)
+    ):
+        potential = ChiralBondRestraint(n_particles, idxs, signs)
+        ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
+        np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+        np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+        np.testing.assert_array_equal(batch_u[i], ref_u)
