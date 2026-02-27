@@ -49,6 +49,11 @@ def hif2a_ligands():
     return read_sdf(datasets["hif2a"])
 
 
+@pytest.fixture(scope="module")
+def eg5_ligands():
+    return read_sdf(datasets["eg5"])
+
+
 def test_connected_core_with_large_numbers_of_cores():
     """The following tests that for two mols that have a large number of matching
     cores found prior to filtering out the molecules with disconnected cores and incomplete rings.
@@ -2220,3 +2225,18 @@ def test_hif2a_206_336_atom_map(hif2a_ligands):
     core = atom_mapping.get_cores(molA, molB, **opts)[0]
     dummies = molA.GetNumAtoms() + molB.GetNumAtoms() - 2 * len(core)
     assert dummies == 8
+
+
+@pytest.mark.parametrize(
+    "titleA,titleB,ndummies",
+    [
+        ("CHEMBL1077204", "CHEMBL1084676", 9),
+    ],
+)
+def test_eg5_dummy_atom_counts(eg5_ligands, titleA, titleB, ndummies):
+    molA = get_mol_by_name(eg5_ligands, titleA)
+    molB = get_mol_by_name(eg5_ligands, titleB)
+    opts = dict(DEFAULT_ATOM_MAPPING_KWARGS)
+    core = atom_mapping.get_cores(molA, molB, **opts)[0]
+    dummies = molA.GetNumAtoms() + molB.GetNumAtoms() - 2 * len(core)
+    assert dummies == ndummies

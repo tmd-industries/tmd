@@ -474,7 +474,8 @@ def _augment_core_with_hydrogens(
                         # Apply cutoff to get the surviving subset
                         if sq_cut is not None:
                             surviving = [
-                                p for p in trial_pairs
+                                p
+                                for p in trial_pairs
                                 if np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) < sq_cut
                             ]
                         else:
@@ -489,9 +490,11 @@ def _augment_core_with_hydrogens(
 
                         if not _center_has_chiral_conflict(trial_mapping, a_i):
                             n_surv = len(surviving)
-                            cost = sum(
-                                np.dot(conf_a[ha] - conf_b[hb], conf_a[ha] - conf_b[hb]) for ha, hb in surviving
-                            ) if surviving else 0.0
+                            cost = (
+                                sum(np.dot(conf_a[ha] - conf_b[hb], conf_a[ha] - conf_b[hb]) for ha, hb in surviving)
+                                if surviving
+                                else 0.0
+                            )
                             # Prefer more surviving pairs; tie-break by lower cost
                             if n_surv > best_n_surviving or (n_surv == best_n_surviving and cost < best_cost):
                                 best_n_surviving = n_surv
@@ -518,7 +521,8 @@ def _augment_core_with_hydrogens(
             a_i, b_j = key
             original_k = len(h_pairs_by_parent[key])
             surviving = [
-                p for p in h_pairs_by_parent[key]
+                p
+                for p in h_pairs_by_parent[key]
                 if np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) < sq_cutoff
             ]
 
@@ -529,21 +533,29 @@ def _augment_core_with_hydrogens(
 
                 best_pairs = surviving  # current survivors are the baseline
                 best_n = len(surviving)
-                best_cost = sum(
-                    np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) for p in surviving
-                ) if surviving else 0.0
+                best_cost = (
+                    sum(np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) for p in surviving)
+                    if surviving
+                    else 0.0
+                )
 
                 for combo_a in combinations(h_neighbors_a, original_k):
                     for perm_b in permutations(h_neighbors_b, original_k):
                         trial = [[ha, hb] for ha, hb in zip(combo_a, perm_b)]
                         trial_surviving = [
-                            p for p in trial
+                            p
+                            for p in trial
                             if np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) < sq_cutoff
                         ]
                         n = len(trial_surviving)
-                        cost = sum(
-                            np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) for p in trial_surviving
-                        ) if trial_surviving else 0.0
+                        cost = (
+                            sum(
+                                np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]])
+                                for p in trial_surviving
+                            )
+                            if trial_surviving
+                            else 0.0
+                        )
                         if n > best_n or (n == best_n and cost < best_cost):
                             best_n = n
                             best_cost = cost
@@ -559,14 +571,14 @@ def _augment_core_with_hydrogens(
                     del h_pairs_by_parent[key]
 
     if enforce_chiral:
-            # Final safety net: re-check and remove any remaining conflicts
-            all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
-            if all_h:
-                augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
-                mapping = {int(a): int(b) for a, b in augmented}
-                for a_i, b_j in list(h_pairs_by_parent.keys()):
-                    if _center_has_chiral_conflict(mapping, a_i):
-                        del h_pairs_by_parent[(a_i, b_j)]
+        # Final safety net: re-check and remove any remaining conflicts
+        all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
+        if all_h:
+            augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
+            mapping = {int(a): int(b) for a, b in augmented}
+            for a_i, b_j in list(h_pairs_by_parent.keys()):
+                if _center_has_chiral_conflict(mapping, a_i):
+                    del h_pairs_by_parent[(a_i, b_j)]
 
     # Phase 4: Build final augmented core
     all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
