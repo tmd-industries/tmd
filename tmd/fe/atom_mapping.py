@@ -501,9 +501,17 @@ def _augment_core_with_hydrogens(
     # --- Phase 2: Repair chiral conflicts introduced by H assignments ---
     if enforce_chiral and chiral_set_a is not None and chiral_set_b is not None:
         _repair_chiral_conflicts(
-            h_pairs_by_parent, heavy_core, mol_a, mol_b,
-            conf_a, conf_b, removed_h_a, removed_h_b,
-            chiral_set_a, chiral_set_b, sq_cutoff,
+            h_pairs_by_parent,
+            heavy_core,
+            mol_a,
+            mol_b,
+            conf_a,
+            conf_b,
+            removed_h_a,
+            removed_h_b,
+            chiral_set_a,
+            chiral_set_b,
+            sq_cutoff,
         )
 
     # --- Build and return augmented core ---
@@ -514,9 +522,17 @@ def _augment_core_with_hydrogens(
 
 
 def _repair_chiral_conflicts(
-    h_pairs_by_parent, heavy_core, mol_a, mol_b,
-    conf_a, conf_b, removed_h_a, removed_h_b,
-    chiral_set_a, chiral_set_b, sq_cutoff,
+    h_pairs_by_parent,
+    heavy_core,
+    mol_a,
+    mol_b,
+    conf_a,
+    conf_b,
+    removed_h_a,
+    removed_h_b,
+    chiral_set_a,
+    chiral_set_b,
+    sq_cutoff,
 ):
     """Detect and repair chiral conflicts caused by H assignments, in-place.
 
@@ -556,9 +572,16 @@ def _repair_chiral_conflicts(
         k = len(h_pairs_by_parent[(a_i, b_j)])
 
         best = _find_chiral_valid_h_assignment(
-            h_a, h_b, k, conf_a, conf_b, sq_cutoff,
-            mapping, h_pairs_by_parent[(a_i, b_j)],
-            _center_has_chiral_conflict, a_i,
+            h_a,
+            h_b,
+            k,
+            conf_a,
+            conf_b,
+            sq_cutoff,
+            mapping,
+            h_pairs_by_parent[(a_i, b_j)],
+            _center_has_chiral_conflict,
+            a_i,
         )
 
         if best is not None:
@@ -580,7 +603,9 @@ def _repair_chiral_conflicts(
                 del h_pairs_by_parent[(a_i, b_j)]
 
 
-def _build_priority_idxs(mol_a, mol_b, conf_a, conf_b, initial_mapping, ring_cutoff, chain_cutoff, ring_matches_ring_only):
+def _build_priority_idxs(
+    mol_a, mol_b, conf_a, conf_b, initial_mapping, ring_cutoff, chain_cutoff, ring_matches_ring_only
+):
     """Build distance-sorted, cutoff-filtered candidate lists for each atom in mol_a.
 
     For atoms covered by ``initial_mapping``, the candidate list is the single
@@ -720,8 +745,7 @@ def _score_and_sort_cores(cores, mol_a, mol_b, conf_a, conf_b):
         valence_mismatches.append(v_count)
 
         cb_counts.append(
-            core_bonds_broken_count(mol_a, mol_b, core)
-            + core_bonds_broken_count(mol_b, mol_a, core[:, [1, 0]])
+            core_bonds_broken_count(mol_a, mol_b, core) + core_bonds_broken_count(mol_b, mol_a, core[:, [1, 0]])
         )
 
     sort_vals = np.array(
@@ -809,37 +833,65 @@ def _get_cores_impl(
     # --- Edge case: single heavy atom (e.g. methane) ---
     if n_a == 1:
         return _handle_single_atom_core(
-            perm, conf_a, conf_b, new_to_old_a, new_to_old_b,
-            swapped_heavy, heavy_matches_heavy_only,
-            mol_a_full, mol_b_full, conf_a_full, conf_b_full,
-            removed_h_a, removed_h_b, enforce_chiral, chain_cutoff,
+            perm,
+            conf_a,
+            conf_b,
+            new_to_old_a,
+            new_to_old_b,
+            swapped_heavy,
+            heavy_matches_heavy_only,
+            mol_a_full,
+            mol_b_full,
+            conf_a_full,
+            conf_b_full,
+            removed_h_a,
+            removed_h_b,
+            enforce_chiral,
+            chain_cutoff,
         )
 
     # --- Build candidate lists and filters ---
     priority_idxs = _build_priority_idxs(
-        mol_a_heavy, mol_b_heavy, conf_a, conf_b,
-        heavy_initial_mapping, ring_cutoff, chain_cutoff, ring_matches_ring_only,
+        mol_a_heavy,
+        mol_b_heavy,
+        conf_a,
+        conf_b,
+        heavy_initial_mapping,
+        ring_cutoff,
+        chain_cutoff,
+        ring_matches_ring_only,
     )
     filter_fxn = _build_mcs_filter(
-        mol_a_heavy, mol_b_heavy, conf_a, conf_b,
-        enforce_chiral, disallow_planar_torsion_flips,
+        mol_a_heavy,
+        mol_b_heavy,
+        conf_a,
+        conf_b,
+        enforce_chiral,
+        disallow_planar_torsion_flips,
     )
 
     # --- Run MCS ---
     all_cores, _, mcs_diagnostics = mcgregor.mcs(
-        n_a, n_b, priority_idxs,
-        get_romol_bonds(mol_a_heavy), get_romol_bonds(mol_b_heavy),
-        max_visits, max_cores, enforce_core_core,
-        max_connected_components, min_connected_component_size,
-        min_threshold, heavy_initial_mapping, filter_fxn,
+        n_a,
+        n_b,
+        priority_idxs,
+        get_romol_bonds(mol_a_heavy),
+        get_romol_bonds(mol_b_heavy),
+        max_visits,
+        max_cores,
+        enforce_core_core,
+        max_connected_components,
+        min_connected_component_size,
+        min_threshold,
+        heavy_initial_mapping,
+        filter_fxn,
     )
     all_cores = remove_cores_smaller_than_largest(all_cores)
     all_cores = _deduplicate_all_cores(all_cores)
 
     # --- Translate cores back to original indices ---
     augmented_cores = [
-        _translate_core_to_original_indices(core, perm, new_to_old_a, new_to_old_b, swapped_heavy)
-        for core in all_cores
+        _translate_core_to_original_indices(core, perm, new_to_old_a, new_to_old_b, swapped_heavy) for core in all_cores
     ]
 
     # Restore canonical mol_a_full / mol_b_full references after potential swap
@@ -858,9 +910,13 @@ def _get_cores_impl(
 
         augmented_cores = [
             _augment_core_with_hydrogens(
-                mol_a_full, mol_b_full, core,
-                conf_a_full, conf_b_full,
-                removed_h_a, removed_h_b,
+                mol_a_full,
+                mol_b_full,
+                core,
+                conf_a_full,
+                conf_b_full,
+                removed_h_a,
+                removed_h_b,
                 chiral_set_a=chiral_set_a_full,
                 chiral_set_b=chiral_set_b_full,
                 enforce_chiral=enforce_chiral,
@@ -876,10 +932,21 @@ def _get_cores_impl(
 
 
 def _handle_single_atom_core(
-    perm, conf_a, conf_b, new_to_old_a, new_to_old_b,
-    swapped, heavy_matches_heavy_only,
-    mol_a_full, mol_b_full, conf_a_full, conf_b_full,
-    removed_h_a, removed_h_b, enforce_chiral, chain_cutoff,
+    perm,
+    conf_a,
+    conf_b,
+    new_to_old_a,
+    new_to_old_b,
+    swapped,
+    heavy_matches_heavy_only,
+    mol_a_full,
+    mol_b_full,
+    conf_a_full,
+    conf_b_full,
+    removed_h_a,
+    removed_h_b,
+    enforce_chiral,
+    chain_cutoff,
 ):
     """Handle the edge case where the smaller molecule has only 1 heavy atom.
 
@@ -889,9 +956,7 @@ def _handle_single_atom_core(
     dists = np.linalg.norm(conf_b - conf_a[0], axis=1)
     best_b = int(np.argmin(dists))
     orig_a = int(perm[0])
-    heavy_core = np.array([[orig_a, best_b]])
-
-    orig_core = np.array([[new_to_old_a[int(orig_a)], new_to_old_b[best_b]]])
+    orig_core = np.array([[new_to_old_a[orig_a], new_to_old_b[best_b]]])
     if swapped:
         orig_core = orig_core[:, ::-1]
         mol_a_full, mol_b_full = mol_b_full, mol_a_full
@@ -906,9 +971,13 @@ def _handle_single_atom_core(
             chiral_set_b_full = ChiralRestrIdxSet.from_mol(mol_b_full, conf_b_full)
 
         augmented = _augment_core_with_hydrogens(
-            mol_a_full, mol_b_full, orig_core,
-            conf_a_full, conf_b_full,
-            removed_h_a, removed_h_b,
+            mol_a_full,
+            mol_b_full,
+            orig_core,
+            conf_a_full,
+            conf_b_full,
+            removed_h_a,
+            removed_h_b,
             chiral_set_a=chiral_set_a_full,
             chiral_set_b=chiral_set_b_full,
             enforce_chiral=enforce_chiral,
