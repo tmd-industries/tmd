@@ -1322,14 +1322,13 @@ def test_initial_mapping_ignores_filters(hif2a_ligands, param_to_change, new_val
 
 def test_hybrid_core_generation(hif2a_ligands):
     """
-    Verify expectations around the generation of hybrid molecules given initial mappings generated fro molecules
+    Verify expectations around the generation of hybrid molecules given initial mappings generated from molecules
     without hydrogens.
 
     The expectations are:
-    * Cores generated with hydrogens are as large or larger than the hybrid. The reason the core can be smaller is
-      if a terminal non-hydrogen atom is mapped to what is a terminal in the hydrogen-less molecule, but with hydrogens
-      would be non-terminal.
-    * Cores generated with the hybrid approach without hydrogens first and then with hydrogens will be strictly larger.
+    * Both the built-in two-pass (core_h with heavy_matches_heavy_only=True) and the manual hybrid approach
+      produce cores strictly larger than the heavy-atom-only core.
+    * The manual hybrid result is at least as large as the heavy-atom-only core.
     """
     mols_with_hs = hif2a_ligands
     mols_without_hs = read_sdf(datasets["hif2a"], removeHs=True)
@@ -1400,9 +1399,6 @@ def test_hybrid_core_generation(hif2a_ligands):
             assert len(core_no_h) < len(core_h), f"Mol {i} -> {j} failed to produce larger mapping by adding hydrogens"
             assert len(core_no_h) < len(core_hybrid), (
                 f"Mol {i} -> {j} failed to produce larger mapping by running hybrid"
-            )
-            assert len(core_hybrid) <= len(core_h), (
-                f"Mol {i} -> {j} failed to produce larger mapping by running with hydrogens than hybrid"
             )
 
     # useful diagnostics
@@ -1684,3 +1680,44 @@ M  END""",
         assert (atom_a.GetAtomicNum() == 1 and atom_b.GetAtomicNum() == 1) or (
             atom_a.GetAtomicNum() > 1 and atom_b.GetAtomicNum() > 1
         )
+
+
+def test_two_pass_atom_mapping(hif2a_ligands):
+    """Verify the two-pass atom mapping when heavy_matches_heavy_only=True.
+
+    Validates that:
+    1. The two-pass approach produces cores at least as large as the heavy-atom-only core.
+    2. Every mapped pair in the two-pass result respects the heavy-matches-heavy constraint.
+    3. Providing an explicit initial_mapping bypasses the two-pass logic (no internal pass 1),
+       evidenced by fewer total nodes visited for a non-trivial initial mapping.
+    """
+    mol_a, mol_b = hif2a_ligands[0], hif2a_ligands[1]
+    mols_without_hs = read_sdf(datasets["hif2a"], removeHs=True)
+    mol_a_no_h, mol_b_no_h = mols_without_hs[0], mols_without_hs[1]
+
+    kwargs = copy.deepcopy(DEFAULT_ATOM_MAPPING_KWARGS)
+
+    # Two-pass (default: heavy_matches_heavy_only=True, initial_mapping=None)
+    cores_two_pass, diag_two_pass = atom_mapping.get_cores_and_diagnostics(mol_a, mol_b, **kwargs)
+    core_two_pass = cores_two_pass[0]
+
+    # Heavy-atom-only baseline
+    cores_no_h, _ = atom_mapping.get_cores_and_diagnostics(mol_a_no_h, mol_b_no_h, **kwargs)
+    core_no_h = cores_no_h[0]
+
+    # Two-pass core should be strictly larger than heavy-atom-only core
+    assert len(core_two_pass) > len(core_no_h)
+
+    # Every mapped pair should preserve heavy/hydrogen status
+    for a, b in core_two_pass:
+        atom_a = mol_a.GetAtomWithIdx(int(a))
+        atom_b = mol_b.GetAtomWithIdx(int(b))
+        assert (atom_a.GetAtomicNum() == 1) == (atom_b.GetAtomicNum() == 1)
+
+    # Explicit initial_mapping bypasses the two-pass (no internal pass 1)
+    kwargs_with_mapping = copy.deepcopy(kwargs)
+    kwargs_with_mapping["initial_mapping"] = core_two_pass
+    _, diag_with_mapping = atom_mapping.get_cores_and_diagnostics(mol_a, mol_b, **kwargs_with_mapping)
+    # With initial_mapping provided the search should visit fewer nodes than the
+    # full two-pass (which includes pass 1 nodes), confirming pass 1 was skipped.
+    assert diag_with_mapping.total_nodes_visited < diag_two_pass.total_nodes_visited

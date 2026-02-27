@@ -269,6 +269,26 @@ def core_bonds_broken_count(mol_a, mol_b, core):
     return count
 
 
+def _remove_hs_with_map(mol):
+    """Remove all hydrogen atoms and return the new-to-old atom index mapping.
+
+    Returns
+    -------
+    mol_no_h : Chem.Mol
+        Molecule with all hydrogen atoms removed, conformer preserved.
+    new_to_old : dict[int, int]
+        Mapping from atom indices in ``mol_no_h`` to atom indices in ``mol``.
+    """
+    mol_no_h = Chem.RemoveAllHs(mol)
+    new_to_old = {}
+    new_idx = 0
+    for old_idx in range(mol.GetNumAtoms()):
+        if mol.GetAtomWithIdx(old_idx).GetAtomicNum() != 1:
+            new_to_old[new_idx] = old_idx
+            new_idx += 1
+    return mol_no_h, new_to_old
+
+
 def _get_cores_impl(
     mol_a,
     mol_b,
@@ -288,6 +308,76 @@ def _get_cores_impl(
 ) -> tuple[list[NDArray], mcgregor.MCSDiagnostics]:
     if initial_mapping is None:
         initial_mapping = np.zeros((0, 2))
+
+    # Two-pass optimization: when heavy_matches_heavy_only is True and no initial
+    # mapping is provided, first find the best heavy-atom-only core on hydrogen-
+    # stripped molecules, then reuse it as initial_mapping for the full search.
+    if heavy_matches_heavy_only and len(initial_mapping) == 0:
+        mol_a_no_h, ntom_a = _remove_hs_with_map(mol_a)
+        mol_b_no_h, ntom_b = _remove_hs_with_map(mol_b)
+        print("START INITIAL")
+
+        # Use relaxed component-size and threshold constraints for pass 1:
+        # the H-stripped graph has different component sizes and edge counts
+        # than the full graph, so the caller's values would over-filter.
+        heavy_cores, pass1_diagnostics = get_cores_and_diagnostics(
+            mol_a_no_h,
+            mol_b_no_h,
+            ring_cutoff=ring_cutoff,
+            chain_cutoff=chain_cutoff,
+            max_visits=max_visits,
+            max_connected_components=max_connected_components,
+            min_connected_component_size=min_connected_component_size,
+            max_cores=1,
+            enforce_core_core=enforce_core_core,
+            ring_matches_ring_only=ring_matches_ring_only,
+            heavy_matches_heavy_only=False,
+            enforce_chiral=enforce_chiral,
+            disallow_planar_torsion_flips=disallow_planar_torsion_flips,
+            min_threshold=0,
+            initial_mapping=None,
+        )
+        print("FINISH INITIAL")
+
+        best_heavy_core = heavy_cores[0]
+        heavy_initial_mapping = np.array(
+            [[ntom_a[int(a)], ntom_b[int(b)]] for a, b in best_heavy_core],
+            dtype=np.intp,
+        )
+
+        # Attempt pass 2 with the heavy-atom core as initial_mapping.
+        # If it fails (e.g. the initial_mapping is incompatible with strict
+        # connected-component constraints), fall through to single-pass.
+        print("START FINAL with initial of size", heavy_initial_mapping.shape)
+        try:
+            pass2_cores, pass2_diagnostics = get_cores_and_diagnostics(
+                mol_a,
+                mol_b,
+                ring_cutoff=ring_cutoff,
+                chain_cutoff=chain_cutoff,
+                max_visits=max_visits,
+                max_connected_components=max_connected_components,
+                min_connected_component_size=min_connected_component_size,
+                max_cores=max_cores,
+                enforce_core_core=enforce_core_core,
+                ring_matches_ring_only=ring_matches_ring_only,
+                heavy_matches_heavy_only=heavy_matches_heavy_only,
+                enforce_chiral=enforce_chiral,
+                disallow_planar_torsion_flips=disallow_planar_torsion_flips,
+                min_threshold=min_threshold,
+                initial_mapping=heavy_initial_mapping,
+            )
+            combined_diagnostics = mcgregor.MCSDiagnostics(
+                total_nodes_visited=pass1_diagnostics.total_nodes_visited + pass2_diagnostics.total_nodes_visited,
+                total_leaves_visited=pass1_diagnostics.total_leaves_visited + pass2_diagnostics.total_leaves_visited,
+                core_size=pass2_diagnostics.core_size,
+                num_cores=pass2_diagnostics.num_cores,
+            )
+            print("FINISHED FINAL")
+            return pass2_cores, combined_diagnostics
+        except mcgregor.NoMappingError:
+            print("FINAL FAILED, fall through")
+            pass  # fall through to single-pass
 
     mol_a, perm, initial_mapping = reorder_atoms_by_degree_and_initial_mapping(mol_a, initial_mapping)
 
