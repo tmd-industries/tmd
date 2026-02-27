@@ -397,7 +397,10 @@ def _augment_core_with_hydrogens(
         Augmented core including hydrogen mappings, shape (K + M, 2).
     """
     # Phase 1: Hungarian assignment per parent pair
+    # Apply chain_cutoff early: set beyond-cutoff entries to inf so
+    # Hungarian assignment never selects them, then keep only finite-cost pairs.
     h_pairs_by_parent = {}  # (a_i, b_j) -> list of [ha, hb] pairs
+    sq_cutoff = chain_cutoff * chain_cutoff if chain_cutoff is not None else None
 
     for a_i, b_j in heavy_core:
         a_i, b_j = int(a_i), int(b_j)
@@ -407,15 +410,32 @@ def _augment_core_with_hydrogens(
         if len(h_neighbors_a) == 0 or len(h_neighbors_b) == 0:
             continue
 
-        # Build squared-distance cost matrix
+        # Build squared-distance cost matrix; entries beyond cutoff are set to inf
         cost = np.zeros((len(h_neighbors_a), len(h_neighbors_b)))
         for ii, ha in enumerate(h_neighbors_a):
             for jj, hb in enumerate(h_neighbors_b):
                 diff = conf_a[ha] - conf_b[hb]
-                cost[ii, jj] = np.dot(diff, diff)
+                d2 = np.dot(diff, diff)
+                if sq_cutoff is not None and d2 >= sq_cutoff:
+                    cost[ii, jj] = np.inf
+                else:
+                    cost[ii, jj] = d2
 
-        row_ind, col_ind = linear_sum_assignment(cost)
-        h_pairs_by_parent[(a_i, b_j)] = [[h_neighbors_a[r], h_neighbors_b[c]] for r, c in zip(row_ind, col_ind)]
+        # Skip if no finite entries (all pairs beyond cutoff)
+        if not np.any(np.isfinite(cost)):
+            continue
+
+        # Replace inf with a large finite sentinel so linear_sum_assignment
+        # never raises "infeasible". Sentinel-assigned pairs are filtered out.
+        max_finite = np.nanmax(cost[np.isfinite(cost)])
+        sentinel = max_finite * 1e6 + 1e6
+        solvable_cost = np.where(np.isfinite(cost), cost, sentinel)
+
+        row_ind, col_ind = linear_sum_assignment(solvable_cost)
+        # Only keep pairs whose original cost was within cutoff (finite)
+        pairs = [[h_neighbors_a[r], h_neighbors_b[c]] for r, c in zip(row_ind, col_ind) if np.isfinite(cost[r, c])]
+        if pairs:
+            h_pairs_by_parent[(a_i, b_j)] = pairs
 
     # Phase 2: Chiral conflict detection and per-parent repair
     #
@@ -460,8 +480,6 @@ def _augment_core_with_hydrogens(
                 h_neighbors_b = _get_removable_h_neighbors(mol_b, b_j, removed_h_b)
                 k = len(h_pairs_by_parent[(a_i, b_j)])
 
-                sq_cut = chain_cutoff * chain_cutoff if chain_cutoff is not None else None
-
                 best_pairs = None
                 best_n_surviving = -1
                 best_cost = float("inf")
@@ -471,12 +489,12 @@ def _augment_core_with_hydrogens(
                     for perm_b in permutations(h_neighbors_b, k):
                         trial_pairs = [[ha, hb] for ha, hb in zip(combo_a, perm_b)]
 
-                        # Apply cutoff to get the surviving subset
-                        if sq_cut is not None:
+                        # Only keep pairs within cutoff
+                        if sq_cutoff is not None:
                             surviving = [
                                 p
                                 for p in trial_pairs
-                                if np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) < sq_cut
+                                if np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) < sq_cutoff
                             ]
                         else:
                             surviving = trial_pairs
@@ -499,7 +517,7 @@ def _augment_core_with_hydrogens(
                             if n_surv > best_n_surviving or (n_surv == best_n_surviving and cost < best_cost):
                                 best_n_surviving = n_surv
                                 best_cost = cost
-                                best_pairs = trial_pairs
+                                best_pairs = surviving
 
                 if best_pairs is not None:
                     h_pairs_by_parent[(a_i, b_j)] = best_pairs
@@ -511,64 +529,6 @@ def _augment_core_with_hydrogens(
                     for ha, _ in h_pairs_by_parent[(a_i, b_j)]:
                         mapping.pop(ha, None)
                     del h_pairs_by_parent[(a_i, b_j)]
-
-    # Phase 3: Apply chain cutoff to drop H pairs that are too far apart.
-    # When a parent loses pairs to the cutoff, try alternative assignments
-    # that may keep more pairs within the cutoff.
-    if chain_cutoff is not None:
-        sq_cutoff = chain_cutoff * chain_cutoff
-        for key in list(h_pairs_by_parent.keys()):
-            a_i, b_j = key
-            original_k = len(h_pairs_by_parent[key])
-            surviving = [
-                p
-                for p in h_pairs_by_parent[key]
-                if np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) < sq_cutoff
-            ]
-
-            if len(surviving) < original_k:
-                # Some pairs were dropped — try alternative assignments
-                h_neighbors_a = _get_removable_h_neighbors(mol_a, a_i, removed_h_a)
-                h_neighbors_b = _get_removable_h_neighbors(mol_b, b_j, removed_h_b)
-
-                best_pairs = surviving  # current survivors are the baseline
-                best_n = len(surviving)
-                best_cost = (
-                    sum(np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) for p in surviving)
-                    if surviving
-                    else 0.0
-                )
-
-                for combo_a in combinations(h_neighbors_a, original_k):
-                    for perm_b in permutations(h_neighbors_b, original_k):
-                        trial = [[ha, hb] for ha, hb in zip(combo_a, perm_b)]
-                        trial_surviving = [
-                            p
-                            for p in trial
-                            if np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) < sq_cutoff
-                        ]
-                        n = len(trial_surviving)
-                        cost = (
-                            sum(
-                                np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]])
-                                for p in trial_surviving
-                            )
-                            if trial_surviving
-                            else 0.0
-                        )
-                        if n > best_n or (n == best_n and cost < best_cost):
-                            best_n = n
-                            best_cost = cost
-                            best_pairs = trial_surviving
-
-                if best_pairs:
-                    h_pairs_by_parent[key] = best_pairs
-                else:
-                    del h_pairs_by_parent[key]
-            else:
-                h_pairs_by_parent[key] = surviving
-                if not surviving:
-                    del h_pairs_by_parent[key]
 
     if enforce_chiral:
         # Final safety net: re-check and remove any remaining conflicts
