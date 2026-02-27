@@ -348,6 +348,92 @@ def _get_removable_h_neighbors(mol, atom_idx, removed_h_set):
     return [nb.GetIdx() for nb in mol.GetAtomWithIdx(atom_idx).GetNeighbors() if nb.GetIdx() in removed_h_set]
 
 
+def _h_squared_distance(conf_a, conf_b, ha, hb):
+    """Squared Euclidean distance between two hydrogen positions."""
+    diff = conf_a[ha] - conf_b[hb]
+    return np.dot(diff, diff)
+
+
+def _assign_h_pairs_hungarian(h_neighbors_a, h_neighbors_b, conf_a, conf_b, sq_cutoff):
+    """Use Hungarian algorithm to optimally match H neighbors, respecting a distance cutoff.
+
+    Beyond-cutoff entries are replaced with a large sentinel so that
+    ``linear_sum_assignment`` remains feasible.  Sentinel-assigned pairs
+    are filtered out of the result.
+
+    Returns
+    -------
+    list[list[int, int]]
+        Matched ``[ha, hb]`` pairs within cutoff, or empty list.
+    """
+    n_a, n_b = len(h_neighbors_a), len(h_neighbors_b)
+    cost = np.zeros((n_a, n_b))
+    for ii, ha in enumerate(h_neighbors_a):
+        for jj, hb in enumerate(h_neighbors_b):
+            d2 = _h_squared_distance(conf_a, conf_b, ha, hb)
+            cost[ii, jj] = np.inf if (sq_cutoff is not None and d2 >= sq_cutoff) else d2
+
+    if not np.any(np.isfinite(cost)):
+        return []
+
+    # Replace inf with a large finite sentinel so scipy doesn't reject the matrix.
+    max_finite = np.nanmax(cost[np.isfinite(cost)])
+    sentinel = max_finite * 1e6 + 1e6
+    solvable_cost = np.where(np.isfinite(cost), cost, sentinel)
+
+    row_ind, col_ind = linear_sum_assignment(solvable_cost)
+    return [[h_neighbors_a[r], h_neighbors_b[c]] for r, c in zip(row_ind, col_ind) if np.isfinite(cost[r, c])]
+
+
+def _find_chiral_valid_h_assignment(
+    h_neighbors_a,
+    h_neighbors_b,
+    k,
+    conf_a,
+    conf_b,
+    sq_cutoff,
+    mapping,
+    current_pairs,
+    center_has_conflict_fn,
+    center_a,
+):
+    """Search all k-permutations of H neighbors for one that avoids a chiral conflict.
+
+    Tries all k-subsets of A-side Hs crossed with all k-permutations of
+    B-side Hs.  Returns the assignment that maximises surviving (within-cutoff)
+    pairs with lowest cost, or ``None`` if no valid permutation exists.
+    """
+    best_pairs = None
+    best_n = -1
+    best_cost = float("inf")
+
+    for combo_a in combinations(h_neighbors_a, k):
+        for perm_b in permutations(h_neighbors_b, k):
+            trial_pairs = [[ha, hb] for ha, hb in zip(combo_a, perm_b)]
+
+            if sq_cutoff is not None:
+                surviving = [p for p in trial_pairs if _h_squared_distance(conf_a, conf_b, p[0], p[1]) < sq_cutoff]
+            else:
+                surviving = trial_pairs
+
+            # Build trial mapping: remove old pairs, add surviving ones
+            trial_mapping = dict(mapping)
+            for old_ha, _ in current_pairs:
+                trial_mapping.pop(old_ha, None)
+            for ha, hb in surviving:
+                trial_mapping[ha] = hb
+
+            if not center_has_conflict_fn(trial_mapping, center_a):
+                n = len(surviving)
+                cost = sum(_h_squared_distance(conf_a, conf_b, ha, hb) for ha, hb in surviving) if surviving else 0.0
+                if n > best_n or (n == best_n and cost < best_cost):
+                    best_n = n
+                    best_cost = cost
+                    best_pairs = surviving
+
+    return best_pairs
+
+
 def _augment_core_with_hydrogens(
     mol_a,
     mol_b,
@@ -366,6 +452,8 @@ def _augment_core_with_hydrogens(
     For each mapped heavy-atom pair (a_i, b_j), finds hydrogen neighbors of a_i
     that were removed and hydrogen neighbors of b_j that were removed, then uses
     the Hungarian algorithm on squared distances to optimally match them.
+    The ``chain_cutoff`` is enforced during the Hungarian assignment itself
+    so that beyond-cutoff pairs are never selected.
 
     When ``enforce_chiral`` is True and full-molecule chiral sets are provided,
     the augmentation checks for chiral conflicts introduced by the H assignments.
@@ -389,162 +477,107 @@ def _augment_core_with_hydrogens(
         would introduce chiral conflicts.
     chain_cutoff : float or None
         Maximum distance (in nm) for an H pair to be included.  Pairs
-        whose Euclidean distance exceeds this value are dropped.
+        whose Euclidean distance exceeds this value are never assigned.
 
     Returns
     -------
     NDArray
         Augmented core including hydrogen mappings, shape (K + M, 2).
     """
-    # Phase 1: Hungarian assignment per parent pair
-    # Apply chain_cutoff early: set beyond-cutoff entries to inf so
-    # Hungarian assignment never selects them, then keep only finite-cost pairs.
-    h_pairs_by_parent = {}  # (a_i, b_j) -> list of [ha, hb] pairs
     sq_cutoff = chain_cutoff * chain_cutoff if chain_cutoff is not None else None
 
+    # --- Phase 1: Hungarian assignment per parent pair (cutoff-aware) ---
+    h_pairs_by_parent = {}  # (a_i, b_j) -> list of [ha, hb] pairs
     for a_i, b_j in heavy_core:
         a_i, b_j = int(a_i), int(b_j)
-        h_neighbors_a = _get_removable_h_neighbors(mol_a, a_i, removed_h_a)
-        h_neighbors_b = _get_removable_h_neighbors(mol_b, b_j, removed_h_b)
-
-        if len(h_neighbors_a) == 0 or len(h_neighbors_b) == 0:
+        h_a = _get_removable_h_neighbors(mol_a, a_i, removed_h_a)
+        h_b = _get_removable_h_neighbors(mol_b, b_j, removed_h_b)
+        if not h_a or not h_b:
             continue
-
-        # Build squared-distance cost matrix; entries beyond cutoff are set to inf
-        cost = np.zeros((len(h_neighbors_a), len(h_neighbors_b)))
-        for ii, ha in enumerate(h_neighbors_a):
-            for jj, hb in enumerate(h_neighbors_b):
-                diff = conf_a[ha] - conf_b[hb]
-                d2 = np.dot(diff, diff)
-                if sq_cutoff is not None and d2 >= sq_cutoff:
-                    cost[ii, jj] = np.inf
-                else:
-                    cost[ii, jj] = d2
-
-        # Skip if no finite entries (all pairs beyond cutoff)
-        if not np.any(np.isfinite(cost)):
-            continue
-
-        # Replace inf with a large finite sentinel so linear_sum_assignment
-        # never raises "infeasible". Sentinel-assigned pairs are filtered out.
-        max_finite = np.nanmax(cost[np.isfinite(cost)])
-        sentinel = max_finite * 1e6 + 1e6
-        solvable_cost = np.where(np.isfinite(cost), cost, sentinel)
-
-        row_ind, col_ind = linear_sum_assignment(solvable_cost)
-        # Only keep pairs whose original cost was within cutoff (finite)
-        pairs = [[h_neighbors_a[r], h_neighbors_b[c]] for r, c in zip(row_ind, col_ind) if np.isfinite(cost[r, c])]
+        pairs = _assign_h_pairs_hungarian(h_a, h_b, conf_a, conf_b, sq_cutoff)
         if pairs:
             h_pairs_by_parent[(a_i, b_j)] = pairs
 
-    # Phase 2: Chiral conflict detection and per-parent repair
-    #
-    # Mirrors how ``has_chiral_atom_flips`` works: build a mapping from the
-    # augmented core, iterate over ``chiral_set_a.restr_idxs``, and call
-    # ``chiral_set_b.disallows`` on the mapped tuple.  When a conflict is
-    # detected at a parent center, all k-permutations of the available
-    # b-side Hs are tried (picking the lowest-cost valid one), falling
-    # back to removing the H pairs entirely if no permutation resolves the
-    # conflict.
+    # --- Phase 2: Repair chiral conflicts introduced by H assignments ---
     if enforce_chiral and chiral_set_a is not None and chiral_set_b is not None:
+        _repair_chiral_conflicts(
+            h_pairs_by_parent, heavy_core, mol_a, mol_b,
+            conf_a, conf_b, removed_h_a, removed_h_b,
+            chiral_set_a, chiral_set_b, sq_cutoff,
+        )
 
-        def _center_has_chiral_conflict(mapping_a_to_b, center_a):
-            """Check for a chiral flip at ``center_a``, following the same
-            pattern as ``has_chiral_atom_flips``."""
-            for c_a, i_a, j_a, k_a in chiral_set_a.restr_idxs:
-                if c_a != center_a:
-                    continue
-                c_b = mapping_a_to_b.get(c_a)
-                i_b = mapping_a_to_b.get(i_a)
-                j_b = mapping_a_to_b.get(j_a)
-                k_b = mapping_a_to_b.get(k_a)
-                if c_b is None or i_b is None or j_b is None or k_b is None:
-                    continue
-                if chiral_set_b.disallows((c_b, i_b, j_b, k_b)):
-                    return True
-            return False
-
-        # Build mapping from the current augmented core
-        all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
-        if all_h:
-            augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
-            mapping = {int(a): int(b) for a, b in augmented}
-
-            # Identify parent pairs whose center has a chiral conflict
-            conflicting_parents = [
-                (a_i, b_j) for (a_i, b_j) in h_pairs_by_parent if _center_has_chiral_conflict(mapping, a_i)
-            ]
-
-            for a_i, b_j in conflicting_parents:
-                h_neighbors_a = _get_removable_h_neighbors(mol_a, a_i, removed_h_a)
-                h_neighbors_b = _get_removable_h_neighbors(mol_b, b_j, removed_h_b)
-                k = len(h_pairs_by_parent[(a_i, b_j)])
-
-                best_pairs = None
-                best_n_surviving = -1
-                best_cost = float("inf")
-
-                # Try all k-subsets of A-side Hs x all k-permutations of B-side Hs
-                for combo_a in combinations(h_neighbors_a, k):
-                    for perm_b in permutations(h_neighbors_b, k):
-                        trial_pairs = [[ha, hb] for ha, hb in zip(combo_a, perm_b)]
-
-                        # Only keep pairs within cutoff
-                        if sq_cutoff is not None:
-                            surviving = [
-                                p
-                                for p in trial_pairs
-                                if np.dot(conf_a[p[0]] - conf_b[p[1]], conf_a[p[0]] - conf_b[p[1]]) < sq_cutoff
-                            ]
-                        else:
-                            surviving = trial_pairs
-
-                        # Build trial mapping with only surviving pairs
-                        trial_mapping = dict(mapping)
-                        for old_ha, _ in h_pairs_by_parent[(a_i, b_j)]:
-                            trial_mapping.pop(old_ha, None)
-                        for ha, hb in surviving:
-                            trial_mapping[ha] = hb
-
-                        if not _center_has_chiral_conflict(trial_mapping, a_i):
-                            n_surv = len(surviving)
-                            cost = (
-                                sum(np.dot(conf_a[ha] - conf_b[hb], conf_a[ha] - conf_b[hb]) for ha, hb in surviving)
-                                if surviving
-                                else 0.0
-                            )
-                            # Prefer more surviving pairs; tie-break by lower cost
-                            if n_surv > best_n_surviving or (n_surv == best_n_surviving and cost < best_cost):
-                                best_n_surviving = n_surv
-                                best_cost = cost
-                                best_pairs = surviving
-
-                if best_pairs is not None:
-                    h_pairs_by_parent[(a_i, b_j)] = best_pairs
-                    # Update mapping for subsequent parents
-                    for ha, hb in best_pairs:
-                        mapping[ha] = hb
-                else:
-                    # No valid permutation — remove H pairs for this parent
-                    for ha, _ in h_pairs_by_parent[(a_i, b_j)]:
-                        mapping.pop(ha, None)
-                    del h_pairs_by_parent[(a_i, b_j)]
-
-    if enforce_chiral:
-        # Final safety net: re-check and remove any remaining conflicts
-        all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
-        if all_h:
-            augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
-            mapping = {int(a): int(b) for a, b in augmented}
-            for a_i, b_j in list(h_pairs_by_parent.keys()):
-                if _center_has_chiral_conflict(mapping, a_i):
-                    del h_pairs_by_parent[(a_i, b_j)]
-
-    # Phase 4: Build final augmented core
+    # --- Build and return augmented core ---
     all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
     if all_h:
         return np.concatenate([heavy_core, np.array(all_h)], axis=0)
     return heavy_core
+
+
+def _repair_chiral_conflicts(
+    h_pairs_by_parent, heavy_core, mol_a, mol_b,
+    conf_a, conf_b, removed_h_a, removed_h_b,
+    chiral_set_a, chiral_set_b, sq_cutoff,
+):
+    """Detect and repair chiral conflicts caused by H assignments, in-place.
+
+    For each parent center with a conflict, tries all permutations of H
+    neighbors to find a valid assignment.  Falls back to removing the H
+    pairs entirely if no permutation resolves the conflict.
+    """
+
+    def _center_has_chiral_conflict(mapping_a_to_b, center_a):
+        for c_a, i_a, j_a, k_a in chiral_set_a.restr_idxs:
+            if c_a != center_a:
+                continue
+            c_b = mapping_a_to_b.get(c_a)
+            i_b = mapping_a_to_b.get(i_a)
+            j_b = mapping_a_to_b.get(j_a)
+            k_b = mapping_a_to_b.get(k_a)
+            if c_b is None or i_b is None or j_b is None or k_b is None:
+                continue
+            if chiral_set_b.disallows((c_b, i_b, j_b, k_b)):
+                return True
+        return False
+
+    # Build mapping from the current augmented core
+    all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
+    if not all_h:
+        return
+
+    augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
+    mapping = {int(a): int(b) for a, b in augmented}
+
+    # Identify and repair conflicting parents
+    conflicting = [(a_i, b_j) for (a_i, b_j) in h_pairs_by_parent if _center_has_chiral_conflict(mapping, a_i)]
+
+    for a_i, b_j in conflicting:
+        h_a = _get_removable_h_neighbors(mol_a, a_i, removed_h_a)
+        h_b = _get_removable_h_neighbors(mol_b, b_j, removed_h_b)
+        k = len(h_pairs_by_parent[(a_i, b_j)])
+
+        best = _find_chiral_valid_h_assignment(
+            h_a, h_b, k, conf_a, conf_b, sq_cutoff,
+            mapping, h_pairs_by_parent[(a_i, b_j)],
+            _center_has_chiral_conflict, a_i,
+        )
+
+        if best is not None:
+            h_pairs_by_parent[(a_i, b_j)] = best
+            for ha, hb in best:
+                mapping[ha] = hb
+        else:
+            for ha, _ in h_pairs_by_parent[(a_i, b_j)]:
+                mapping.pop(ha, None)
+            del h_pairs_by_parent[(a_i, b_j)]
+
+    # Safety net: remove any remaining conflicts
+    all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
+    if all_h:
+        augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
+        mapping = {int(a): int(b) for a, b in augmented}
+        for a_i, b_j in list(h_pairs_by_parent.keys()):
+            if _center_has_chiral_conflict(mapping, a_i):
+                del h_pairs_by_parent[(a_i, b_j)]
 
 
 def _get_cores_impl(
