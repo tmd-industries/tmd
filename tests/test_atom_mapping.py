@@ -407,7 +407,7 @@ def test_all_pairs(dataset):
         for mol_b in mols[idx + 1 :]:
             mol_b_name = get_mol_name(mol_b)
             # print("Processing", mol_a_name, "->", mol_b_name)
-            start_time = time.time()
+            start_time = time.perf_counter()
             all_cores, diagnostics = atom_mapping.get_cores_and_diagnostics(
                 mol_a,
                 mol_b,
@@ -425,7 +425,7 @@ def test_all_pairs(dataset):
                 min_threshold=0,
                 initial_mapping=None,
             )
-            end_time = time.time()
+            end_time = time.perf_counter()
 
             # # useful for visualization
             # for core_idx, core in enumerate(all_cores[:1]):
@@ -438,7 +438,7 @@ def test_all_pairs(dataset):
             # note that this is probably the bottleneck for hif2a
             for core in all_cores:
                 # ensure more than half the atoms are mapped
-                assert len(core) > mol_a.GetNumAtoms() // 2
+                assert len(core) > mol_a.GetNumAtoms() // 2, f"{get_mol_name(mol_a)} -> {get_mol_name(mol_b)}"
 
             print(
                 f"{mol_a.GetProp('_Name')} -> {mol_b.GetProp('_Name')} has {len(all_cores)} cores of size {len(all_cores[0])} | total nodes visited: {diagnostics.total_nodes_visited} | wall clock time: {end_time - start_time:.3f}"
@@ -456,8 +456,24 @@ def test_all_pairs(dataset):
 
     with Path(ref_pickle_path).open("rb") as fp:
         ref_cores_by_pair = pickle.load(fp)
-
-    assert cores_by_pair == ref_cores_by_pair
+    assert set(cores_by_pair.keys()) == set(ref_cores_by_pair.keys())
+    mismatched_cores = []
+    for a, b in cores_by_pair.keys():
+        cores = cores_by_pair[(a, b)]
+        ref_cores = ref_cores_by_pair[(a, b)]
+        if cores != ref_cores:
+            mol_a = get_mol_by_name(mols, a)
+            mol_b = get_mol_by_name(mols, b)
+            for i, core in enumerate(cores):
+                res = plot_atom_mapping_grid(mol_a, mol_b, np.array(core), num_rotations=5)
+                with open(f"atom_mapping_{a}_to_{b}_final_core_{i}.svg", "w") as fh:
+                    fh.write(res)
+            for i, core in enumerate(ref_cores):
+                res = plot_atom_mapping_grid(mol_a, mol_b, np.array(core), num_rotations=5)
+                with open(f"atom_mapping_{a}_to_{b}_ref_core_{i}.svg", "w") as fh:
+                    fh.write(res)
+            mismatched_cores.append((a, b))
+    assert not mismatched_cores
 
 
 def get_mol_by_name(mols, name):
@@ -1684,3 +1700,115 @@ M  END""",
         assert (atom_a.GetAtomicNum() == 1 and atom_b.GetAtomicNum() == 1) or (
             atom_a.GetAtomicNum() > 1 and atom_b.GetAtomicNum() > 1
         )
+
+
+def test_hif2a_fragments_enforce_chiral_bug():
+    """In Hif2a transformation 237 -> 7a, there is a ring break that happens due to enforce_chiral=True
+    removing a carbon atom to create a larger core."""
+    mol_a = Chem.MolFromMolBlock(
+        """7a
+  RDKit          3D
+
+ 17 17  0  0  1  0  0  0  0  0999 V2000
+   26.1484   -0.8702   -9.7311 H   0  0  0  0  0  0  0  0  0  0  0  0
+   23.9217   -0.3878  -11.0946 H   0  0  0  0  0  0  0  0  0  0  0  0
+   27.8986    1.1686  -10.8159 O   0  0  0  0  0  0  0  0  0  0  0  0
+   27.3063    0.0821  -11.4967 C   0  0  2  0  0  0  0  0  0  0  0  0
+   26.7543    0.5309  -12.8435 C   0  0  0  0  0  0  0  0  0  0  0  0
+   25.2972    0.0902  -12.9073 C   0  0  1  0  0  0  0  0  0  0  0  0
+   24.9356   -0.2719  -11.4777 C   0  0  0  0  0  0  0  0  0  0  0  0
+   26.1058   -0.4336  -10.7289 C   0  0  0  0  0  0  0  0  0  0  0  0
+   24.4377    1.1669  -13.5390 C   0  0  0  0  0  0  0  0  0  0  0  0
+   28.6114    1.5312  -11.3627 H   0  0  0  0  0  0  0  0  0  0  0  0
+   28.0280   -0.7165  -11.6685 H   0  0  0  0  0  0  0  0  0  0  0  0
+   26.8240    1.6206  -12.9191 H   0  0  0  0  0  0  0  0  0  0  0  0
+   27.3250    0.1428  -13.6861 H   0  0  0  0  0  0  0  0  0  0  0  0
+   25.2257   -0.8173  -13.5111 H   0  0  0  0  0  0  0  0  0  0  0  0
+   23.4853    0.7664  -13.8251 H   0  0  0  0  0  0  0  0  0  0  0  0
+   24.8788    1.5661  -14.4435 H   0  0  0  0  0  0  0  0  0  0  0  0
+   24.2853    1.9768  -12.8310 H   0  0  0  0  0  0  0  0  0  0  0  0
+  3  4  1  0  0  0  0
+  3 10  1  0  0  0  0
+  4  5  1  0  0  0  0
+  4  8  1  0  0  0  0
+  4 11  1  0  0  0  0
+  5  6  1  0  0  0  0
+  5 12  1  0  0  0  0
+  5 13  1  0  0  0  0
+  6  7  1  0  0  0  0
+  6  9  1  0  0  0  0
+  6 14  1  0  0  0  0
+  2  7  1  0  0  0  0
+  7  8  2  0  0  0  0
+  1  8  1  0  0  0  0
+  9 15  1  0  0  0  0
+  9 16  1  0  0  0  0
+  9 17  1  0  0  0  0
+M  END""",
+        removeHs=False,
+    )
+    mol_b = Chem.MolFromMolBlock(
+        """237
+  RDKit          3D
+
+ 14 14  0  0  1  0  0  0  0  0999 V2000
+   23.6907   -0.4426  -11.0372 H   0  0  0  0  0  0  0  0  0  0  0  0
+   25.9443   -0.5139   -9.6482 H   0  0  0  0  0  0  0  0  0  0  0  0
+   27.8741   -0.4334  -11.8881 O   0  0  0  0  0  0  0  0  0  0  0  0
+   26.9533    0.5103  -11.4691 C   0  0  1  0  0  0  0  0  0  0  0  0
+   26.2123    1.1350  -12.6505 C   0  0  0  0  0  0  0  0  0  0  0  0
+   24.8814    0.4428  -12.7971 C   0  0  0  0  0  0  0  0  0  0  0  0
+   24.6562   -0.1013  -11.4106 C   0  0  0  0  0  0  0  0  0  0  0  0
+   25.8419   -0.1153  -10.6575 C   0  0  0  0  0  0  0  0  0  0  0  0
+   25.9408    2.3663  -12.2653 F   0  0  0  0  0  0  0  0  0  0  0  0
+   26.9134    1.1664  -13.7919 F   0  0  0  0  0  0  0  0  0  0  0  0
+   28.6720    0.0152  -12.1950 H   0  0  0  0  0  0  0  0  0  0  0  0
+   27.5009    1.2650  -10.9032 H   0  0  0  0  0  0  0  0  0  0  0  0
+   24.9483   -0.3583  -13.5290 H   0  0  0  0  0  0  0  0  0  0  0  0
+   24.0975    1.1265  -13.1204 H   0  0  0  0  0  0  0  0  0  0  0  0
+  3  4  1  0  0  0  0
+  3 11  1  0  0  0  0
+  4  5  1  0  0  0  0
+  4  8  1  0  0  0  0
+  4 12  1  0  0  0  0
+  5  6  1  0  0  0  0
+  5  9  1  0  0  0  0
+  5 10  1  0  0  0  0
+  6  7  1  0  0  0  0
+  6 13  1  0  0  0  0
+  6 14  1  0  0  0  0
+  1  7  1  0  0  0  0
+  7  8  2  0  0  0  0
+  2  8  1  0  0  0  0
+M  END
+$$$$
+""",
+        removeHs=False,
+    )
+
+    get_cores = partial(
+        atom_mapping.get_cores,
+        ring_cutoff=0.1,
+        chain_cutoff=0.2,
+        max_visits=1e7,
+        max_connected_components=1,
+        min_connected_component_size=1,
+        max_cores=1e6,
+        enforce_core_core=True,
+        heavy_matches_heavy_only=True,
+        ring_matches_ring_only=False,
+        enforce_chiral=True,
+        disallow_planar_torsion_flips=True,
+        min_threshold=0,
+        initial_mapping=None,
+    )
+
+    cores = get_cores(mol_a, mol_b)
+
+    ring_atoms_a = [atom.GetIdx() for atom in mol_a.GetAtoms() if atom.IsInRing()]
+    ring_atoms_b = [atom.GetIdx() for atom in mol_b.GetAtoms() if atom.IsInRing()]
+    for core in cores:
+        core_atoms_a = set(core[:, 0])
+        core_atoms_b = set(core[:, 1])
+        assert core_atoms_a.intersection(ring_atoms_a) == set(ring_atoms_a)
+        assert core_atoms_b.intersection(ring_atoms_b) == set(ring_atoms_b)

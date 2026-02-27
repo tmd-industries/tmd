@@ -22,7 +22,11 @@ from numpy.typing import NDArray
 from rdkit import Chem
 
 from tmd.fe import mcgregor
-from tmd.fe.chiral_utils import ChiralRestrIdxSet, has_chiral_atom_flips, setup_find_flipped_planar_torsions
+from tmd.fe.chiral_utils import (
+    ChiralRestrIdxSet,
+    has_chiral_atom_flips,
+    setup_find_flipped_planar_torsions,
+)
 from tmd.fe.utils import get_romol_bonds, get_romol_conf
 
 # (ytz): Just like how one should never re-write an MD engine, one should never rewrite an MCS library.
@@ -380,12 +384,14 @@ def _get_cores_impl(
         filter_fxn,
     )
 
+    all_cores = remove_cores_with_most_ring_breaks(mol_a, mol_b, all_cores)
     all_cores = remove_cores_smaller_than_largest(all_cores)
     all_cores = _deduplicate_all_cores(all_cores)
 
     mean_sq_distances = []
     valence_mismatches = []
     cb_counts = []
+    ring_break_counts = []
 
     for core in all_cores:
         r_i = conf_a[core[:, 0]]
@@ -408,12 +414,15 @@ def _get_cores_impl(
             core_bonds_broken_count(mol_a, mol_b, core) + core_bonds_broken_count(mol_b, mol_a, core[:, [1, 0]])
         )
 
+        ring_break_counts.append(count_ring_breaks(mol_a, mol_b, core))
+
     sort_vals = np.array(
-        list(zip(cb_counts, valence_mismatches, mean_sq_distances)), dtype=[("cb", "i"), ("valence", "i"), ("msd", "f")]
+        list(zip(ring_break_counts, cb_counts, valence_mismatches, mean_sq_distances)),
+        dtype=[("brk", "i"), ("cb", "i"), ("valence", "i"), ("msd", "f")],
     )
     sorted_cores = []
 
-    sort_order = np.argsort(sort_vals, order=["cb", "valence", "msd"])
+    sort_order = np.argsort(sort_vals, order=["brk", "cb", "valence", "msd"])
     for p in sort_order:
         core = all_cores[p]
         # undo the sort
@@ -421,6 +430,41 @@ def _get_cores_impl(
         sorted_cores.append(core)
 
     return sorted_cores, mcs_diagnostics
+
+
+def count_ring_breaks(mol_a, mol_b, core) -> int:
+    """Count the number of ring breaks are involved in the atom map transformation"""
+    ring_atoms_a = [set(ring_atoms) for ring_atoms in mol_a.GetRingInfo().AtomRings()]
+    ring_atoms_b = [set(ring_atoms) for ring_atoms in mol_b.GetRingInfo().AtomRings()]
+
+    def ring_is_unbroken(ring_set, core_atoms):
+        diff = ring_set.difference(core_atoms)
+        if len(diff) == 0:
+            return True
+        # If there is only one atom mapped, not a ring break
+        return len(diff) == len(ring_set) - 1
+
+    core_a = set(core[:, 0])
+    core_b = set(core[:, 1])
+    # If the ring has any atoms in the core and isn't entirely contained in the core then the ring is considered broken
+    broken_rings_a = sum(
+        [0 if ring_is_unbroken(ring_set, core_a) else 1 for ring_set in ring_atoms_a if ring_set.intersection(core_a)]
+    )
+    broken_rings_b = sum(
+        [0 if ring_is_unbroken(ring_set, core_b) else 1 for ring_set in ring_atoms_b if ring_set.intersection(core_b)]
+    )
+    return broken_rings_a + broken_rings_b
+
+
+def remove_cores_with_most_ring_breaks(mol_a, mol_b, all_cores):
+    cores_by_num_ring_breaks = defaultdict(list)
+    for core in all_cores:
+        cores_by_num_ring_breaks[count_ring_breaks(mol_a, mol_b, core)].append(core)
+    if len(cores_by_num_ring_breaks) == 1:
+        return all_cores
+    max_ring_breaks = max(cores_by_num_ring_breaks)
+    cores_by_num_ring_breaks.pop(max_ring_breaks)
+    return [core for cores in cores_by_num_ring_breaks.values() for core in cores]
 
 
 def remove_cores_smaller_than_largest(cores):
