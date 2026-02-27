@@ -312,13 +312,11 @@ def _get_cores_impl(
             priority_idxs.append([initial_mapping_kv[idx]])  # used to initialize marcs and nothing else
         else:
             atom_i = mol_a.GetAtomWithIdx(idx)
-            dijs = []
+            dijs = np.full(len(conf_b), np.inf)
 
             allowed_idxs = set()
             for jdx, b_xyz in enumerate(conf_b):
                 atom_j = mol_b.GetAtomWithIdx(jdx)
-                dij = np.linalg.norm(a_xyz - b_xyz)
-                dijs.append(dij)
 
                 if ring_matches_ring_only and (atom_i.IsInRing() != atom_j.IsInRing()):
                     continue
@@ -326,7 +324,9 @@ def _get_cores_impl(
                 if heavy_matches_heavy_only and _is_hydrogen(atom_i) != _is_hydrogen(atom_j):
                     continue
 
+                dij = np.linalg.norm(a_xyz - b_xyz)
                 cutoff = ring_cutoff if (atom_i.IsInRing() or atom_j.IsInRing()) else chain_cutoff
+                dijs[jdx] = dij
                 if dij < cutoff:
                     allowed_idxs.add(jdx)
 
