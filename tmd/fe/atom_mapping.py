@@ -314,11 +314,9 @@ def _get_cores_impl(
             atom_i = mol_a.GetAtomWithIdx(idx)
             dijs = []
 
-            allowed_idxs = set()
+            allowed_idxs = []
             for jdx, b_xyz in enumerate(conf_b):
                 atom_j = mol_b.GetAtomWithIdx(jdx)
-                dij = np.linalg.norm(a_xyz - b_xyz)
-                dijs.append(dij)
 
                 if ring_matches_ring_only and (atom_i.IsInRing() != atom_j.IsInRing()):
                     continue
@@ -327,13 +325,12 @@ def _get_cores_impl(
                     continue
 
                 cutoff = ring_cutoff if (atom_i.IsInRing() or atom_j.IsInRing()) else chain_cutoff
+                dij = np.linalg.norm(a_xyz - b_xyz)
                 if dij < cutoff:
-                    allowed_idxs.add(jdx)
+                    dijs.append(dij)
+                    allowed_idxs.append(jdx)
 
-            final_idxs = []
-            for idx in np.argsort(dijs, kind="stable"):
-                if idx in allowed_idxs:
-                    final_idxs.append(idx)
+            final_idxs = [allowed_idxs[idx] for idx in np.argsort(dijs, kind="stable")]
 
             priority_idxs.append(final_idxs)
 
