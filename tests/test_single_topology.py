@@ -763,7 +763,16 @@ def test_no_chiral_atom_restraints():
 def test_no_chiral_bond_restraints():
     mol_a = ligand_from_smiles("C")
     mol_b = ligand_from_smiles("CI")
-    core = _get_core_by_mcs(mol_a, mol_b)
+
+    atom_map_kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    atom_map_kwargs["heavy_matches_heavy_only"] = False
+    all_cores = atom_mapping.get_cores(
+        mol_a,
+        mol_b,
+        **atom_map_kwargs,
+    )
+
+    core = all_cores[0]
 
     forcefield = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     st = SingleTopology(mol_a, mol_b, core, forcefield)
