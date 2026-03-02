@@ -36,7 +36,6 @@ from tmd.fe.mcgregor import MaxVisitsWarning, NoMappingError
 from tmd.fe.utils import (
     get_mol_name,
     get_romol_conf,
-    plot_atom_mapping_grid,
     read_sdf,
     set_mol_name,
     set_romol_conf,
@@ -55,12 +54,8 @@ def hif2a_ligands():
     return read_sdf(datasets["hif2a"])
 
 
-@pytest.fixture(scope="module")
-def eg5_ligands():
-    return read_sdf(datasets["eg5"])
-
-
-def test_connected_core_with_large_numbers_of_cores():
+@pytest.mark.parametrize("heavy_matches_heavy_only", [False, True])
+def test_connected_core_with_large_numbers_of_cores(heavy_matches_heavy_only):
     """The following tests that for two mols that have a large number of matching
     cores found prior to filtering out the molecules with disconnected cores and incomplete rings.
 
@@ -389,7 +384,7 @@ $$$$""",
         max_cores=1e6,
         enforce_core_core=True,
         ring_matches_ring_only=False,
-        heavy_matches_heavy_only=True,
+        heavy_matches_heavy_only=heavy_matches_heavy_only,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -419,23 +414,7 @@ def test_all_pairs(dataset):
             mol_b_name = get_mol_name(mol_b)
             # print("Processing", mol_a_name, "->", mol_b_name)
             start_time = time.time()
-            all_cores, diagnostics = atom_mapping.get_cores_and_diagnostics(
-                mol_a,
-                mol_b,
-                ring_cutoff=0.12,
-                chain_cutoff=0.2,
-                max_visits=1e7,  # 10 million max nodes to visit
-                max_connected_components=1,
-                min_connected_component_size=1,
-                max_cores=1000,
-                enforce_core_core=True,
-                ring_matches_ring_only=False,
-                heavy_matches_heavy_only=True,
-                enforce_chiral=True,
-                disallow_planar_torsion_flips=False,
-                min_threshold=0,
-                initial_mapping=None,
-            )
+            all_cores, diagnostics = atom_mapping.get_cores_and_diagnostics(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
             end_time = time.time()
 
             # # useful for visualization
@@ -469,7 +448,7 @@ def test_all_pairs(dataset):
         ref_cores_by_pair = pickle.load(fp)
 
     for i, (new, ref) in enumerate(zip(cores_by_pair, ref_cores_by_pair)):
-        assert new == ref
+        assert new == ref, f"Core {i} doesn't match reference"
     # assert cores_by_pair == ref_cores_by_pair
 
 
@@ -510,7 +489,8 @@ def assert_core_sets_are_equal(core_set_a, core_set_b):
 
 
 # spot check
-def test_linker_map():
+@pytest.mark.parametrize("heavy_matches_heavy_only", [False, True])
+def test_linker_map(heavy_matches_heavy_only):
     # test that we can map a linker size change when max_connected_components=None, and enforce_core_core=False
     mol_a = Chem.MolFromMolBlock(
         """
@@ -586,7 +566,7 @@ $$$$""",
         max_cores=1000000,
         enforce_core_core=False,
         ring_matches_ring_only=False,
-        heavy_matches_heavy_only=True,
+        heavy_matches_heavy_only=heavy_matches_heavy_only,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
         initial_mapping=None,
@@ -612,7 +592,7 @@ $$$$""",
         max_cores=1000000,
         enforce_core_core=True,
         ring_matches_ring_only=False,
-        heavy_matches_heavy_only=True,
+        heavy_matches_heavy_only=heavy_matches_heavy_only,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -639,7 +619,7 @@ $$$$""",
         max_cores=1000000,
         enforce_core_core=True,
         ring_matches_ring_only=False,
-        heavy_matches_heavy_only=True,
+        heavy_matches_heavy_only=heavy_matches_heavy_only,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -773,7 +753,7 @@ def test_hif2a_failure():
         max_cores=1e6,
         enforce_core_core=True,
         ring_matches_ring_only=False,
-        heavy_matches_heavy_only=True,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -784,32 +764,36 @@ def test_hif2a_failure():
         [
             [22, 15],
             [19, 12],
+            [3, 3],
             [2, 2],
+            [1, 1],
+            [18, 24],
+            [12, 21],
             [11, 11],
             [9, 9],
+            [8, 8],
+            [7, 7],
             [6, 6],
             [5, 5],
             [4, 4],
-            [1, 1],
-            [18, 24],
             [13, 22],
-            [12, 21],
             [10, 10],
-            [8, 8],
-            [7, 7],
-            [3, 3],
-            [24, 20],
-            [23, 19],
-            [21, 14],
-            [20, 13],
             [0, 0],
-            [27, 27],
             [35, 33],
             [33, 32],
             [32, 31],
             [31, 30],
             [30, 29],
+            [25, 28],
+            [27, 27],
             [26, 26],
+            [24, 20],
+            [23, 19],
+            [36, 18],
+            [28, 17],
+            [29, 16],
+            [21, 14],
+            [20, 13],
         ]
     )
 
@@ -842,10 +826,10 @@ def test_cyclohexane_stereo():
         initial_mapping=None,
     )
 
-    for core_idx, core in enumerate(all_cores[:1]):
-        res = plot_atom_mapping_grid(mol_a, mol_b, core, num_rotations=5)
-        with open(f"atom_mapping_0_to_1_core_{core_idx}.svg", "w") as fh:
-            fh.write(res)
+    # for core_idx, core in enumerate(all_cores[:1]):
+    #     res = plot_atom_mapping_grid(mol_a, mol_b, core, num_rotations=5)
+    #     with open(f"atom_mapping_0_to_1_core_{core_idx}.svg", "w") as fh:
+    #         fh.write(res)
 
     # 1-indexed
     # With chiral enforcement and swap-based repair, all H pairs are preserved.
@@ -977,21 +961,7 @@ def test_ring_matches_ring_only(ring_matches_ring_only):
 
 def test_max_visits_error():
     mol_a, mol_b = get_cyclohexanes_different_confs()
-    get_cores = partial(
-        atom_mapping.get_cores,
-        ring_cutoff=0.1,
-        chain_cutoff=0.2,
-        max_connected_components=None,
-        min_connected_component_size=1,
-        max_cores=1000,
-        enforce_core_core=True,
-        ring_matches_ring_only=False,
-        heavy_matches_heavy_only=True,
-        enforce_chiral=True,
-        disallow_planar_torsion_flips=False,
-        min_threshold=0,
-        initial_mapping=None,
-    )
+    get_cores = partial(atom_mapping.get_cores, **DEFAULT_ATOM_MAPPING_KWARGS)
     cores = get_cores(mol_a, mol_b, max_visits=10000)
     assert len(cores) > 0
 
@@ -1035,21 +1005,9 @@ def test_max_cores_warning():
 
 def test_min_threshold():
     mol_a, mol_b = get_cyclohexanes_different_confs()
-    get_cores = partial(
-        atom_mapping.get_cores,
-        ring_cutoff=0.1,
-        chain_cutoff=0.2,
-        max_connected_components=None,
-        min_connected_component_size=1,
-        max_cores=1000,
-        enforce_core_core=True,
-        ring_matches_ring_only=False,
-        heavy_matches_heavy_only=True,
-        enforce_chiral=True,
-        disallow_planar_torsion_flips=False,
-        min_threshold=mol_a.GetNumAtoms(),
-        initial_mapping=None,
-    )
+    kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    kwargs["min_threshold"] = mol_a.GetNumAtoms()
+    get_cores = partial(atom_mapping.get_cores, **kwargs)
 
     with pytest.raises(NoMappingError, match="Unable to find mapping with at least 18 edges"):
         get_cores(mol_a, mol_b, max_visits=10000)
@@ -1146,7 +1104,7 @@ def test_min_connected_component_size():
     # With min_connected_component_size=1, maps one ring plus opposite atoms of second ring
     # 8 heavy atoms + 6 hydrogens = 14
     core_1 = get_core(mol_a, mol_b, max_connected_components=None, min_connected_component_size=1)
-    assert len(core_1) == 14
+    assert len(core_1) == 6 + 5 + 2 + 1  # (6 C + 5 H) + (2 C + 1 H)
 
     # Any min_connected_component_size <= 1 is a no-op and returns the same result
     for min_connected_component_size in [-1, 0, 1]:
@@ -1163,7 +1121,7 @@ def test_min_connected_component_size():
     # With min_connected_component_size >= 2, can no longer map isolated atoms of second ring
     # 7 heavy atoms + 5 hydrogens = 12
     core_2 = get_core(mol_a, mol_b, max_connected_components=None, min_connected_component_size=2)
-    assert len(core_2) == 12
+    assert len(core_2) == 6 + 5 + 1  # (6 C + 5 H) + (1 C)
 
     for min_connected_component_size in [3, 4, 5, 6, 7]:
         np.testing.assert_array_equal(
