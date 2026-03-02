@@ -21,12 +21,21 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from common import ligand_from_smiles
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS
 from tmd.fe import atom_mapping
-from tmd.fe.mcgregor import MaxVisitsWarning, NoMappingError
+from tmd.fe.atom_mapping import _augment_core_with_hydrogens
+from tmd.fe.chiral_utils import (
+    ChiralRestrIdxSet,
+    find_atom_map_chiral_conflicts,
+    find_chiral_atoms,
+    has_chiral_atom_flips,
+    setup_find_flipped_planar_torsions,
+)
+from tmd.fe.mcgregor import MaxVisitsWarning, NoMappingError, core_to_perm
 from tmd.fe.utils import (
     get_mol_name,
     get_romol_conf,
@@ -877,12 +886,10 @@ def test_cyclohexane_stereo():
     assert len(all_cores) == 1
 
 
-def test_chiral_atom_map():
-    mol_a = Chem.AddHs(Chem.MolFromSmiles("C"))
-    mol_b = Chem.AddHs(Chem.MolFromSmiles("C"))
-
-    AllChem.EmbedMolecule(mol_a, randomSeed=0)
-    AllChem.EmbedMolecule(mol_b, randomSeed=0)
+def test_chiral_methane_atom_map():
+    mol_a = ligand_from_smiles("C")
+    # Create a copy
+    mol_b = Chem.Mol(mol_a)
 
     get_cores = partial(
         atom_mapping.get_cores,
@@ -895,19 +902,20 @@ def test_chiral_atom_map():
         enforce_core_core=True,
         disallow_planar_torsion_flips=False,
         ring_matches_ring_only=True,
-        heavy_matches_heavy_only=True,
         min_threshold=0,
         initial_mapping=None,
     )
 
-    # With H-stripped MCS + Hungarian H augmentation, methane maps C->C then
-    # optimally assigns all 4 Hs, producing exactly 1 core of size 5.
-    chiral_aware_cores = get_cores(mol_a, mol_b, enforce_chiral=True)
-    chiral_oblivious_cores = get_cores(mol_a, mol_b, enforce_chiral=False)
+    # When evaluating the atom map with heavy_matches_heavy_only=True there are no
+    # bonds to add, leading to a mapping failure.
+    with pytest.raises(NoMappingError):
+        get_cores(mol_a, mol_b, enforce_chiral=True, heavy_matches_heavy_only=True)
 
-    # Both produce a single augmented core since Hs are assigned deterministically
-    assert len(chiral_aware_cores) == 1
-    assert len(chiral_oblivious_cores) == 1
+    chiral_aware_cores = get_cores(mol_a, mol_b, enforce_chiral=True, heavy_matches_heavy_only=False)
+    chiral_oblivious_cores = get_cores(mol_a, mol_b, enforce_chiral=False, heavy_matches_heavy_only=False)
+
+    # Cutoff is set to inf, so there are many possible mappings
+    assert len(chiral_aware_cores) <= len(chiral_oblivious_cores)
 
     for key, val in chiral_aware_cores[0]:
         assert key == val, "expected first core to be identity map"
@@ -922,11 +930,9 @@ def test_chiral_atom_map():
     ],
 )
 def test_ring_matches_ring_only(ring_matches_ring_only):
-    mol_a = Chem.AddHs(Chem.MolFromSmiles("C(c1ccc1)"))
-    AllChem.EmbedMolecule(mol_a, randomSeed=3)
-
-    mol_b = Chem.AddHs(Chem.MolFromSmiles("C(c1ccccc1)"))
-    AllChem.EmbedMolecule(mol_b, randomSeed=3)
+    # Changing the seed can break the test
+    mol_a = ligand_from_smiles("C(c1ccc1)", seed=3)
+    mol_b = ligand_from_smiles("C(c1ccccc1)", seed=3)
 
     get_cores = partial(
         atom_mapping.get_cores,
@@ -939,22 +945,37 @@ def test_ring_matches_ring_only(ring_matches_ring_only):
         enforce_core_core=False,
         enforce_chiral=False,
         disallow_planar_torsion_flips=False,
-        heavy_matches_heavy_only=True,
+        heavy_matches_heavy_only=False,
         min_threshold=0,
         initial_mapping=None,
     )
 
     cores = get_cores(mol_a, mol_b, ring_matches_ring_only=ring_matches_ring_only)
 
-    assert cores
+    assert len(cores) > 0
 
-    # should not map ring atoms to non-ring atoms and vice-versa
-    for core in cores:
-        for idx_a, idx_b in core:
-            assert mol_a.GetAtomWithIdx(int(idx_a)).IsInRing() == mol_b.GetAtomWithIdx(int(idx_b)).IsInRing()
-
-    # should map all ring atoms in mol_a
+    # All ring atoms in mol_a are always mapped, but may be mapped to a non-ring atom
     assert all(len([() for idx_a in core[:, 0] if mol_a.GetAtomWithIdx(int(idx_a)).IsInRing()]) == 4 for core in cores)
+
+    if ring_matches_ring_only:
+        # should not map ring atoms to non-ring atoms and vice-versa
+        for core in cores:
+            for idx_a, idx_b in core:
+                assert mol_a.GetAtomWithIdx(int(idx_a)).IsInRing() == mol_b.GetAtomWithIdx(int(idx_b)).IsInRing()
+
+        # should map all ring atoms in mol_a
+        assert all(
+            len([() for idx_a in core[:, 0] if mol_a.GetAtomWithIdx(int(idx_a)).IsInRing()]) == 4 for core in cores
+        )
+    else:
+        # There shuld be a ring atom mapped to a non-ring atom if allowed
+        non_ring_to_ring_mapping = False
+        for core in cores:
+            for idx_a, idx_b in core:
+                if mol_a.GetAtomWithIdx(int(idx_a)).IsInRing() != mol_b.GetAtomWithIdx(int(idx_b)).IsInRing():
+                    non_ring_to_ring_mapping = True
+                    break
+        assert non_ring_to_ring_mapping
 
 
 def test_max_visits_error():
@@ -1002,7 +1023,7 @@ def test_max_cores_warning():
         min_connected_component_size=1,
         enforce_core_core=True,
         ring_matches_ring_only=False,
-        heavy_matches_heavy_only=True,
+        heavy_matches_heavy_only=False,
         enforce_chiral=True,
         disallow_planar_torsion_flips=False,
         min_threshold=0,
@@ -1010,10 +1031,8 @@ def test_max_cores_warning():
         initial_mapping=None,
     )
     # Warning is triggered by reaching the max visits, but not the max_cores
-    # With H-stripped MCS, cyclohexane only has 6 heavy atoms and needs ~12 visits,
-    # so we use a lower max_visits to trigger the warning
     with pytest.warns(MaxVisitsWarning, match="Inexhaustive search: reached max number of visits"):
-        all_cores = get_cores(mol_a, mol_b, max_cores=100, max_visits=10)
+        all_cores = get_cores(mol_a, mol_b, max_cores=100, max_visits=24)
         assert len(all_cores) == 1
 
 
@@ -1075,10 +1094,9 @@ def polyphenylene_smiles(n):
 
 def make_polyphenylene(n, dihedral_deg):
     """Make a chain of n benzene rings with each ring rotated `dihedral_deg` degrees with respect to the previous ring"""
-    mol = Chem.MolFromSmiles(polyphenylene_smiles(n))
+    mol = ligand_from_smiles(polyphenylene_smiles(n))
     set_mol_name(mol, f"{n}_{dihedral_deg}")
     mol = AllChem.AddHs(mol)
-    AllChem.EmbedMolecule(mol, randomSeed=2024)
     for k in range(n - 1):  # n - 1 inter-ring bonds to rotate
         i = 2 + 4 * k
         AllChem.SetDihedralDeg(mol.GetConformer(0), i, i + 1, i + 2, i + 3, dihedral_deg)
@@ -1337,7 +1355,7 @@ def test_initial_mapping_ignores_filters(hif2a_ligands, param_to_change, new_val
 
 def test_hybrid_core_generation(hif2a_ligands):
     """
-    Verify expectations around the generation of hybrid molecules given initial mappings generated fro molecules
+    Verify expectations around the generation of hybrid molecules given initial mappings generated from molecules
     without hydrogens.
 
     The expectations are:
@@ -1733,19 +1751,11 @@ def test_chiral_filtering_on_h_stripped_molecules():
        same answer as the full-H chiral sets for all heavy-atom-only mappings.
     4. Planar torsion flip detection works correctly on H-stripped molecules.
     """
-    from tmd.fe.chiral_utils import (
-        ChiralRestrIdxSet,
-        find_chiral_atoms,
-        has_chiral_atom_flips,
-        setup_find_flipped_planar_torsions,
-    )
-    from tmd.fe.mcgregor import core_to_perm
 
     # --- Part 1: Chiral center detection is preserved after RemoveHs ---
 
     # FC(Cl)Br: carbon has 4 neighbors (F, Cl, Br, H) -> X4 with Hs, X4 after RemoveHs (3 explicit + 1 implicit)
-    mol_with_h = Chem.AddHs(Chem.MolFromSmiles("FC(Cl)Br"))
-    AllChem.EmbedMolecule(mol_with_h, randomSeed=42)
+    mol_with_h = ligand_from_smiles("FC(Cl)Br")
     mol_no_h = Chem.RemoveHs(mol_with_h)
 
     chiral_with_h = find_chiral_atoms(mol_with_h)
@@ -1779,10 +1789,8 @@ def test_chiral_filtering_on_h_stripped_molecules():
     # --- Part 3: Chiral flip detection agrees for heavy-atom-only cores ---
 
     # Create two copies of FC(Cl)Br and test identity vs. chirality-flipping maps
-    mol_a = Chem.AddHs(Chem.MolFromSmiles("FC(Cl)Br"))
-    mol_b = Chem.AddHs(Chem.MolFromSmiles("FC(Cl)Br"))
-    AllChem.EmbedMolecule(mol_a, randomSeed=42)
-    AllChem.EmbedMolecule(mol_b, randomSeed=42)
+    mol_a = ligand_from_smiles("FC(Cl)Br")
+    mol_b = Chem.Mol(mol_a)
 
     mol_a_no_h = Chem.RemoveHs(mol_a)
     mol_b_no_h = Chem.RemoveHs(mol_b)
@@ -1828,10 +1836,8 @@ def test_chiral_filtering_on_h_stripped_molecules():
 
     # --- Part 4: Test with a more complex molecule (ethanol: CC(O)F with chiral C) ---
 
-    mol_a2 = Chem.AddHs(Chem.MolFromSmiles("CC(O)F"))
-    mol_b2 = Chem.AddHs(Chem.MolFromSmiles("CC(O)F"))
-    AllChem.EmbedMolecule(mol_a2, randomSeed=42)
-    AllChem.EmbedMolecule(mol_b2, randomSeed=42)
+    mol_a2 = ligand_from_smiles("CC(O)F")
+    mol_b2 = Chem.Mol(mol_a2)
 
     mol_a2_no_h = Chem.RemoveHs(mol_a2)
     mol_b2_no_h = Chem.RemoveHs(mol_b2)
@@ -1882,10 +1888,8 @@ def test_chiral_filtering_on_h_stripped_molecules():
     # --- Part 5: Planar torsion detection works on H-stripped molecules ---
 
     # Cl/C=N\F has a defined planar torsion around the C=N double bond
-    mol_a3 = Chem.AddHs(Chem.MolFromSmiles(r"Cl/C=N\F"))
-    mol_b3 = Chem.AddHs(Chem.MolFromSmiles(r"Cl/C=N/F"))  # opposite E/Z config
-    AllChem.EmbedMolecule(mol_a3, randomSeed=42)
-    AllChem.EmbedMolecule(mol_b3, randomSeed=42)
+    mol_a3 = ligand_from_smiles(r"Cl/C=N\F")
+    mol_b3 = ligand_from_smiles(r"Cl/C=N/F")  # opposite E/Z config
 
     mol_a3_no_h = Chem.RemoveHs(mol_a3)
     mol_b3_no_h = Chem.RemoveHs(mol_b3)
@@ -1921,18 +1925,10 @@ def test_chiral_h_augmentation_ring_ch2():
     wrong H pairing, a chiral conflict is introduced.  The chiral repair should
     detect the conflict and unmap the offending H pairs.
     """
-    from tmd.fe.atom_mapping import (
-        _augment_core_with_hydrogens,
-        _build_h_removal_index_maps,
-    )
-    from tmd.fe.chiral_utils import ChiralRestrIdxSet, find_atom_map_chiral_conflicts
-
     # Build two cyclohexane molecules with DIFFERENT conformers so that
     # the Hungarian algorithm cross-maps some Hs, creating chiral conflicts.
-    mol_a = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1"))
-    mol_b = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1"))
-    AllChem.EmbedMolecule(mol_a, randomSeed=42)
-    AllChem.EmbedMolecule(mol_b, randomSeed=123)
+    mol_a = ligand_from_smiles("C1CCCCC1", seed=42)
+    mol_b = ligand_from_smiles("C1CCCCC1", seed=814)
 
     conf_a = get_romol_conf(mol_a)
     conf_b = get_romol_conf(mol_b)
@@ -1954,8 +1950,8 @@ def test_chiral_h_augmentation_ring_ch2():
     # Identity heavy core: carbon 0→0, 1→1, ..., 5→5
     heavy_core = np.array([[i, i] for i in range(6)])
 
-    _, _, removed_h_a = _build_h_removal_index_maps(mol_a, mol_a_no_h)
-    _, _, removed_h_b = _build_h_removal_index_maps(mol_b, Chem.RemoveHs(mol_b))
+    removed_h_a = set([atom.GetIdx() for atom in mol_a.GetAtoms() if atom.GetAtomicNum() == 1])
+    removed_h_b = set([atom.GetIdx() for atom in mol_b.GetAtoms() if atom.GetAtomicNum() == 1])
 
     # Augment WITHOUT chiral enforcement — should produce conflicts
     augmented_no_chiral = _augment_core_with_hydrogens(
@@ -2020,17 +2016,10 @@ def test_chiral_h_augmentation_swap_preserves_all_pairs():
     if one conflicts then the other must be conflict-free (the heavy-atom
     mapping already passed chiral filtering).
     """
-    from tmd.fe.atom_mapping import (
-        _augment_core_with_hydrogens,
-        _build_h_removal_index_maps,
-    )
-    from tmd.fe.chiral_utils import ChiralRestrIdxSet, find_atom_map_chiral_conflicts
 
     # Cyclopentane: 5 ring -CH₂- centers, each with 2 Hs
-    mol_a = Chem.AddHs(Chem.MolFromSmiles("C1CCCC1"))
-    mol_b = Chem.AddHs(Chem.MolFromSmiles("C1CCCC1"))
-    AllChem.EmbedMolecule(mol_a, randomSeed=42)
-    AllChem.EmbedMolecule(mol_b, randomSeed=999)  # different conformer
+    mol_a = ligand_from_smiles("C1CCCC1")
+    mol_b = ligand_from_smiles("C1CCCC1")
 
     conf_a = get_romol_conf(mol_a)
     conf_b = get_romol_conf(mol_b)
@@ -2038,10 +2027,8 @@ def test_chiral_h_augmentation_swap_preserves_all_pairs():
     chiral_set_a = ChiralRestrIdxSet.from_mol(mol_a, conf_a)
     chiral_set_b = ChiralRestrIdxSet.from_mol(mol_b, conf_b)
 
-    mol_a_no_h = Chem.RemoveHs(mol_a)
-    mol_b_no_h = Chem.RemoveHs(mol_b)
-    _, _, removed_h_a = _build_h_removal_index_maps(mol_a, mol_a_no_h)
-    _, _, removed_h_b = _build_h_removal_index_maps(mol_b, mol_b_no_h)
+    removed_h_a = set([atom.GetIdx() for atom in mol_a.GetAtoms() if atom.GetAtomicNum() == 1])
+    removed_h_b = set([atom.GetIdx() for atom in mol_b.GetAtoms() if atom.GetAtomicNum() == 1])
 
     heavy_core = np.array([[i, i] for i in range(5)])
 
@@ -2087,13 +2074,10 @@ def test_chiral_h_augmentation_through_get_cores():
 
     This tests the complete pipeline: H-stripped MCS → H augmentation → chiral repair.
     """
-    from tmd.fe.chiral_utils import ChiralRestrIdxSet, find_atom_map_chiral_conflicts
 
     # Use cyclohexane pair — the ring -CH₂- centers are the key case
-    mol_a = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1"))
-    mol_b = Chem.AddHs(Chem.MolFromSmiles("C1CCCCC1"))
-    AllChem.EmbedMolecule(mol_a, randomSeed=42)
-    AllChem.EmbedMolecule(mol_b, randomSeed=42)
+    mol_a = ligand_from_smiles("C1CCCCC1")
+    mol_b = ligand_from_smiles("C1CCCCC1")
 
     cores = atom_mapping.get_cores(
         mol_a,
@@ -2132,17 +2116,9 @@ def test_chiral_h_augmentation_no_conflict_case():
     Uses methanol (C(H₃)-OH) with identical conformers — the identity
     assignment is chirally correct so no Hs should be unmapped.
     """
-    from tmd.fe.atom_mapping import (
-        _augment_core_with_hydrogens,
-        _build_h_removal_index_maps,
-    )
-    from tmd.fe.chiral_utils import ChiralRestrIdxSet
-
     # Methanol: C(H₃)-OH — the methyl carbon has 3 removable Hs
-    mol_a = Chem.AddHs(Chem.MolFromSmiles("CO"))
-    mol_b = Chem.AddHs(Chem.MolFromSmiles("CO"))
-    AllChem.EmbedMolecule(mol_a, randomSeed=42)
-    AllChem.EmbedMolecule(mol_b, randomSeed=42)
+    mol_a = ligand_from_smiles("CO")
+    mol_b = Chem.Mol(mol_a)
 
     conf_a = get_romol_conf(mol_a)
     conf_b = get_romol_conf(mol_b)
@@ -2150,10 +2126,8 @@ def test_chiral_h_augmentation_no_conflict_case():
     chiral_set_a = ChiralRestrIdxSet.from_mol(mol_a, conf_a)
     chiral_set_b = ChiralRestrIdxSet.from_mol(mol_b, conf_b)
 
-    mol_a_no_h = Chem.RemoveHs(mol_a)
-    mol_b_no_h = Chem.RemoveHs(mol_b)
-    _, _, removed_h_a = _build_h_removal_index_maps(mol_a, mol_a_no_h)
-    _, _, removed_h_b = _build_h_removal_index_maps(mol_b, mol_b_no_h)
+    removed_h_a = set([atom.GetIdx() for atom in mol_a.GetAtoms() if atom.GetAtomicNum() == 1])
+    removed_h_b = set([atom.GetIdx() for atom in mol_b.GetAtoms() if atom.GetAtomicNum() == 1])
 
     # Heavy core: C→C, O→O
     heavy_core = np.array([[0, 0], [1, 1]])
