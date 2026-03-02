@@ -627,21 +627,21 @@ def _build_priority_idxs(
 
         atom_i = mol_a.GetAtomWithIdx(idx)
         dijs = []
-        allowed_idxs = set()
+        allowed_idxs = []
 
         for jdx, b_xyz in enumerate(conf_b):
             atom_j = mol_b.GetAtomWithIdx(jdx)
-            dij = np.linalg.norm(a_xyz - b_xyz)
-            dijs.append(dij)
 
             if ring_matches_ring_only and (atom_i.IsInRing() != atom_j.IsInRing()):
                 continue
 
             cutoff = ring_cutoff if (atom_i.IsInRing() or atom_j.IsInRing()) else chain_cutoff
+            dij = np.linalg.norm(a_xyz - b_xyz)
             if dij < cutoff:
-                allowed_idxs.add(jdx)
+                dijs.append(dij)
+                allowed_idxs.append(jdx)
 
-        priority_idxs.append([int(j) for j in np.argsort(dijs, kind="stable") if j in allowed_idxs])
+        priority_idxs.append([allowed_idxs[j] for j in np.argsort(dijs, kind="stable")])
 
     return priority_idxs
 
