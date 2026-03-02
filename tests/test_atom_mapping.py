@@ -2163,3 +2163,33 @@ def test_chiral_h_augmentation_no_conflict_case():
         augmented_chiral,
         err_msg="No-conflict case: chiral enforcement should not change the core",
     )
+
+
+def test_heavy_matches_heavy_only_speed_up_hydrogen_matching():
+    """Verify that the search space is significantly smaller when using the heavy_matches_heavy_only
+    speedup compared to disabling heavy_matches_heavy_only. The test system is vancomycin with
+    saturated rings to increase the number of hydrogens that have to be matched. One copy of vancomycin
+    has a hydrogen swapped with a flourine.
+    """
+    mols = read_sdf("tests/data/saturated_vancomycin_pair.sdf")
+    assert len(mols) == 2
+
+    mol_a = mols[0]
+    mol_b = mols[1]
+
+    mapping_kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    mapping_kwargs["heavy_matches_heavy_only"] = False
+
+    slow_cores, slow_diagnostics = atom_mapping.get_cores_and_diagnostics(mol_a, mol_b, **mapping_kwargs)
+    assert len(slow_cores) > 0
+    # Everything should be mapped since hydrogen -> flourine is okay
+    assert slow_diagnostics.core_size == mol_a.GetNumAtoms()
+
+    mapping_kwargs["heavy_matches_heavy_only"] = True
+    hmh_cores, hmh_diagnostics = atom_mapping.get_cores_and_diagnostics(mol_a, mol_b, **mapping_kwargs)
+    assert len(hmh_cores) > 0
+    # Core is only evaluated on heavy atoms to start, so core is at most the number of heavy atoms
+    assert hmh_diagnostics.core_size == len([a for a in mol_a.GetAtoms() if a.GetAtomicNum() > 1])
+
+    # The search space should be at least 10x larger for heavy_matches_heavy_only=False
+    assert slow_diagnostics.total_nodes_visited > hmh_diagnostics.total_nodes_visited * 10.0
