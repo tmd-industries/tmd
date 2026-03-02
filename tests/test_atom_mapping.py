@@ -1322,7 +1322,7 @@ def test_initial_mapping_ignores_filters(hif2a_ligands, param_to_change, new_val
 
 def test_hybrid_core_generation(hif2a_ligands):
     """
-    Verify expectations around the generation of hybrid molecules given initial mappings generated fro molecules
+    Verify expectations around the generation of hybrid molecules given initial mappings generated from molecules
     without hydrogens.
 
     The expectations are:
