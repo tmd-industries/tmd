@@ -276,7 +276,8 @@ def core_bonds_broken_count(mol_a, mol_b, core):
 
 
 def _get_removable_h_neighbors(mol, atom_idx, removed_h_set):
-    """Return indices of hydrogen neighbors of atom_idx that were removed by RemoveHs.
+    """Return indices of hydrogen neighbors of atom_idx that were removed
+    during the construction of the priority idxs.
 
     Parameters
     ----------
@@ -448,7 +449,8 @@ def _augment_core_with_hydrogens(
             h_pairs_by_parent[(a_i, b_j)] = pairs
 
     # --- Phase 2: Repair chiral conflicts introduced by H assignments ---
-    if enforce_chiral and chiral_set_a is not None and chiral_set_b is not None:
+    if enforce_chiral:
+        assert chiral_set_a is not None and chiral_set_b is not None
         _repair_chiral_conflicts(
             h_pairs_by_parent,
             heavy_core,
@@ -544,7 +546,7 @@ def _repair_chiral_conflicts(
 
     # Safety net: remove any remaining conflicts
     all_h = [pair for pairs in h_pairs_by_parent.values() for pair in pairs]
-    if all_h:
+    if len(all_h) > 0:
         augmented = np.concatenate([heavy_core, np.array(all_h)], axis=0)
         mapping = {int(a): int(b) for a, b in augmented}
         for a_i, b_j in list(h_pairs_by_parent.keys()):
