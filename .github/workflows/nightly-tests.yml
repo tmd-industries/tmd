@@ -2,7 +2,7 @@ name: Nightly Tests
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # UTC Time
+    - cron: '15 3 * * *'  # UTC Time
   workflow_dispatch:
 
 concurrency:
