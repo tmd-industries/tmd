@@ -152,6 +152,7 @@ class LocalMDParams:
     min_radius: float = 1.0  # nm
     max_radius: float = 3.0  # nm
     freeze_reference: bool = True
+    iterations: int = 1
 
     def __post_init__(self):
         assert 0.1 <= self.min_radius <= self.max_radius
@@ -829,13 +830,17 @@ def sample_with_context_iter(
                 )
                 steps = md_params.steps_per_frame
             local_steps = md_params.local_md_params.local_steps
-            x_t, box_t = ctxt.multiple_steps_local(
-                local_steps,
-                ligand_idxs.astype(np.int32),
-                k=md_params.local_md_params.k,
-                radius=rng.uniform(md_params.local_md_params.min_radius, md_params.local_md_params.max_radius),
-                seed=rng.integers(np.iinfo(np.int32).max),
-            )
+            for local_batch in batches(
+                md_params.local_md_params.local_steps,
+                md_params.local_md_params.local_steps // md_params.local_md_params.iterations,
+            ):
+                x_t, box_t = ctxt.multiple_steps_local(
+                    local_batch,
+                    ligand_idxs.astype(np.int32),
+                    k=md_params.local_md_params.k,
+                    radius=rng.uniform(md_params.local_md_params.min_radius, md_params.local_md_params.max_radius),
+                    seed=rng.integers(np.iinfo(np.int32).max),
+                )
             global_steps = steps - local_steps
             if global_steps > 0:
                 x_t, box_t = ctxt.multiple_steps(n_steps=global_steps)

@@ -81,6 +81,12 @@ def main():
         help="Number of steps to run with Local MD. Must be less than or equal to --steps_per_frame. If set to 0, no local MD is run",
     )
     parser.add_argument(
+        "--local_md_iterations",
+        default=1,
+        type=int,
+        help="Number of independent local MD iterations to make. local_md_steps // local_md_iterations steps per iteration",
+    )
+    parser.add_argument(
         "--store_trajectories",
         action="store_true",
         help="Store the trajectories of the edges. Can take up a large amount of space",
@@ -166,6 +172,7 @@ def main():
                 min_radius=args.local_md_radius,
                 max_radius=args.local_md_radius,
                 freeze_reference=not args.local_md_free_reference,
+                iterations=args.local_md_iterations,
             )
             if args.local_md_steps > 0
             else None,
