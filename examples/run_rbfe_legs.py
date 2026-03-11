@@ -32,7 +32,7 @@ Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 
 from rbfe_common import COMPLEX_LEG, SOLVENT_LEG, VACUUM_LEG, run_rbfe_leg, write_result_csvs
 
-from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF
+from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF, DEFAULT_NONBONDED_CUTOFF
 from tmd.fe import atom_mapping
 from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, WaterSamplingParams
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
@@ -111,6 +111,12 @@ def main():
         choices=["kcal/mol", "kJ/mol", "uM", "nM"],
         help="Units of the experimental label.",
     )
+    parser.add_argument(
+        "--nonbonded_cutoff",
+        default=DEFAULT_NONBONDED_CUTOFF,
+        type=float,
+        help="Nonbonded cutoff distance in nanometers. Defaults to %(default)s nm.",
+    )
     args = parser.parse_args()
 
     if "complex" in args.legs:
@@ -182,6 +188,7 @@ def main():
             args.min_overlap,
             True,  # Always write out the trajectories
             args.force_overwrite,
+            args.nonbonded_cutoff,
         )
         futures.append(fut)
     leg_results = defaultdict(dict)

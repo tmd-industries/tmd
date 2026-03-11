@@ -9,7 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 from rdkit import Chem
 
-from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, KCAL_TO_KJ
+from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_NONBONDED_CUTOFF, KCAL_TO_KJ
 from tmd.fe import atom_mapping
 from tmd.fe.free_energy import MDParams, compute_total_ns
 from tmd.fe.mle import infer_node_vals_and_errs_networkx
@@ -148,6 +148,7 @@ def run_rbfe_leg(
     min_overlap: float,
     write_trajectories: bool,
     force_overwrite: bool,
+    nonbonded_cutoff: float = DEFAULT_NONBONDED_CUTOFF,
 ) -> dict[str, Any]:
     """Run an RBFE leg (vacuum, solvent, or complex).
 
@@ -248,6 +249,7 @@ def run_rbfe_leg(
             md_params,
             n_windows=n_windows,
             min_overlap=min_overlap,
+            nonbonded_cutoff=nonbonded_cutoff,
         )
     elif leg_name == COMPLEX_LEG:
         assert pdb_path is not None, "No pdb data provided"
@@ -260,6 +262,7 @@ def run_rbfe_leg(
             md_params,
             n_windows=n_windows,
             min_overlap=min_overlap,
+            nonbonded_cutoff=nonbonded_cutoff,
         )
     else:
         assert 0, f"Invalid leg: {leg_name}"

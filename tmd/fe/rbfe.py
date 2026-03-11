@@ -26,7 +26,7 @@ from openmm import app
 from rdkit import Chem
 
 from tmd._vendored.pymbar.mbar import MBAR
-from tmd.constants import DEFAULT_POSITIONAL_RESTRAINT_K, DEFAULT_PRESSURE, DEFAULT_TEMP
+from tmd.constants import DEFAULT_NONBONDED_CUTOFF, DEFAULT_POSITIONAL_RESTRAINT_K, DEFAULT_PRESSURE, DEFAULT_TEMP
 from tmd.fe import model_utils
 from tmd.fe.bar import DEFAULT_MAXIMUM_ITERATIONS, DEFAULT_RELATIVE_TOLERANCE, DEFAULT_SOLVER_PROTOCOL
 from tmd.fe.free_energy import (
@@ -1240,13 +1240,14 @@ def run_solvent(
     n_windows: Optional[int] = None,
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = None,
+    nonbonded_cutoff: float = DEFAULT_NONBONDED_CUTOFF,
 ):
     if md_params is not None and md_params.water_sampling_params is not None:
         md_params = replace(md_params, water_sampling_params=None)
         warnings.warn("Solvent simulations don't benefit from water sampling, disabling")
     box_width = 4.0
     solvent_host_config = builders.build_water_system(
-        box_width, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
+        box_width, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1, cutoff=nonbonded_cutoff
     )
     solvent_host_config = setup_optimized_host(solvent_host_config, [mol_a, mol_b], forcefield, seed=md_params.seed)
     # min_cutoff defaults to None since the original poses tend to come from posing in a complex and
@@ -1276,9 +1277,10 @@ def run_complex(
     n_windows: Optional[int] = None,
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = 0.7,
+    nonbonded_cutoff: float = DEFAULT_NONBONDED_CUTOFF,
 ):
     complex_host_config = builders.build_protein_system(
-        protein, forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
+        protein, forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1, cutoff=nonbonded_cutoff
     )
     complex_host_config = setup_optimized_host(complex_host_config, [mol_a, mol_b], forcefield, seed=md_params.seed)
     complex_res = estimate_relative_free_energy_bisection_or_hrex(
