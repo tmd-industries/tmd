@@ -74,6 +74,7 @@ private:
 
   const RealType beta_;
   const RealType cutoff_;
+
   // This is safe to overflow, either reset to 0 or increment
   unsigned int steps_since_last_sort_;
   Neighborlist<RealType> nblist_;
@@ -111,6 +112,10 @@ private:
                      const std::vector<std::vector<int>> &row_atom_idxs,
                      const std::vector<std::vector<int>> &col_atom_idxs,
                      const bool allow_empty);
+
+  // Overload accepting an explicit cutoff, used during construction before
+  // cutoff_ is initialised.
+  static int get_max_nonbonded_kernel_blocks(int N, RealType cutoff);
 
   int get_max_nonbonded_kernel_blocks() const;
 

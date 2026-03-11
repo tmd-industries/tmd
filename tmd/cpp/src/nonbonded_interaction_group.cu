@@ -154,7 +154,7 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
           get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs)),
       compute_col_grads_(true),
       nrg_accum_(num_systems_,
-                 this->get_max_nonbonded_kernel_blocks() * num_systems_),
+                 get_max_nonbonded_kernel_blocks(N, cutoff) * num_systems_),
       kernel_ptrs_(
           {// enumerate over every possible kernel combination
            // Set threads to 1 if not computing energy to reduced unused shared
@@ -330,19 +330,27 @@ bool NonbondedInteractionGroup<RealType>::needs_sort() {
 }
 
 template <typename RealType>
+int NonbondedInteractionGroup<RealType>::get_max_nonbonded_kernel_blocks(
+    int N, RealType cutoff) {
+  const double ratio = nonbonded_blocks_ratio(static_cast<double>(cutoff));
+  int max_nonbonded_kernel_blocks =
+      static_cast<int>(ceil(N * ratio));
+  return min(max_nonbonded_kernel_blocks, MAX_KERNEL_BLOCKS);
+}
+
+template <typename RealType>
 int NonbondedInteractionGroup<RealType>::get_max_nonbonded_kernel_blocks()
     const {
-  int max_nonbonded_kernel_blocks =
-      static_cast<int>(ceil(N_ * NONBONDED_BLOCKS_TO_ROW_ATOMS_RATIO));
-  return min(max_nonbonded_kernel_blocks, MAX_KERNEL_BLOCKS);
+  return get_max_nonbonded_kernel_blocks(N_, cutoff_);
 }
 
 template <typename RealType>
 int NonbondedInteractionGroup<RealType>::get_cur_nonbonded_kernel_blocks()
     const {
   const int NR = max_vector_int(this->row_idx_counts_);
+  const double ratio = nonbonded_blocks_ratio(static_cast<double>(cutoff_));
   int cur_nonbonded_kernel_blocks =
-      static_cast<int>(ceil(NR * NONBONDED_BLOCKS_TO_ROW_ATOMS_RATIO));
+      static_cast<int>(ceil(NR * ratio));
   int max_nonbonded_kernel_blocks = this->get_max_nonbonded_kernel_blocks();
   return min(cur_nonbonded_kernel_blocks, max_nonbonded_kernel_blocks);
 }

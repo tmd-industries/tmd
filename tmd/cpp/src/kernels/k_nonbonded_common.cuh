@@ -20,9 +20,20 @@
 
 namespace tmd {
 
-// Heuristic derived from DHFR with cutoff=1.2, where ixn_count ~= NR * 2.4
-static const double NONBONDED_BLOCKS_TO_ROW_ATOMS_RATIO = 1.2;
+// Heuristic derived from DHFR with cutoff=1.2, where ixn_count ~= NR * 2.4.
+// The number of interacting tiles scales as cutoff^3.  This baseline ratio is
+// for the reference cutoff of 1.2 nm; callers should use
+// nonbonded_blocks_ratio(cutoff) to obtain the scaled value.
+static const double NONBONDED_BLOCKS_TO_ROW_ATOMS_BASE_RATIO = 1.2;
+static const double NONBONDED_BLOCKS_REFERENCE_CUTOFF = 1.2;
 static const int NONBONDED_KERNEL_THREADS_PER_BLOCK = 64;
+
+// Scale the kernel-block heuristic for a given cutoff.  Interaction volume
+// grows as cutoff^3, so the optimal block count should grow proportionally.
+inline double nonbonded_blocks_ratio(double cutoff) {
+  double r = cutoff / NONBONDED_BLOCKS_REFERENCE_CUTOFF;
+  return NONBONDED_BLOCKS_TO_ROW_ATOMS_BASE_RATIO * r * r * r;
+}
 
 #define PI 3.141592653589793115997963468544185161
 #define TWO_OVER_SQRT_PI 1.128379167095512595889238330988549829708

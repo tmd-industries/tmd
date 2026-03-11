@@ -196,3 +196,97 @@ class TestCUDANonbondedCutoff:
         du_dx, _, u = impl.execute(coords, params, box)
         assert np.isfinite(u), f"IxnGroup energy not finite for cutoff={cutoff}"
         assert np.all(np.isfinite(du_dx)), f"IxnGroup forces not finite for cutoff={cutoff}"
+
+
+class TestBlockCountScaling:
+    """Verify that the cutoff-scaled kernel block heuristic produces correct results.
+
+    The heuristic scales as (cutoff / 1.2)^3 so that larger cutoffs launch
+    enough CUDA blocks to cover the increased number of interacting tiles.
+    We test this indirectly: if the block count were too low the kernel would
+    silently drop tile interactions and the energy would disagree with the
+    Python reference.
+    """
+
+    @pytest.fixture()
+    def dense_system(self):
+        """A moderately dense system that stresses the block-count heuristic."""
+        rng = np.random.default_rng(2026)
+        N = 128
+        coords = rng.random((N, 3)).astype(np.float64) * 2.5
+        box = np.eye(3) * 4.0  # large enough for cutoff=1.4 + padding
+
+        params = np.zeros((N, 4), dtype=np.float64)
+        params[:, 0] = (rng.random(N) - 0.5) * 0.2   # charges
+        params[:, 1] = rng.random(N) * 0.04            # sigma/2
+        params[:, 2] = rng.random(N) * 0.08            # sqrt(eps)
+        params[:, 3] = 0.0                              # w
+
+        exclusion_idxs = np.zeros((0, 2), dtype=np.int32)
+        scale_factors = np.zeros((0, 2), dtype=np.float64)
+        return N, coords, params, box, exclusion_idxs, scale_factors
+
+    @pytest.mark.parametrize("cutoff", [1.0, 1.2, 1.4])
+    def test_cuda_matches_reference_with_scaled_blocks(self, dense_system, cutoff):
+        """CUDA energy must match Python reference at non-default cutoffs.
+
+        A too-small block count would cause the CUDA kernel to miss tile
+        interactions, producing an energy that diverges from the reference.
+        """
+        from tmd.potentials import Nonbonded
+        from tmd.potentials.nonbonded import nonbonded_block_unsummed
+
+        N, coords, params, box, exclusion_idxs, scale_factors = dense_system
+        beta = compute_beta(cutoff)
+
+        nb = Nonbonded(N, exclusion_idxs, scale_factors, beta, cutoff)
+        impl = nb.to_gpu(np.float64).unbound_impl
+        _, _, u_cuda = impl.execute(coords, params, box)
+
+        u_ref_block = np.array(nonbonded_block_unsummed(coords, coords, box, params, params, beta, cutoff))
+        u_ref = np.sum(np.triu(u_ref_block, k=1))
+
+        np.testing.assert_allclose(u_cuda, u_ref, rtol=1e-5, atol=1e-8)
+
+    @pytest.mark.parametrize("cutoff", [1.0, 1.2, 1.4])
+    def test_ixn_group_matches_reference_with_scaled_blocks(self, dense_system, cutoff):
+        """NonbondedInteractionGroup energy must match reference at cutoff=1.4."""
+        from tmd.potentials import NonbondedInteractionGroup
+        from tmd.potentials.nonbonded import nonbonded_block_unsummed
+
+        N, coords, params, box, _, _ = dense_system
+        beta = compute_beta(cutoff)
+
+        ligand_idxs = np.arange(16, dtype=np.int32)
+        env_idxs = np.arange(16, N, dtype=np.int32)
+
+        ixn = NonbondedInteractionGroup(N, ligand_idxs, beta, cutoff, col_atom_idxs=env_idxs)
+        impl = ixn.to_gpu(np.float64).unbound_impl
+
+        _, _, u_cuda = impl.execute(coords, params, box)
+
+        # Python reference: ligand-env block
+        u_ref_block = np.array(
+            nonbonded_block_unsummed(
+                coords[ligand_idxs], coords[env_idxs], box,
+                params[ligand_idxs], params[env_idxs], beta, cutoff,
+            )
+        )
+        u_ref = float(np.sum(u_ref_block))
+
+        np.testing.assert_allclose(u_cuda, u_ref, rtol=1e-5, atol=1e-8)
+
+    @pytest.mark.parametrize("cutoff", [1.0, 1.2, 1.4])
+    def test_forces_finite_with_scaled_blocks(self, dense_system, cutoff):
+        """Forces must remain finite when block count is scaled for larger cutoffs."""
+        from tmd.potentials import Nonbonded
+
+        N, coords, params, box, exclusion_idxs, scale_factors = dense_system
+        beta = compute_beta(cutoff)
+
+        nb = Nonbonded(N, exclusion_idxs, scale_factors, beta, cutoff)
+        impl = nb.to_gpu(np.float64).unbound_impl
+
+        du_dx, _, u = impl.execute(coords, params, box)
+        assert np.isfinite(u), f"Energy not finite for cutoff={cutoff}"
+        assert np.all(np.isfinite(du_dx)), f"Forces not finite for cutoff={cutoff}"
