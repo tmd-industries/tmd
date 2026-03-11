@@ -24,6 +24,7 @@ from jax.typing import ArrayLike
 from numpy.typing import NDArray
 from scipy.special import binom
 
+from tmd.constants import DEFAULT_NONBONDED_CUTOFF
 from tmd.potentials import jax_utils
 from tmd.potentials.jax_utils import (
     DEFAULT_CHUNK_SIZE,
@@ -35,21 +36,17 @@ from tmd.potentials.jax_utils import (
 )
 
 
-def switch_fn(dij, cutoff=1.2):
+def switch_fn(dij, cutoff=DEFAULT_NONBONDED_CUTOFF):
     """heuristic switching function
 
     intended to:
     * have {f, f', f''} go to 0 at cutoff
     * keep "switch_fn(dij) * erfc(beta * dij)" as close as possible to "erfc(beta * dij)"
-        for the range dij in [0, 1.2), for beta = 2.0
+        for the range dij in [0, cutoff), for beta = compute_beta(cutoff)
 
     usage notes:
     * not necessarily intended for use with LJ
-
-    TODO
-    * respond to user-specified cutoff
     """
-    cutoff = 1.2  # NOTE: intentionally overrides user input for now
     f = jnp.power(jnp.cos((jnp.pi * jnp.power(dij / cutoff, 8)) / 2), 3)
     return jnp.where(dij < cutoff, f, 0)
 
