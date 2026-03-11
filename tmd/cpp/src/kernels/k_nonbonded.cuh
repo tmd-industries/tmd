@@ -140,7 +140,7 @@ void __device__ v_nonbonded_unified(
     const RealType *__restrict__ coords,  // [N * 3]
     const RealType *__restrict__ params,  // [N * PARAMS_PER_ATOM]
     const RealType *__restrict__ box, __int128 &energy_accumulator,
-    const RealType beta, const RealType cutoff, const RealType cutoff_squared,
+    const RealType beta, const RealType cutoff,
     const int *__restrict__ ixn_tiles,
     const unsigned int *__restrict__ ixn_atoms,
     unsigned long long *__restrict__ du_dx,
@@ -152,6 +152,8 @@ void __device__ v_nonbonded_unified(
   const RealType inv_box_x = rcp_rn(box_x);
   const RealType inv_box_y = rcp_rn(box_y);
   const RealType inv_box_z = rcp_rn(box_z);
+
+  const RealType cutoff_squared = cutoff * cutoff;
 
   int row_block_idx = ixn_tiles[tile_idx];
 
@@ -449,8 +451,6 @@ void __global__ k_nonbonded_unified(
 
   const int tile_offset = threadIdx.x % tile_size;
 
-  const RealType cutoff_squared = cutoff * cutoff;
-
   const unsigned int interactions = ixn_count[system_idx];
 
   const unsigned int NR = row_indice_counts[system_idx];
@@ -499,13 +499,13 @@ void __global__ k_nonbonded_unified(
         v_nonbonded_unified<RealType, 0, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 1>(
             tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
-            energy_accumulator, beta, cutoff, cutoff_squared, tiles_ptr,
+            energy_accumulator, beta, cutoff, tiles_ptr,
             ixn_atom_ptr, du_dx_ptr, du_dp_ptr);
       } else {
         v_nonbonded_unified<RealType, 1, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 1>(
             tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
-            energy_accumulator, beta, cutoff, cutoff_squared, tiles_ptr,
+            energy_accumulator, beta, cutoff, tiles_ptr,
             ixn_atom_ptr, du_dx_ptr, du_dp_ptr);
       };
     } else {
@@ -513,13 +513,13 @@ void __global__ k_nonbonded_unified(
         v_nonbonded_unified<RealType, 0, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 0>(
             tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
-            energy_accumulator, beta, cutoff, cutoff_squared, tiles_ptr,
+            energy_accumulator, beta, cutoff, tiles_ptr,
             ixn_atom_ptr, du_dx_ptr, du_dp_ptr);
       } else {
         v_nonbonded_unified<RealType, 1, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 0>(
             tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
-            energy_accumulator, beta, cutoff, cutoff_squared, tiles_ptr,
+            energy_accumulator, beta, cutoff, tiles_ptr,
             ixn_atom_ptr, du_dx_ptr, du_dp_ptr);
       };
     }
