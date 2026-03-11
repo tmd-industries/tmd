@@ -22,6 +22,7 @@ from numpy.typing import NDArray
 from openmm import app, openmm, unit
 from rdkit import Chem
 
+from tmd.constants import DEFAULT_NONBONDED_CUTOFF
 from tmd.fe.system import HostSystem
 from tmd.fe.utils import get_romol_conf
 from tmd.ff import get_water_ff_model
@@ -326,7 +327,7 @@ def load_pdb_system(
     protein_ff: str,
     water_ff: str,
     box_margin: float = 0.0,
-    cutoff: float = 1.2,
+    cutoff: float = DEFAULT_NONBONDED_CUTOFF,
 ) -> HostConfig:
     """
     Load a protein system. Useful for when using an pre-existing system that has been solvated/equilibrated.
@@ -448,6 +449,7 @@ def build_host_config_from_omm(
     box_margin: float = 0.0,
     water_model: str = "tip3p",
     add_membrane: bool = False,
+    cutoff: float = DEFAULT_NONBONDED_CUTOFF,
 ):
     """
     Build a solvated system system from an existing OpenMM modeller object and Forcefield. Useful for having more fine-grain
@@ -544,7 +546,7 @@ def build_host_config_from_omm(
         )
 
     (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
-        solvated_omm_host_system, cutoff=1.2
+        solvated_omm_host_system, cutoff=cutoff
     )
 
     solvated_host_system = HostSystem(
@@ -584,6 +586,7 @@ def build_protein_system(
     ionic_concentration: float = 0.0,
     neutralize: bool = False,
     box_margin: float = 0.0,
+    cutoff: float = DEFAULT_NONBONDED_CUTOFF,
 ) -> HostConfig:
     """
     Build a solvated protein system with a 10A padding.
@@ -611,12 +614,13 @@ def build_protein_system(
     box_margin: Amount of box_margin to add to box, in nanometers
         Avoids clashes within the system
 
+    cutoff: float
+        Nonbonded cutoff in nm. Defaults to DEFAULT_NONBONDED_CUTOFF.
+
     Returns
     -------
     HostConfig
     """
-
-    host_ff = app.ForceField(f"{protein_ff}.xml", f"{water_ff}.xml")
     if isinstance(host_pdbfile, str):
         assert os.path.exists(host_pdbfile)
         host_pdb = app.PDBFile(host_pdbfile)
@@ -635,6 +639,7 @@ def build_protein_system(
         padding=1.0,
         mols=mols,
         box_margin=box_margin,
+        cutoff=cutoff,
     )
 
 
@@ -646,6 +651,7 @@ def build_membrane_system(
     ionic_concentration: float = 0.0,
     neutralize: bool = False,
     box_margin: float = 0.0,
+    cutoff: float = DEFAULT_NONBONDED_CUTOFF,
 ) -> HostConfig:
     """
     Build a solvated protein+membrane system with a 10A padding. Assumes the PDB file is posed such that the XY plane
@@ -703,6 +709,7 @@ def build_membrane_system(
         mols=mols,
         box_margin=box_margin,
         add_membrane=True,
+        cutoff=cutoff,
     )
 
 
@@ -713,6 +720,7 @@ def build_water_system(
     ionic_concentration: float = 0.0,
     neutralize: bool = False,
     box_margin: float = 0.0,
+    cutoff: float = DEFAULT_NONBONDED_CUTOFF,
 ) -> HostConfig:
     """
     Build a water system with a cubic box with each side of length box_width.
@@ -789,7 +797,7 @@ def build_water_system(
     omm_host_system = construct_default_omm_system(ff, modeller, ion_res_templates)
 
     (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
-        omm_host_system, cutoff=1.2
+        omm_host_system, cutoff=cutoff
     )
 
     solvated_host_system = HostSystem(

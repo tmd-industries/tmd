@@ -18,6 +18,8 @@ from typing import Optional
 import numpy as np
 from numpy.typing import NDArray
 
+from tmd.constants import DEFAULT_NONBONDED_CUTOFF
+
 
 def validate_lambda_schedule(lambda_schedule: NDArray, num_windows: int):
     """Must go monotonically from 0 to 1 in num_windows steps"""
@@ -56,7 +58,7 @@ def bisection_lambda_schedule(
     return np.linspace(min_lamb, max_lamb, schedule_windows, dtype=np.float64)
 
 
-def construct_pre_optimized_absolute_lambda_schedule_solvent(num_windows: int, nonbonded_cutoff: float = 1.2):
+def construct_pre_optimized_absolute_lambda_schedule_solvent(num_windows: int, nonbonded_cutoff: float = DEFAULT_NONBONDED_CUTOFF):
     """Linearly interpolate a lambda schedule pre-optimized for solvent decoupling
 
     Notes
@@ -67,7 +69,9 @@ def construct_pre_optimized_absolute_lambda_schedule_solvent(num_windows: int, n
         (since decoupling_distance = lambda * nonbonded_cutoff,
         this schedule will not be appropriate for nonbonded_cutoff != 1.2!)
     """
-    assert nonbonded_cutoff == 1.2
+    assert nonbonded_cutoff == DEFAULT_NONBONDED_CUTOFF, (
+        f"Pre-optimized schedule only valid for cutoff={DEFAULT_NONBONDED_CUTOFF}, got {nonbonded_cutoff}"
+    )
 
     # fmt: off
     solvent_decoupling_protocol = np.array(

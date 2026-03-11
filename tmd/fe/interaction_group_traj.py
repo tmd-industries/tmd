@@ -19,6 +19,7 @@ from jax import jit, vmap
 from jax import numpy as jnp
 from numpy.typing import NDArray as Array
 
+from tmd.constants import DEFAULT_NONBONDED_BETA, DEFAULT_NONBONDED_CUTOFF
 from tmd.potentials import nonbonded
 from tmd.potentials.jax_utils import distance2
 
@@ -31,8 +32,8 @@ PairFxn = Callable[[Position, Position, Param, Param, Box], Energy]
 
 # example pair function
 def nb_pair_fxn(x_a, x_b, param_a, param_b, box):
-    beta = 2.0
-    cutoff = 1.2
+    beta = DEFAULT_NONBONDED_BETA
+    cutoff = DEFAULT_NONBONDED_CUTOFF
 
     # alchemical distance
     r2 = distance2(x_a, x_b, box)
@@ -67,7 +68,7 @@ def env_mask_within_cutoff(x_env, x_lig, box, cutoff):
 
 
 class InteractionGroupTraj:
-    def __init__(self, xs: Array, box_diags: Array, ligand_idxs: Array, env_idxs: Array, cutoff=1.2, verbose=True):
+    def __init__(self, xs: Array, box_diags: Array, ligand_idxs: Array, env_idxs: Array, cutoff=DEFAULT_NONBONDED_CUTOFF, verbose=True):
         r"""support [U_ig(x; params) for x in traj]
 
         where U_ig = \sum_i \sum_j pair_fxn(||x_j - x_j||; params_i, params_j)
