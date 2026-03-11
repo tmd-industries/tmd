@@ -24,9 +24,9 @@ from tmd import potentials
 from tmd.constants import (
     DEFAULT_CHIRAL_ATOM_RESTRAINT_K,
     DEFAULT_CHIRAL_BOND_RESTRAINT_K,
-    DEFAULT_NONBONDED_BETA,
     DEFAULT_NONBONDED_CUTOFF,
     NBParamIdx,
+    compute_beta,
 )
 from tmd.fe import chiral_utils
 from tmd.fe.system import GuestSystem
@@ -44,7 +44,6 @@ _SCALE_13 = 1.0
 _SCALE_14_LJ = 0.5
 _SCALE_14_Q = 0.5  # TODO: investigate FEP performance regression when set to OFF value
 
-_BETA = DEFAULT_NONBONDED_BETA
 _CUTOFF = DEFAULT_NONBONDED_CUTOFF
 
 
@@ -100,6 +99,7 @@ class HostGuestTopology:
         self.num_host_atoms = self.host_nonbonded.potential.num_atoms
         self.num_water_atoms = num_water_atoms
         self.num_other_atoms = self.num_host_atoms - num_water_atoms
+        self.guest_topology.cutoff = self.host_nonbonded.potential.cutoff
 
         # create a copy to not modify the original parameters
         self.hg_nb_ixn_params = self.host_nonbonded.params.copy()
@@ -245,7 +245,7 @@ class HostGuestTopology:
 
 
 class BaseTopology:
-    def __init__(self, mol, forcefield):
+    def __init__(self, mol, forcefield, cutoff=_CUTOFF):
         """
         Utility for working with a single ligand.
 
@@ -257,9 +257,13 @@ class BaseTopology:
         forcefield: ff.Forcefield
             A convenience wrapper for forcefield lists.
 
+        cutoff: float
+            Nonbonded cutoff distance in nanometers.
+
         """
         self.mol = mol
         self.ff = forcefield
+        self.cutoff = cutoff
 
     def get_num_atoms(self):
         return self.mol.GetNumAtoms()
@@ -291,8 +295,8 @@ class BaseTopology:
             self.mol, scale12=_SCALE_12, scale13=_SCALE_13, scale14_q=_SCALE_14_Q, scale14_lj=_SCALE_14_LJ
         )
 
-        beta = _BETA
-        cutoff = _CUTOFF  # solve for this analytically later
+        cutoff = self.cutoff
+        beta = compute_beta(cutoff)
 
         N = len(q_params)
 
@@ -362,8 +366,8 @@ class BaseTopology:
         params[:, NBParamIdx.LJ_EPS_IDX] = eps_ij * rescale_mask[:, 1]
         params[:, NBParamIdx.W_IDX] = 0.0
 
-        beta = _BETA
-        cutoff = _CUTOFF  # solve for this analytically later
+        cutoff = self.cutoff
+        beta = compute_beta(cutoff)
 
         return params, potentials.NonbondedPairListPrecomputed(N, inclusion_idxs, beta, cutoff)
 
@@ -488,7 +492,7 @@ class BaseTopology:
 
 
 class MultiTopology(BaseTopology):
-    def __init__(self, mols, forcefield: Forcefield):
+    def __init__(self, mols, forcefield: Forcefield, cutoff=_CUTOFF):
         """
         Utility for working with multiple ligands in a single simulation. Copies of all ligands
         will be present after merging. Useful to equilibrating a system to an entire set of ligands.
@@ -501,10 +505,14 @@ class MultiTopology(BaseTopology):
         forcefield: ff.Forcefield
             A convenience wrapper for forcefield lists.
 
+        cutoff: float
+            Nonbonded cutoff distance in nanometers.
+
         """
         assert len(mols) > 0
         self.mols = mols
         self.ff = forcefield
+        self.cutoff = cutoff
 
     def get_num_atoms(self):
         return sum([mol.GetNumAtoms() for mol in self.mols])
@@ -583,8 +591,8 @@ class MultiTopology(BaseTopology):
         N = self.get_num_atoms()
         w_coords = jnp.zeros((N, 1))
 
-        beta = _BETA
-        cutoff = _CUTOFF  # solve for this analytically later
+        cutoff = self.cutoff
+        beta = compute_beta(cutoff)
 
         qlj_params = jnp.concatenate(
             [jnp.reshape(q_params, (-1, 1)), jnp.reshape(lj_params, (-1, 2)), w_coords], axis=1
@@ -612,7 +620,7 @@ class MultiTopology(BaseTopology):
         beta = None
         cutoff = None
         for mol in self.mols:
-            params, pairlist = BaseTopology(mol, self.ff).parameterize_nonbonded_pairlist(
+            params, pairlist = BaseTopology(mol, self.ff, cutoff=self.cutoff).parameterize_nonbonded_pairlist(
                 ff_q_params, ff_q_params_intra, ff_lj_params, ff_lj_params_intra, intramol_params=intramol_params
             )
             mol_parameters.append(params)
@@ -682,7 +690,7 @@ class MultiTopology(BaseTopology):
 
 
 class DualTopology(MultiTopology):
-    def __init__(self, mol_a, mol_b, forcefield):
+    def __init__(self, mol_a, mol_b, forcefield, cutoff=_CUTOFF):
         """
         Utility for working with two ligands via dual topology. Both copies of the ligand
         will be present after merging.
@@ -698,8 +706,11 @@ class DualTopology(MultiTopology):
         forcefield: ff.Forcefield
             A convenience wrapper for forcefield lists.
 
+        cutoff: float
+            Nonbonded cutoff distance in nanometers.
+
         """
-        super().__init__([mol_a, mol_b], forcefield)
+        super().__init__([mol_a, mol_b], forcefield, cutoff=cutoff)
 
 
 def exclude_all_ligand_ligand_ixns(num_host_atoms: int, num_guest_atoms: int) -> tuple[NDArray, NDArray]:
@@ -718,8 +729,7 @@ def get_ligand_ixn_pots_params(
     env_idxs: Optional[NDArray],
     host_nb_params: Array | NDArray,
     guest_params_ixn_env: Array | NDArray,
-    beta=DEFAULT_NONBONDED_BETA,
-    cutoff=DEFAULT_NONBONDED_CUTOFF,
+    cutoff: float = DEFAULT_NONBONDED_CUTOFF,
 ) -> tuple[potentials.NonbondedInteractionGroup, Array | NDArray]:
     """
     Return the interaction group potentials and corresponding parameters
@@ -741,6 +751,7 @@ def get_ligand_ixn_pots_params(
         Parameters for the guest (ligand) NB interactions with the
         environment atoms.
     """
+    beta = compute_beta(cutoff)
 
     # Init
     env_idxs = env_idxs if env_idxs is not None else np.array([])
