@@ -45,6 +45,41 @@ DEFAULT_BOND_IS_PRESENT_K = 50.0
 
 DEFAULT_POSITIONAL_RESTRAINT_K = 4000.0
 
+# nonbonded defaults
+DEFAULT_NONBONDED_CUTOFF = 1.2  # nanometers
+DEFAULT_NONBONDED_BETA = 2.0  # erfc damping parameter, matched to DEFAULT_NONBONDED_CUTOFF
+
+
+def compute_beta(cutoff: float) -> float:
+    """Compute the erfc damping parameter beta for a given nonbonded cutoff.
+
+    Chooses beta such that erfc(beta * cutoff) is small, ensuring that the
+    unswitched erfc contribution is negligible at the cutoff distance.
+
+    For the default cutoff of 1.2 nm, returns exactly 2.0 to match the
+    historical default. For other cutoffs, beta is computed so that
+    erfc(beta * cutoff) = erfc(2.4), preserving the same level of
+    truncation error.
+
+    Parameters
+    ----------
+    cutoff : float
+        Nonbonded cutoff distance in nanometers.
+
+    Returns
+    -------
+    float
+        The beta (erfc damping) parameter.
+    """
+    if cutoff == DEFAULT_NONBONDED_CUTOFF:
+        return DEFAULT_NONBONDED_BETA
+
+    from scipy.special import erfc, erfcinv
+
+    tolerance = float(erfc(DEFAULT_NONBONDED_BETA * DEFAULT_NONBONDED_CUTOFF))
+    return erfcinv(tolerance) / cutoff
+
+
 # thresholds
 # The MAX_FORCE_NORM was selected empirically based on looking at the forces of simulations that crashed
 MAX_FORCE_NORM = 20_000.0  # used to check norms in the gradient computations
