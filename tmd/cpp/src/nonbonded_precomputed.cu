@@ -112,7 +112,7 @@ void NonbondedPairListPrecomputed<RealType>::execute_device(
 
     kernel_ptrs_[kernel_idx]<<<blocks, tpb, 0, stream>>>(
         num_atoms_, B_, d_x, d_p, d_box, d_idxs_, d_system_idxs_, beta_,
-        cutoff_ * cutoff_, d_du_dx, d_du_dp,
+        cutoff_, d_du_dx, d_du_dp,
         d_u == nullptr ? nullptr : d_u_buffer_);
     gpuErrchk(cudaPeekAtLastError());
 

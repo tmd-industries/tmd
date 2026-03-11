@@ -28,13 +28,11 @@ static const int NONBONDED_KERNEL_THREADS_PER_BLOCK = 64;
 #define TWO_OVER_SQRT_PI 1.128379167095512595889238330988549829708
 
 // f64 switch fxn
-double __device__ __forceinline__ switch_fn(double dij) {
-  // constants
-  constexpr double cutoff = 1.2;
+double __device__ __forceinline__ switch_fn(double dij, double cutoff) {
   if (dij >= cutoff) {
     return 0.0;
   }
-  constexpr double inv_cutoff = 1 / cutoff;
+  const double inv_cutoff = 1 / cutoff;
   constexpr double pi = static_cast<double>(PI);
 
   // (dij/cutoff)^8
@@ -49,9 +47,7 @@ double __device__ __forceinline__ switch_fn(double dij) {
   return cos_arg3;
 }
 
-double __device__ __forceinline__ d_switch_fn_dr(double dij) {
-  // constants
-  constexpr double cutoff = 1.2;
+double __device__ __forceinline__ d_switch_fn_dr(double dij, double cutoff) {
   constexpr double pi = static_cast<double>(PI);
 
   if (dij >= cutoff) {
@@ -59,10 +55,10 @@ double __device__ __forceinline__ d_switch_fn_dr(double dij) {
   }
 
   // cutoff^-8
-  constexpr double inv_cutoff = 1.0 / cutoff;
-  constexpr double k2 = inv_cutoff * inv_cutoff;
-  constexpr double k4 = k2 * k2;
-  constexpr double k8 = k4 * k4;
+  const double inv_cutoff = 1.0 / cutoff;
+  const double k2 = inv_cutoff * inv_cutoff;
+  const double k4 = k2 * k2;
+  const double k8 = k4 * k4;
 
   // dij^7 and dij^8
   double dij2 = dij * dij;
@@ -79,7 +75,7 @@ double __device__ __forceinline__ d_switch_fn_dr(double dij) {
   sincos(arg, &sin_arg, &cos_arg);
 
   double cos_arg2 = cos_arg * cos_arg;
-  constexpr double minus_12_pi_k8 = -12 * pi * k8;
+  const double minus_12_pi_k8 = -12 * pi * k8;
 
   return dij7 * sin_arg * cos_arg2 * minus_12_pi_k8;
 }
@@ -94,16 +90,17 @@ double __device__ __forceinline__ d_erfc_beta_r_dr(double beta, double dij) {
 double __device__ __forceinline__ real_es_factor(double real_beta, double dij,
                                                  double inv_dij,
                                                  double inv_d2ij,
+                                                 double cutoff,
                                                  double &damping_factor) {
   double beta_dij = real_beta * dij;
   double erfc_beta_dij = erfc(beta_dij);
-  double sr = switch_fn(dij);
+  double sr = switch_fn(dij, cutoff);
 
   // write erfc(beta * dij) * switch_fn(dij) into damping_factor
   damping_factor = erfc_beta_dij * sr;
 
   // chain rule
-  double dsdr = d_switch_fn_dr(dij);
+  double dsdr = d_switch_fn_dr(dij, cutoff);
   double debd = d_erfc_beta_r_dr(real_beta, dij);
   double damping_factor_prime = (erfc_beta_dij * dsdr) + (debd * sr);
   double d_es_dr = damping_factor_prime * inv_dij - damping_factor * inv_d2ij;
@@ -112,13 +109,12 @@ double __device__ __forceinline__ real_es_factor(double real_beta, double dij,
 
 // f32 code path merges (1) switch_fn and its deriv into switch_fn_and_deriv
 // and (2) a fast erfc approximation and its deriv into fast_erfc_and_deriv
-float __device__ __forceinline__ switch_fn_and_deriv(float dij, float &dsdr) {
+float __device__ __forceinline__ switch_fn_and_deriv(float dij, float &dsdr,
+                                                     float cutoff) {
 
-  // constants
-  constexpr float cutoff = 1.2;
   constexpr float pi = static_cast<float>(PI);
   constexpr float pi_over_2 = 0.5f * pi;
-  constexpr float inv_cutoff = 1 / cutoff;
+  const float inv_cutoff = 1 / cutoff;
 
   if (dij >= cutoff) {
     dsdr = 0.0f;
@@ -126,9 +122,9 @@ float __device__ __forceinline__ switch_fn_and_deriv(float dij, float &dsdr) {
   }
 
   // cutoff^-8
-  constexpr float k2 = inv_cutoff * inv_cutoff;
-  constexpr float k4 = k2 * k2;
-  constexpr float k8 = k4 * k4;
+  const float k2 = inv_cutoff * inv_cutoff;
+  const float k4 = k2 * k2;
+  const float k8 = k4 * k4;
 
   // dij^7, dij^8
   float dij2 = dij * dij;
@@ -150,7 +146,7 @@ float __device__ __forceinline__ switch_fn_and_deriv(float dij, float &dsdr) {
   float cos_arg3 = cos_arg2 * cos_arg;
 
   // write d switch_fn d r
-  constexpr float minus_12_pi_k8 = -12 * pi * k8;
+  const float minus_12_pi_k8 = -12 * pi * k8;
   dsdr = minus_12_pi_k8 * dij7 * sin_arg * cos_arg2;
 
   // return switch_fn(dij)
@@ -184,6 +180,7 @@ float __device__ __forceinline__ fast_erfc_and_deriv(float x, float &dedx) {
 
 float __device__ __forceinline__ real_es_factor(float real_beta, float dij,
                                                 float inv_dij, float inv_d2ij,
+                                                float cutoff,
                                                 float &damping_factor) {
   float beta_dij = real_beta * dij;
 
@@ -196,7 +193,7 @@ float __device__ __forceinline__ real_es_factor(float real_beta, float dij,
   // g(dij) = switch_fn(dij)
   // sr = g(dij), dsdr = g'(dij)
   float dsdr;
-  float sr = switch_fn_and_deriv(dij, dsdr);
+  float sr = switch_fn_and_deriv(dij, dsdr, cutoff);
 
   damping_factor = ebd * sr;
   float damping_factor_prime = (ebd * dsdr) + (debd * sr);
@@ -211,7 +208,8 @@ float __device__ __forceinline__ real_es_factor(float real_beta, float dij,
 template <typename RealType, bool COMPUTE_U>
 void __device__ __forceinline__ compute_electrostatics(
     const RealType charge_scale, const RealType qi, const RealType qj,
-    const RealType d2ij, const RealType beta, RealType &dij, RealType &inv_dij,
+    const RealType d2ij, const RealType beta, const RealType cutoff,
+    RealType &dij, RealType &inv_dij,
     RealType &inv_d2ij, RealType &damping_factor, RealType &es_prefactor,
     RealType &u) {
   inv_dij = rsqrt(d2ij);
@@ -221,7 +219,7 @@ void __device__ __forceinline__ compute_electrostatics(
 
   RealType qij = qi * qj;
   es_prefactor = charge_scale * qij * inv_dij *
-                 real_es_factor(beta, dij, inv_dij, inv_d2ij, damping_factor);
+                 real_es_factor(beta, dij, inv_dij, inv_d2ij, cutoff, damping_factor);
 
   if (COMPUTE_U) {
     u = charge_scale * qij * inv_dij * damping_factor;

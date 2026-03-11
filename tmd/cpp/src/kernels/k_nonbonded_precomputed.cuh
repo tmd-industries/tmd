@@ -33,10 +33,11 @@ void __global__ k_nonbonded_precomputed(
     const RealType *__restrict__ box,    // box vectors
     const int *__restrict__ pair_idxs,   // [M, 2] pair-list of atoms
     const int *__restrict__ system_idxs, // [M] Which system the pair is from
-    const RealType beta, const RealType cutoff_squared,
+    const RealType beta, const RealType cutoff,
     unsigned long long *__restrict__ du_dx,
     unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer) {
 
+  const RealType cutoff_squared = cutoff * cutoff;
   int pair_idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (pair_idx < M) {
 
@@ -105,7 +106,8 @@ void __global__ k_nonbonded_precomputed(
 
         RealType damping_factor;
         RealType es_factor = real_es_factor(beta, d_ij, inv_dij,
-                                            inv_dij * inv_dij, damping_factor);
+                                            inv_dij * inv_dij, cutoff,
+                                            damping_factor);
 
         if (COMPUTE_U) {
           // energies

@@ -31,7 +31,7 @@ NonbondedMolEnergyPotential<RealType>::NonbondedMolEnergyPotential(
     const RealType beta, const RealType cutoff)
     : N_(N), num_target_mols_(target_mols.size()),
       beta_(static_cast<RealType>(beta)),
-      cutoff_squared_(static_cast<RealType>(cutoff * cutoff)) {
+      cutoff_(static_cast<RealType>(cutoff)) {
   verify_group_idxs(N_, target_mols);
 
   if (num_target_mols_ <= 0) {
@@ -84,7 +84,7 @@ void NonbondedMolEnergyPotential<RealType>::mol_energies_device(
           N, static_cast<int>(d_target_atom_idxs_.length),
           d_target_atom_idxs_.data, d_target_mol_idxs_.data,
           d_target_mol_offsets_.data, d_coords, d_params, d_box, beta_,
-          cutoff_squared_, d_atom_energy_buffer_.data);
+          cutoff_, d_atom_energy_buffer_.data);
   gpuErrchk(cudaPeekAtLastError());
 
   k_accumulate_atom_energies_to_per_mol_energies<RealType, BLOCK_SIZE>

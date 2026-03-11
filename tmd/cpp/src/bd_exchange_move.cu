@@ -60,7 +60,7 @@ BDExchangeMove<RealType>::BDExchangeMove(
       num_target_mols_(target_mols.size()), nb_beta_(nb_beta),
       beta_(static_cast<RealType>(1.0 /
                                   (BOLTZ * static_cast<double>(temperature)))),
-      cutoff_squared_(cutoff * cutoff), batch_size_(batch_size),
+      cutoff_(cutoff), batch_size_(batch_size),
       num_intermediates_per_reduce_(ceil_divide(N_, WEIGHT_THREADS_PER_BLOCK)),
       num_attempted_(num_systems, 0),
       mol_potential_(N, target_mols, nb_beta, cutoff),
@@ -372,7 +372,7 @@ void BDExchangeMove<RealType>::compute_incremental_log_weights_device(
 
   k_atom_by_atom_energies<RealType><<<atom_by_atom_grid, tpb, 0, stream>>>(
       N, mol_size_ * batch_size_, d_target_mol_atoms_.data, nullptr, d_coords,
-      d_params, d_box, nb_beta_, cutoff_squared_,
+      d_params, d_box, nb_beta_, cutoff_,
       d_sample_per_atom_energy_buffer_.data);
   gpuErrchk(cudaPeekAtLastError());
 
@@ -391,7 +391,7 @@ void BDExchangeMove<RealType>::compute_incremental_log_weights_device(
   k_atom_by_atom_energies<RealType><<<atom_by_atom_grid, tpb, 0, stream>>>(
       N, mol_size_ * batch_size_, d_target_mol_atoms_.data,
       d_intermediate_coords_.data, d_coords, d_params, d_box, nb_beta_,
-      cutoff_squared_, d_sample_per_atom_energy_buffer_.data);
+      cutoff_, d_sample_per_atom_energy_buffer_.data);
   gpuErrchk(cudaPeekAtLastError());
 
   // Add in the new weights from the individual waters
