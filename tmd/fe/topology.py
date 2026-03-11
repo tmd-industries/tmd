@@ -21,7 +21,13 @@ from jax import Array
 from numpy.typing import NDArray
 
 from tmd import potentials
-from tmd.constants import DEFAULT_CHIRAL_ATOM_RESTRAINT_K, DEFAULT_CHIRAL_BOND_RESTRAINT_K, NBParamIdx
+from tmd.constants import (
+    DEFAULT_CHIRAL_ATOM_RESTRAINT_K,
+    DEFAULT_CHIRAL_BOND_RESTRAINT_K,
+    DEFAULT_NONBONDED_BETA,
+    DEFAULT_NONBONDED_CUTOFF,
+    NBParamIdx,
+)
 from tmd.fe import chiral_utils
 from tmd.fe.system import GuestSystem
 from tmd.fe.utils import get_romol_conf
@@ -38,8 +44,8 @@ _SCALE_13 = 1.0
 _SCALE_14_LJ = 0.5
 _SCALE_14_Q = 0.5  # TODO: investigate FEP performance regression when set to OFF value
 
-_BETA = 2.0
-_CUTOFF = 1.2
+_BETA = DEFAULT_NONBONDED_BETA
+_CUTOFF = DEFAULT_NONBONDED_CUTOFF
 
 
 class AtomMappingError(Exception):
@@ -712,8 +718,8 @@ def get_ligand_ixn_pots_params(
     env_idxs: Optional[NDArray],
     host_nb_params: Array | NDArray,
     guest_params_ixn_env: Array | NDArray,
-    beta=2.0,
-    cutoff=1.2,
+    beta=DEFAULT_NONBONDED_BETA,
+    cutoff=DEFAULT_NONBONDED_CUTOFF,
 ) -> tuple[potentials.NonbondedInteractionGroup, Array | NDArray]:
     """
     Return the interaction group potentials and corresponding parameters

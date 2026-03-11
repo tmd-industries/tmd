@@ -18,6 +18,7 @@ from numpy.typing import NDArray
 from openmm import unit
 
 from tmd import constants, potentials
+from tmd.constants import compute_beta
 from tmd.ff.handlers.utils import canonicalize_bond
 
 
@@ -25,7 +26,7 @@ def value(quantity):
     return quantity.value_in_unit_system(unit.md_unit_system)
 
 
-def deserialize_nonbonded_force(force, N):
+def deserialize_nonbonded_force(force, N, cutoff=None):
     num_atoms = force.getNumParticles()
 
     charge_params_ = []
@@ -135,7 +136,7 @@ def deserialize_nonbonded_force(force, N):
     nb_params[:, constants.NBParamIdx.LJ_SIG_IDX] = nb_params[:, 1] / 2
     nb_params[:, constants.NBParamIdx.LJ_EPS_IDX] = np.sqrt(nb_params[:, 2])
 
-    beta = 2.0  # erfc correction
+    beta = compute_beta(cutoff) if cutoff is not None else compute_beta()  # erfc correction
 
     # use the same scale factors for electrostatics and lj
     scale_factors = np.array(scale_factors_)
@@ -261,7 +262,7 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
     nb_forces = get_forces_by_type(omm_forces, mm.NonbondedForce)
     if len(nb_forces) > 0:
         assert len(nb_forces) == 1, "Only supports a single nonbonded force"
-        nb_params, exclusion_idxs, beta, scale_factors = deserialize_nonbonded_force(nb_forces[0], N)
+        nb_params, exclusion_idxs, beta, scale_factors = deserialize_nonbonded_force(nb_forces[0], N, cutoff)
 
         nonbonded = potentials.Nonbonded(N, exclusion_idxs, scale_factors, beta, cutoff).bind(nb_params)
 
