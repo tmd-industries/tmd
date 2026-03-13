@@ -64,6 +64,7 @@ from tmd.fe.stored_arrays import StoredArrays
 from tmd.ff import Forcefield
 from tmd.lib import LangevinIntegrator, custom_ops
 from tmd.md import builders
+from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.hrex import HREX, HREXDiagnostics, ReplicaIdx
 from tmd.md.states import CoordsVelBox
 from tmd.potentials import (
@@ -564,7 +565,9 @@ def test_get_water_sampler_params_complex():
     np.testing.assert_array_equal(orig_prot_nb_params, water_sampler_nb_params[state.protein_idxs])
 
 
-def test_get_context_with_non_contiguous_waters():
+@pytest.mark.parametrize("neutralize", [True, False])
+@pytest.mark.parametrize("ionic_concentration", [0.0, 0.15])
+def test_get_context_with_non_contiguous_waters(neutralize, ionic_concentration):
     """Verify that the build_protein_system ensures waters are contiguous and that the water sampler can be
     configured successfully."""
     cdk8_system = Path(__file__).parent / "data" / "cdk8_incorrectly_ordered_waters.pdb"
@@ -574,20 +577,35 @@ def test_get_context_with_non_contiguous_waters():
     mol_a = mols_by_name["43"]
     mol_b = mols_by_name["44"]
 
+    print("RUNNING")
     forcefield = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     core = get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+    print("Start")
     st = SingleTopology(mol_a, mol_b, core, forcefield)
 
+    print("Building")
     host_config = builders.build_protein_system(
-        str(cdk8_system), forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
+        str(cdk8_system),
+        forcefield.protein_ff,
+        forcefield.water_ff,
+        mols=[mol_a, mol_b],
+        box_margin=0.1,
+        ionic_concentration=ionic_concentration,
+        neutralize=neutralize,
     )
+    print("Protein Built")
+
+    bond_pot = host_config.host_system.bond.potential
+    all_group_idxs = get_group_indices(get_bond_list(bond_pot), host_config.conf.shape[0])
+    print(all_group_idxs[19453])
 
     lamb = 0.5  # arbitrary
 
     # Water sampling parameters required
     md_params = MDParams(10, 0, 10, seed, water_sampling_params=WaterSamplingParams())
-
+    print("SETUP")
     state = setup_initial_state(st, lamb, host_config, DEFAULT_TEMP, 2026, False)
+    print("HERE")
     ctxt = get_context(state, md_params=md_params)
     movers = ctxt.get_movers()
     assert len(movers) == 2

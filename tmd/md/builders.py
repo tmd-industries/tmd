@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Callable
 
@@ -188,6 +189,19 @@ def replace_clashy_waters(
     assert num_system_atoms == modeller.topology.getNumAtoms(), "replace_clashy_waters changed the number of atoms"
 
 
+def _iterate_water_residues(omm_topology: app.Topology) -> Iterator[app.Residue]:
+    """Iterator of water residues in the OpenMM topology"""
+    for residue in omm_topology.residues():
+        if residue.name == WATER_RESIDUE_NAME:
+            yield residue
+
+
+def count_water_atoms(omm_topology: app.Topology) -> int:
+    """Count the number of water atoms in an OpenMM Topology"""
+    water_res = _iterate_water_residues(omm_topology)
+    return sum([len(list(residue.atoms())) for residue in water_res])
+
+
 def make_waters_contiguous(modeller):
     """Modifies the OpenMM modeller and topology such that waters are contiguous. Done to ensure that water
     sampling is possible in downstream code.
@@ -199,7 +213,7 @@ def make_waters_contiguous(modeller):
     modeller: app.Modeller
         Modeller to update in place
     """
-    water_residues = [residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]
+    water_residues = list(_iterate_water_residues(modeller.topology))
     water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_residues])
     if np.all(np.diff(water_indices) == 1):
         return
@@ -313,9 +327,7 @@ def solvate_modeller(
         bad_chains = [chain for chain in current_topo.chains() if chain.id == dummy_chain_id]
         modeller.delete(bad_chains)
     try:
-        water_res = next(
-            [atom for atom in res.atoms()] for res in modeller.topology.residues() if res.name == WATER_RESIDUE_NAME
-        )
+        water_res = next([atom for atom in res.atoms()] for res in _iterate_water_residues(modeller.topology))
         assert len(water_res) == 3, "Expect water residues to have three atoms"
     except StopIteration:
         pass
@@ -365,8 +377,7 @@ def load_pdb_system(
     modeller = app.Modeller(host_pdb.topology, host_pdb.positions)
     host_coords = strip_units(host_pdb.positions)
 
-    water_residues_in_pdb = [residue for residue in host_pdb.topology.residues() if residue.name == WATER_RESIDUE_NAME]
-    num_water_atoms = sum([len(list(residue.atoms())) for residue in water_residues_in_pdb])
+    num_water_atoms = count_water_atoms(modeller.topology)
 
     ion_res_templates = get_ion_residue_templates(modeller)
 
@@ -530,9 +541,7 @@ def build_host_config_from_omm(
         "Modeller no longer matches number of atoms in the system"
     )
 
-    num_water_atoms = (
-        len([residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]) * 3
-    )
+    num_water_atoms = count_water_atoms(modeller.topology)
     num_membrane_atoms = 0
     if add_membrane:
         num_membrane_atoms = sum(
@@ -802,7 +811,7 @@ def build_water_system(
 
     # Determine box from the system's coordinates
     box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
-    num_water_atoms = len(solvated_host_coords)
+    num_water_atoms = count_water_atoms(modeller.topology)
 
     return HostConfig(
         host_system=solvated_host_system,
