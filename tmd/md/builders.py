@@ -531,11 +531,11 @@ def build_host_config_from_omm(
         replace_clashy_waters(modeller, box, mols, host_ff, water_model)
     solvated_host_coords = strip_units(modeller.positions)
 
+    make_waters_contiguous(modeller)
+
     ion_res_templates = get_ion_residue_templates(modeller)
 
     solvated_omm_host_system = construct_system_func(host_ff, modeller, ion_res_templates)
-
-    make_waters_contiguous(modeller)
 
     assert modeller.topology.getNumAtoms() == solvated_host_coords.shape[0], (
         "Modeller no longer matches number of atoms in the system"

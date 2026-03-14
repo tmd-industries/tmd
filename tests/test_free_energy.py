@@ -65,6 +65,7 @@ from tmd.ff import Forcefield
 from tmd.lib import LangevinIntegrator, custom_ops
 from tmd.md import builders
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
+from tmd.md.builders import _iterate_water_residues
 from tmd.md.hrex import HREX, HREXDiagnostics, ReplicaIdx
 from tmd.md.states import CoordsVelBox
 from tmd.potentials import (
@@ -577,13 +578,10 @@ def test_get_context_with_non_contiguous_waters(neutralize, ionic_concentration)
     mol_a = mols_by_name["43"]
     mol_b = mols_by_name["44"]
 
-    print("RUNNING")
     forcefield = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     core = get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
-    print("Start")
     st = SingleTopology(mol_a, mol_b, core, forcefield)
 
-    print("Building")
     host_config = builders.build_protein_system(
         str(cdk8_system),
         forcefield.protein_ff,
@@ -593,19 +591,24 @@ def test_get_context_with_non_contiguous_waters(neutralize, ionic_concentration)
         ionic_concentration=ionic_concentration,
         neutralize=neutralize,
     )
-    print("Protein Built")
+
+    # Ensure that the water atoms in the topology match that of the group indices
+    water_residues = list(_iterate_water_residues(host_config.omm_topology))
 
     bond_pot = host_config.host_system.bond.potential
     all_group_idxs = get_group_indices(get_bond_list(bond_pot), host_config.conf.shape[0])
-    print(all_group_idxs[19453])
+    water_groups = [set([int(i) for i in group]) for group in all_group_idxs if len(group) == 3]
+    for res in water_residues:
+        ref_set = set([atom.index for atom in res.atoms()])
+        assert ref_set in water_groups
 
     lamb = 0.5  # arbitrary
 
     # Water sampling parameters required
     md_params = MDParams(10, 0, 10, seed, water_sampling_params=WaterSamplingParams())
-    print("SETUP")
+
     state = setup_initial_state(st, lamb, host_config, DEFAULT_TEMP, 2026, False)
-    print("HERE")
+
     ctxt = get_context(state, md_params=md_params)
     movers = ctxt.get_movers()
     assert len(movers) == 2
