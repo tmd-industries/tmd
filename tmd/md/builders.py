@@ -531,6 +531,8 @@ def build_host_config_from_omm(
         replace_clashy_waters(modeller, box, mols, host_ff, water_model)
     solvated_host_coords = strip_units(modeller.positions)
 
+    # Make sure to modify the modeller and its topology before constructing the system and setting up the ion res templates.
+    # Otherwise the system can become inconsistent with the topology.
     make_waters_contiguous(modeller)
 
     ion_res_templates = get_ion_residue_templates(modeller)
