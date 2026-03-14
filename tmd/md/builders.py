@@ -199,7 +199,7 @@ def _iterate_water_residues(omm_topology: app.Topology) -> Iterator[app.Residue]
 def count_water_atoms(omm_topology: app.Topology) -> int:
     """Count the number of water atoms in an OpenMM Topology"""
     water_res = _iterate_water_residues(omm_topology)
-    return sum([len(list(residue.atoms())) for residue in water_res])
+    return sum([len(residue) for residue in water_res])
 
 
 def make_waters_contiguous(modeller):
@@ -221,7 +221,7 @@ def make_waters_contiguous(modeller):
     num_system_atoms = modeller.topology.getNumAtoms()
 
     water_positions = strip_units(modeller.positions)[water_indices]
-    modeller.delete([atom for res in water_residues for atom in res.atoms()])
+    modeller.delete(water_residues)
     topology = app.Topology()
     water_chain = topology.addChain("W")
     for res in water_residues:
@@ -327,7 +327,7 @@ def solvate_modeller(
         bad_chains = [chain for chain in current_topo.chains() if chain.id == dummy_chain_id]
         modeller.delete(bad_chains)
     try:
-        water_res = next([atom for atom in res.atoms()] for res in _iterate_water_residues(modeller.topology))
+        water_res = next(_iterate_water_residues(modeller.topology))
         assert len(water_res) == 3, "Expect water residues to have three atoms"
     except StopIteration:
         pass
@@ -545,11 +545,7 @@ def build_host_config_from_omm(
     num_membrane_atoms = 0
     if add_membrane:
         num_membrane_atoms = sum(
-            [
-                len(list(residue.atoms()))
-                for residue in modeller.topology.residues()
-                if residue.name == POPC_RESIDUE_NAME
-            ]
+            [len(residue) for residue in modeller.topology.residues() if residue.name == POPC_RESIDUE_NAME]
         )
 
     (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
