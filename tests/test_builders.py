@@ -36,6 +36,7 @@ from tmd.md.builders import (
     build_protein_system,
     build_water_system,
     construct_default_omm_system,
+    count_water_atoms,
     get_box_from_coords,
     load_pdb_system,
     make_waters_contiguous,
@@ -146,6 +147,7 @@ def validate_host_config_ions_and_charge(
     expected_host_charge: int,
     neutralized: bool,
     input_host_charge: int = 0,
+    num_protein_atoms: int = 0,
 ):
     mol_formal_charge = 0
 
@@ -165,6 +167,11 @@ def validate_host_config_ions_and_charge(
 
     all_group_idxs = get_group_indices(bond_indices, host_config.conf.shape[0])
     ions = [group for group in all_group_idxs if len(group) == 1]
+
+    assert len(ions) + host_config.num_water_atoms + host_config.num_membrane_atoms + num_protein_atoms == len(
+        host_config.conf
+    )
+
     num_ions = len(ions)
     if ionic_concentration > 0.0:
         assert num_ions > 0
@@ -299,6 +306,11 @@ def test_protein_system_ion_concentration_and_neutralization(ionic_concentration
         ionic_concentration=ionic_concentration,
         neutralize=neutralize,
     )
+
+    host_pdb = app.PDBFile(host_pdbfile)
+    starting_waters = count_water_atoms(host_pdb.topology)
+    protein_atoms = host_pdb.topology.getNumAtoms() - starting_waters
+
     input_host_charge = int(np.rint(reference_protein_charge))
     expected_charge = reference_protein_charge
     if neutralize:
@@ -310,6 +322,7 @@ def test_protein_system_ion_concentration_and_neutralization(ionic_concentration
         expected_charge,
         neutralize,
         input_host_charge=input_host_charge,
+        num_protein_atoms=protein_atoms,
     )
     for mol in [positive_mol, negative_mol, neutral_mol]:
         host_config = build_protein_system(
@@ -331,6 +344,7 @@ def test_protein_system_ion_concentration_and_neutralization(ionic_concentration
             expected_charge,
             neutralize,
             input_host_charge=input_host_charge,
+            num_protein_atoms=protein_atoms,
         )
 
 
