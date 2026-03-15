@@ -71,7 +71,7 @@ def get_ion_residue_templates(modeller) -> dict[app.Residue, str]:
     """
     residue_templates = {}
     for res_name in (SODIUM_ION_RESIDUE, CHLORINE_ION_RESIDUE, MAGNESIUM_ION_RESIDUE, DUMMY_ATOM_TEMPLATE):
-        residue_templates.update({res: res_name for res in modeller.getTopology().residues() if res.name == res_name})
+        residue_templates.update({res: res_name for res in modeller.getTopology().residues() if res.name.strip() == res_name})
     return residue_templates
 
 
