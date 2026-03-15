@@ -32,6 +32,7 @@ from tmd.fe.rbfe import (
     optimize_initial_state_from_pre_optimized,
     setup_initial_state,
     setup_initial_states,
+    setup_optimized_host,
 )
 from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
@@ -72,8 +73,8 @@ class IdentitySTRest(SingleTopologyREST):
         return idxs
 
 
-def simulate_solvent_rest(
-    st: IdentitySTRest, md_params: MDParams, host_config: HostConfig, n_windows: int, min_overlap: float
+def generate_rest_hrex_result(
+    st: IdentitySTRest, md_params: MDParams, host_config: HostConfig | None, n_windows: int, min_overlap: float
 ) -> HREXSimulationResult:
     # You could also do 0.0 -> 1.0 to get twice the endstates
     lambda_interval = (0.0, 0.5)
@@ -122,6 +123,7 @@ def simulate_rest(
     md_params: MDParams,
     n_windows: int,
     min_overlap: float,
+    leg: str,
 ):
     Path(file_client.full_path(output_path)).mkdir(parents=True, exist_ok=True)
     np.random.seed(md_params.seed)
@@ -137,9 +139,12 @@ def simulate_rest(
         temperature_scale_interpolation=md_params.hrex_params.rest_params.temperature_scale_interpolation,
     )
 
-    host_config = build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
+    host_config = None
+    if leg == "solvent":
+        host_config = build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
+        host_config = setup_optimized_host(host_config, [mol], ff)
     start = time.perf_counter()
-    res = simulate_solvent_rest(st, md_params, host_config, n_windows, min_overlap)
+    res = generate_rest_hrex_result(st, md_params, host_config, n_windows, min_overlap)
     took = time.perf_counter() - start
 
     pred_dg = float(np.sum(res.final_result.dGs))
@@ -188,6 +193,7 @@ def main():
     parser.add_argument("--n_eq_steps", default=200_000, type=int, help="Number of steps to perform equilibration")
     parser.add_argument("--n_frames", default=2000, type=int, help="Number of frames to generation")
     parser.add_argument("--steps_per_frame", default=400, type=int, help="Steps per frame")
+    parser.add_argument("--leg", default="solvent", choices=["vacuum", "solvent"])
     parser.add_argument(
         "--n_windows", default=DEFAULT_NUM_WINDOWS, type=int, help="Max number of windows from bisection"
     )
@@ -286,6 +292,7 @@ def main():
             md_params,
             args.n_windows,
             args.min_overlap,
+            args.leg,
         )
         futures.append(fut)
     for fut in iterate_completed_futures(futures):
