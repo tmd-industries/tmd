@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, 
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
+from tmd.md.builders import verify_pdb_structure
 from tmd.md.exchange.utils import get_radius_of_mol_pair
 from tmd.parallel.client import CUDAPoolClient, FileClient, SerialClient
 from tmd.parallel.utils import get_gpu_count
@@ -133,6 +134,9 @@ def main():
     file_client = FileClient(dest_dir)
 
     ff = Forcefield.load_from_file(args.forcefield)
+
+    if args.pdb_path is not None:
+        verify_pdb_structure(args.pdb_path, ff)
 
     mol_radius = get_radius_of_mol_pair(mol_a, mol_b)
 
