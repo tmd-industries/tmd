@@ -27,7 +27,7 @@ from rdkit import Chem
 from tmd.constants import DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, ONE_4PI_EPS0, NBParamIdx
 from tmd.fe.free_energy import HostConfig
 from tmd.fe.utils import get_romol_conf, read_sdf, read_sdf_mols_by_name, set_romol_conf
-from tmd.ff import get_water_ff_model
+from tmd.ff import Forcefield, get_water_ff_model
 from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
 from tmd.md.builders import (
     WATER_RESIDUE_NAME,
@@ -41,6 +41,7 @@ from tmd.md.builders import (
     load_pdb_system,
     make_waters_contiguous,
     strip_units,
+    verify_pdb_structure,
 )
 from tmd.md.minimizer import check_force_norm
 from tmd.potentials import Nonbonded
@@ -399,6 +400,31 @@ def test_build_protein_system_waters_before_protein():
             app.PDBFile.writeFile(modeller.getTopology(), modeller.getPositions(), file=ofs)
 
         build_protein_system(temp.name, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
+
+
+@pytest.mark.nocuda
+def test_verify_pdb_structure():
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
+        # The initial structure should be valid either provided as a string or as app.PDBFile
+        verify_pdb_structure(str(pdb_path), ff)
+        host_pdbfile = app.PDBFile(str(pdb_path))
+        verify_pdb_structure(host_pdbfile, ff)
+
+    top = app.Topology()
+    pos = unit.Quantity((), unit.angstroms)
+    modeller = app.Modeller(top, pos)
+
+    # Scale down the units, the new file should be invalid.
+    modeller.add(host_pdbfile.topology, (strip_units(host_pdbfile.positions) / 10) * unit.nanometers)
+
+    with NamedTemporaryFile(suffix=".pdb") as temp:
+        with open(temp.name, "w") as ofs:
+            app.PDBFile.writeFile(modeller.getTopology(), modeller.getPositions(), file=ofs)
+
+        with pytest.raises(RuntimeError, match="PDB structure contains clashing pairs of atoms"):
+            verify_pdb_structure(temp.name, ff)
 
 
 def test_build_protein_system():

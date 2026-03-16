@@ -22,10 +22,11 @@ import numpy as np
 from numpy.typing import NDArray
 from openmm import app, openmm, unit
 from rdkit import Chem
+from scipy.spatial import KDTree
 
 from tmd.fe.system import HostSystem
 from tmd.fe.utils import get_romol_conf
-from tmd.ff import get_water_ff_model
+from tmd.ff import Forcefield, get_water_ff_model
 from tmd.ff.handlers import openmm_deserializer
 from tmd.potentials.jax_utils import idxs_within_cutoff
 from tmd.utils import path_to_internal_file
@@ -54,6 +55,40 @@ class HostConfig:
         object.__setattr__(self, "masses", np.asarray(self.masses, dtype=np.float32))
         object.__setattr__(self, "conf", np.asarray(self.conf, dtype=np.float32))
         object.__setattr__(self, "box", np.asarray(self.box, dtype=np.float32))
+
+
+def verify_pdb_structure(pdb_file: app.PDBFile | str, ff: Forcefield, distance_threshold: float = 0.01):
+    """Verify that a PDB file does not contain any clashes using Scipy.
+
+    TMD assumes that structures have been prepared upstream and are free of clashes. Default TMD minimization does
+    not attempt to minimize protein-protein clashes.
+
+    Parameters
+    ----------
+    pdb_file: app.PDBFile or string
+        PDBFile or path to the PDB
+    ff: Forcefield
+        Forcefield that will be used with the protein
+    distance_threshold: float
+        Distance between atoms that qualifies as a clash, units in nanometers. Defaults to 0.01
+
+    Raises
+    ------
+        RuntimeError:
+            Failed to prepare the system or the system has a clash.
+    """
+
+    try:
+        host_config = load_pdb_system(pdb_file, ff.protein_ff, ff.water_ff)
+    except Exception as e:
+        raise RuntimeError("Unable to load PDB system") from e
+
+    kd_tree = KDTree(host_config.conf)
+
+    clashy_atoms = kd_tree.query_pairs(distance_threshold)
+
+    if len(clashy_atoms) > 0:
+        raise RuntimeError(f"PDB structure contains clashing pairs of atoms: {clashy_atoms}")
 
 
 def strip_units(coords) -> NDArray[np.float64]:
@@ -377,7 +412,7 @@ def load_pdb_system(
         raise TypeError("host_pdbfile must be a string or an openmm PDBFile object")
 
     modeller = app.Modeller(host_pdb.topology, host_pdb.positions)
-    host_coords = strip_units(host_pdb.positions)
+    host_coords = strip_units(modeller.positions)
 
     num_water_atoms = count_water_atoms(modeller.topology)
 
@@ -399,9 +434,12 @@ def load_pdb_system(
 
     # Note that getPeriodicBoxVectors() can produce a significantly different box
     # to get_box_from_coords. Use getPeriodicBoxVectors() as it appears to produce smaller
-    # boxes when loading a PDB on its own
+    # boxes when loading a PDB on its own. In some cases OpenMM returns no box, in which case recompute.
     box = host_pdb.topology.getPeriodicBoxVectors()
-    box = strip_units(box)
+    if box is None:
+        box = get_box_from_coords(host_coords)
+    else:
+        box = strip_units(box)
     box += np.eye(3) * box_margin
 
     assert modeller.topology.getNumAtoms() == len(host_coords)
