@@ -938,7 +938,6 @@ def estimate_relative_free_energy_bisection_hrex_impl(
     if mode_flag is not None:
         # TBD: May want to disable batching if it is clear that it would trigger an OOM
         if mode_flag.lower() == "on":
-            warnings.warn("Turning on batch mode, but batch mode is already on")
             batch_simulations = True
         elif mode_flag.lower() == "off":
             warnings.warn("Turning off batch mode")
