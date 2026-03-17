@@ -1,17 +1,21 @@
 from rdkit import Chem
-from rdkit.Chem import AllChem, Draw
+from rdkit.Chem import AllChem, Draw, rdDepictor
 
 from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.utils import get_mol_name
 
 
 def plot_rest_region(single_top: SingleTopologyREST) -> Draw.MolsToGridImage:
+    """Generate an SVG grid of a pair of molecules from a SingleToplogyREST object."""
     assert isinstance(single_top, SingleTopologyREST), "Must provide SingleTopologyREST object"
 
     mol_a_idxs, mol_b_idxs = single_top.split_combined_idxs(single_top.base_rest_region_atom_idxs)
 
     mol_a = Chem.Mol(single_top.mol_a)
     mol_b = Chem.Mol(single_top.mol_b)
+
+    rdDepictor.SetPreferCoordGen(True)
+
     mol_a.RemoveAllConformers()
     mol_b.RemoveAllConformers()
     AllChem.Compute2DCoords(mol_a)
