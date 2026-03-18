@@ -144,6 +144,7 @@ def test_run_rbfe_graph_local(
                 assert (edge_dir / "atom_mapping.svg").is_file()
                 assert (edge_dir / "core.pkl").is_file()
                 assert (edge_dir / "ff.py").is_file()
+                assert (edge_dir / "rest_region.svg").is_file()
 
                 assert Forcefield.load_from_file(edge_dir / "ff.py") is not None
 
@@ -525,7 +526,8 @@ def test_run_rbfe_legs(
             assert (output_dir / "atom_mapping.svg").is_file()
             assert (output_dir / "core.pkl").is_file()
             assert (output_dir / "ff.py").is_file()
-            assert output_dir / "ddg_results.csv"
+            assert (output_dir / "ddg_results.csv").is_file()
+            assert (output_dir / "rest_region.svg").is_file()
 
             assert Forcefield.load_from_file(output_dir / "ff.py") is not None
 
@@ -751,7 +753,7 @@ def test_run_rbfe_legs_local(
             assert (output_dir / "atom_mapping.svg").is_file()
             assert (output_dir / "core.pkl").is_file()
             assert (output_dir / "ff.py").is_file()
-            assert output_dir / "ddg_results.csv"
+            assert (output_dir / "ddg_results.csv").is_file()
 
             assert Forcefield.load_from_file(output_dir / "ff.py") is not None
 
