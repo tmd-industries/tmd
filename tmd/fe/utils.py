@@ -488,6 +488,21 @@ def view_rest_region_3d(
     return view
 
 
+def match_smarts(mol: Chem.Mol, smarts: str) -> list[tuple]:
+    """Find all of the SMARTS matches in a molecule and return the matches"""
+    rdmol = Chem.Mol(mol)
+    qmol = Chem.MolFromSmarts(smarts)  # cannot catch the error
+    if qmol is None:
+        raise ValueError(f'RDKit could not parse the SMARTS string "{smarts}"')
+
+    # Perform matching
+    matches = list()
+    for match in rdmol.GetSubstructMatches(qmol, uniquify=False):
+        matches.append(tuple(match))
+
+    return matches
+
+
 def get_romol_bonds(mol: Chem.Mol) -> list[tuple[int, int]]:
     """
     Return bond idxs given a mol. These are not canonicalized.
