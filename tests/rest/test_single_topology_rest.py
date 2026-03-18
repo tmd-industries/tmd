@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,9 +21,9 @@ import jax
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from common import ligand_from_smiles
 from numpy.typing import NDArray
-from rdkit import Chem
-from rdkit.Chem import AllChem, rdMolDescriptors
+from rdkit.Chem import rdMolDescriptors
 
 from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS
 from tmd.fe import atom_mapping
@@ -37,7 +37,7 @@ from tmd.fe.rest.interpolation import (
     Symmetric,
     plot_interpolation_fxn,
 )
-from tmd.fe.rest.single_topology import SingleTopologyREST
+from tmd.fe.rest.single_topology import REST_REGION_ATOM_FLAG, SingleTopologyREST
 from tmd.fe.single_topology import SingleTopology
 from tmd.fe.system import GuestSystem
 from tmd.fe.utils import get_romol_conf, read_sdf_mols_by_name
@@ -247,12 +247,6 @@ def test_single_topology_rest_solvent(mol_pair, temperature_scale_interpolation_
     np.testing.assert_array_equal(U_complement, U_complement_ref)
 
 
-def get_mol(smiles: str):
-    mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
-    AllChem.EmbedMolecule(mol, randomSeed=2024)
-    return mol
-
-
 def get_identity_transformation(mol):
     n_atoms = mol.GetNumAtoms()
     core = np.tile(np.arange(n_atoms)[:, None], (1, 2))  # identity
@@ -270,19 +264,61 @@ def test_single_topology_rest_propers():
 
 def test_single_topology_rest_propers_identity():
     # benzene: no propers are scaled
-    benzene = get_mol("c1ccccc1")
+    benzene = ligand_from_smiles("c1ccccc1")
     st = get_identity_transformation(benzene)
     assert len(st.candidate_propers) == 0
 
     # cyclohexane: all 9 * 6 ring propers are scaled (|{H1, H2, C1}-C2-C3-{C4, H3, H4}| = 9 propers per C-C bond)
-    cyclohexane = get_mol("C1CCCCC1")
+    cyclohexane = ligand_from_smiles("C1CCCCC1")
     st = get_identity_transformation(cyclohexane)
     assert len(set(st.candidate_propers.values())) == 9 * 6
 
     # phenylcyclohexane: all 9 * 6 cyclohexane ring propers and 6 rotatable bond propers are scaled
-    phenylcyclohexane = get_mol("c1ccc(C2CCCCC2)cc1")
+    phenylcyclohexane = ligand_from_smiles("c1ccc(C2CCCCC2)cc1")
     st = get_identity_transformation(phenylcyclohexane)
     assert len(set(st.candidate_propers.values())) == 9 * 6 + 6
+
+
+@pytest.mark.parametrize("seed", [2026])
+def test_single_topology_custom_rest_atoms(seed):
+    """Test the ability to manually specify which atoms should be included in the REST region by setting
+    a boolean property on RDKit molecules.
+
+    This test verifies that users can override this behavior by setting the REST_REGION_ATOM_FLAG property
+    to `True` on specific atoms, ensuring that those atoms are included in the REST region regardless of default selection.
+    """
+    rng = np.random.default_rng(seed)
+    benzene = ligand_from_smiles("c1ccccc1")
+    st = get_identity_transformation(benzene)
+    assert len(st.rest_region_atom_idxs) == 0
+
+    random_rest_atoms = rng.choice(np.arange(benzene.GetNumAtoms(), dtype=np.int32), 3, replace=False)
+    for atom_idx in random_rest_atoms:
+        benzene.GetAtomWithIdx(int(atom_idx)).SetBoolProp(REST_REGION_ATOM_FLAG, True)
+
+    # Any atoms with the flag set to True, will be included in the rest region
+    st = get_identity_transformation(benzene)
+    assert set(st.rest_region_atom_idxs) == set([int(x) for x in random_rest_atoms])
+
+    for atom_idx in random_rest_atoms:
+        benzene.GetAtomWithIdx(int(atom_idx)).SetBoolProp(REST_REGION_ATOM_FLAG, False)
+
+    st = get_identity_transformation(benzene)
+    assert len(st.rest_region_atom_idxs) == 0
+
+    first_hydrogen_atom_idx = next(atom.GetIdx() for atom in benzene.GetAtoms() if atom.GetAtomicNum() == 1)
+    core = np.array([[first_hydrogen_atom_idx, first_hydrogen_atom_idx]])
+
+    st = SingleTopologyREST(benzene, benzene, core, forcefield, 2.0)
+    assert len(st.rest_region_atom_idxs) == st.get_num_atoms() - len(random_rest_atoms) * 2
+    assert len(st.rest_region_atom_idxs.intersection(random_rest_atoms)) == 0
+
+    # Remove the flags, should now include everything
+    for atom_idx in random_rest_atoms:
+        benzene.GetAtomWithIdx(int(atom_idx)).ClearProp(REST_REGION_ATOM_FLAG)
+
+    st = SingleTopologyREST(benzene, benzene, core, forcefield, 2.0)
+    assert len(st.rest_region_atom_idxs) == st.get_num_atoms()
 
 
 @pytest.mark.parametrize(
