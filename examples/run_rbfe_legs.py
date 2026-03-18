@@ -36,6 +36,7 @@ from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF
 from tmd.fe import atom_mapping
 from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, WaterSamplingParams
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
+from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.md.builders import verify_pdb_structure
@@ -104,6 +105,12 @@ def main():
         help="Overwrite existing predictions, otherwise will skip the completed legs",
     )
     parser.add_argument(
+        "--rest_smarts_patterns",
+        nargs="+",
+        default=None,
+        help="One or more SMARTS patterns to determine what atoms are in the REST region. If rest_max_temperature_scale is <= 1, this is unused",
+    )
+    parser.add_argument(
         "--experimental_field", default="kcal/mol experimental dG", help="Field that contains the experimental label."
     )
     parser.add_argument(
@@ -122,6 +129,11 @@ def main():
 
     mol_a = mols_by_name[args.mol_a]
     mol_b = mols_by_name[args.mol_b]
+
+    if args.rest_max_temperature_scale > 1.0 and args.rest_smarts_patterns is not None:
+        for pattern in args.rest_smarts_patterns:
+            assign_rest_atoms_from_smarts(mol_a, pattern)
+            assign_rest_atoms_from_smarts(mol_b, pattern)
 
     output_dir = args.output_dir
     if output_dir is None:
