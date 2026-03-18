@@ -223,7 +223,11 @@ def run_rbfe_leg(
     with open(file_client.full_path(edge_path / "ff.py"), "w") as ofs:
         ofs.write(ff.serialize())
 
-    if md_params.hrex_params is not None and md_params.hrex_params.rest_params is not None and md_params.hrex_params.rest_params.max_temperature_scale > 1.0:
+    if (
+        md_params.hrex_params is not None
+        and md_params.hrex_params.rest_params is not None
+        and md_params.hrex_params.rest_params.max_temperature_scale > 1.0
+    ):
         single_topology = SingleTopologyREST(
             mol_a,
             mol_b,
