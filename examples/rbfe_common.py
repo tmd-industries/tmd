@@ -22,6 +22,7 @@ from tmd.fe.rbfe import (
 )
 from tmd.fe.rest.plots import plot_rest_region
 from tmd.fe.rest.single_topology import SingleTopologyREST
+from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
 from tmd.fe.utils import get_mol_experimental_value, get_mol_name, plot_atom_mapping_grid
 from tmd.ff import Forcefield
 from tmd.parallel.client import AbstractFileClient
@@ -228,13 +229,19 @@ def run_rbfe_leg(
         and md_params.hrex_params.rest_params is not None
         and md_params.hrex_params.rest_params.max_temperature_scale > 1.0
     ):
+        rest_params = md_params.hrex_params.rest_params
+        if rest_params.smarts is not None:
+            for patt in rest_params.smarts:
+                assign_rest_atoms_from_smarts(mol_a, patt)
+                assign_rest_atoms_from_smarts(mol_b, patt)
+
         single_topology = SingleTopologyREST(
             mol_a,
             mol_b,
             core,
             ff,
-            max_temperature_scale=md_params.hrex_params.rest_params.max_temperature_scale,
-            temperature_scale_interpolation=md_params.hrex_params.rest_params.temperature_scale_interpolation,
+            max_temperature_scale=rest_params.max_temperature_scale,
+            temperature_scale_interpolation=rest_params.temperature_scale_interpolation,
         )
         file_client.store(
             edge_path / "rest_region.svg",

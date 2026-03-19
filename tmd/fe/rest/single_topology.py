@@ -146,13 +146,12 @@ class SingleTopologyREST(SingleTopology):
                     outer_rest_idxs.add(nb_nb.GetIdx())
 
         # Handle user specified REST atoms
-        # If the user doesn't provide the flag then nothing is done
+        # If the user doesn't provide the flag then the atom is left as is
         # If the user marks the flag as True, include the atoms as part of the REST region
         # If the user marks the flag as False, exclude the atom from the REST region.
         excluded_atom_idxs = set()
         for atom in mol.GetAtoms():
             if atom.HasProp(REST_REGION_ATOM_FLAG):
-                # print("HERE WE GO", atom.GetIdx())
                 if atom.GetBoolProp(REST_REGION_ATOM_FLAG):
                     inner_rest_idxs.add(atom.GetIdx())
                 else:

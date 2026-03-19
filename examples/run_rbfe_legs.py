@@ -36,7 +36,6 @@ from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF
 from tmd.fe import atom_mapping
 from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, WaterSamplingParams
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
-from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.md.builders import verify_pdb_structure
@@ -130,11 +129,6 @@ def main():
     mol_a = mols_by_name[args.mol_a]
     mol_b = mols_by_name[args.mol_b]
 
-    if args.rest_max_temperature_scale > 1.0 and args.rest_smarts_patterns is not None:
-        for pattern in args.rest_smarts_patterns:
-            assign_rest_atoms_from_smarts(mol_a, pattern)
-            assign_rest_atoms_from_smarts(mol_b, pattern)
-
     output_dir = args.output_dir
     if output_dir is None:
         date = datetime.now()
@@ -159,7 +153,11 @@ def main():
         seed=args.seed,
         hrex_params=HREXParams(
             optimize_target_overlap=args.target_overlap,
-            rest_params=RESTParams(args.rest_max_temperature_scale, args.rest_temperature_scale_interpolation),
+            rest_params=RESTParams(
+                args.rest_max_temperature_scale,
+                args.rest_temperature_scale_interpolation,
+                smarts=args.rest_smarts_patterns,
+            ),
         ),
         local_md_params=LocalMDParams(
             args.local_md_steps, k=args.local_md_k, min_radius=args.local_md_radius, max_radius=args.local_md_radius
