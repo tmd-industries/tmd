@@ -104,6 +104,12 @@ def main():
         help="Overwrite existing predictions, otherwise will skip the completed legs",
     )
     parser.add_argument(
+        "--rest_smarts_patterns",
+        nargs="+",
+        default=None,
+        help="One or more SMARTS patterns to determine what atoms are in the REST region. If rest_max_temperature_scale is <= 1, this is unused",
+    )
+    parser.add_argument(
         "--experimental_field", default="kcal/mol experimental dG", help="Field that contains the experimental label."
     )
     parser.add_argument(
@@ -147,7 +153,11 @@ def main():
         seed=args.seed,
         hrex_params=HREXParams(
             optimize_target_overlap=args.target_overlap,
-            rest_params=RESTParams(args.rest_max_temperature_scale, args.rest_temperature_scale_interpolation),
+            rest_params=RESTParams(
+                args.rest_max_temperature_scale,
+                args.rest_temperature_scale_interpolation,
+                smarts=args.rest_smarts_patterns,
+            ),
         ),
         local_md_params=LocalMDParams(
             args.local_md_steps, k=args.local_md_k, min_radius=args.local_md_radius, max_radius=args.local_md_radius

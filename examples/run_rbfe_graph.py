@@ -100,6 +100,12 @@ def main():
         choices=["kcal/mol", "kJ/mol", "uM", "nM"],
         help="Units of the experimental label.",
     )
+    parser.add_argument(
+        "--rest_smarts_patterns",
+        nargs="+",
+        default=None,
+        help="One or more SMARTS patterns to determine what atoms are in the REST region. If rest_max_temperature_scale is <= 1, this is unused",
+    )
     args = parser.parse_args()
 
     if "complex" in args.legs:
@@ -162,7 +168,11 @@ def main():
             seed=args.seed,
             hrex_params=HREXParams(
                 optimize_target_overlap=args.target_overlap,
-                rest_params=RESTParams(args.rest_max_temperature_scale, args.rest_temperature_scale_interpolation),
+                rest_params=RESTParams(
+                    args.rest_max_temperature_scale,
+                    args.rest_temperature_scale_interpolation,
+                    smarts=args.rest_smarts_patterns,
+                ),
             ),
             local_md_params=LocalMDParams(
                 args.local_md_steps,

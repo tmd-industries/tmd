@@ -1155,7 +1155,7 @@ def estimate_relative_free_energy_bisection_hrex(
             max_temperature_scale=hrex_params.rest_params.max_temperature_scale,
             temperature_scale_interpolation=hrex_params.rest_params.temperature_scale_interpolation,
         )
-        if hrex_params.rest_params
+        if hrex_params.rest_params is not None
         else SingleTopology(mol_a, mol_b, core, ff)
     )
 
