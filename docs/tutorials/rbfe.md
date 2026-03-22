@@ -44,7 +44,7 @@ python examples/build_rbfe_graph.py ../rbfe-datasets/jacs/tyk2/ligands.sdf tyk2_
 
 ## Running the RBFE Graph
 
-Once the `tyk2_map.json` map is generated, you can run an RBFE simulation. First, you’ll need to select a forcefield.
+Once the `tyk2_map.json` map is generated, you can run an RBFE simulation. First, you will need to select a forcefield.
 
 ### Select a Forcefield
 
@@ -82,4 +82,4 @@ On a RTX 4090, a typical Tyk2 graph should take approximately 6 hours, though th
 Once finished, the CSVs `dg_results.csv` and `ddg_results.csv` will be written to `tyk2_rbfe_tutorial/`, which can be used to plot the RBFE run’s performance. The directory also contains plots for analyzing each edge’s simulation.
 
 > [!NOTE]
-> The command is idempotent, so if you need to rerun the command all completed legs will be skiped.
+> The command is idempotent, so if you need to rerun the command all completed legs will be skipped.
