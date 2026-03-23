@@ -9,7 +9,7 @@ from tmd.fe.utils import get_mol_name, match_smarts
 def assign_rest_atoms_from_smarts(mol: Chem.Mol, smarts: str):
     """Assigns flags to an RDKit Mol that indicate atoms should be part of the REST region using a SMARTS pattern.
 
-    Refer to tmd.fe.rest.single_topology.SingleToplogyREST for more details on REST
+    Refer to tmd.fe.rest.single_topology.SingleTopologyREST for more details on REST
 
     Flags are preserved when written out using RDKit's SDWriter.
     """
