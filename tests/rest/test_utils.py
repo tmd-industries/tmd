@@ -43,6 +43,8 @@ def test_assign_rest_atoms_from_smarts(smarts):
 
     st = SingleTopologyREST(mol_a, mol_b, core, ff, 3.0)
 
+    # Verify that the original reference rest region is a subset
+    assert ref_rest_region.issubset(st.rest_region_atom_idxs)
     assert len(st.rest_region_atom_idxs.difference(ref_rest_region)) > 0
     assert st.rest_region_atom_idxs.intersection(matched_atom_idxs) == matched_atom_idxs
 
