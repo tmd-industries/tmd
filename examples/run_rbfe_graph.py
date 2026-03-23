@@ -23,6 +23,7 @@ from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, 
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
+from tmd.md.builders import verify_pdb_structure
 from tmd.md.exchange.utils import get_radius_of_mol_pair
 from tmd.parallel.client import CUDAMPSPoolClient, FileClient, iterate_completed_futures
 from tmd.parallel.utils import get_gpu_count
@@ -106,6 +107,7 @@ def main():
 
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
     np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
 
     with open(Path(args.graph_json).expanduser()) as ifs:
         edges_data = json.load(ifs)
@@ -128,6 +130,9 @@ def main():
     file_client = FileClient(dest_dir)
 
     ff = Forcefield.load_from_file(args.forcefield)
+
+    if args.pdb_path is not None:
+        verify_pdb_structure(args.pdb_path, ff)
 
     with open(dest_dir / "ff.py", "w") as ofs:
         ofs.write(ff.serialize())
@@ -170,7 +175,8 @@ def main():
             else None,
             water_sampling_params=WaterSamplingParams(radius=mol_radius + args.water_sampling_padding),
         )
-
+        # Shuffle the order of the legs to improve load balancing of work in different GPUs
+        rng.shuffle(args.legs)
         for leg_name in args.legs:
             fut = pool.submit(
                 run_rbfe_leg,

@@ -132,7 +132,7 @@ def run_edge(mol_a, mol_b, protein_path, n_windows):
 )
 @pytest.mark.nightly(reason="Takes a while to run")
 def test_confgen_hard_edges(src, dst):
-    protein_path = "tmd/testsystems/data/hif2a_nowater_min.pdb"
+    protein_path = "tmd/testsystems/fep_benchmark/hif2a/5tbm_prepared.pdb"
     with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as ligand_path:
         mols_by_name = read_sdf_mols_by_name(ligand_path)
 
@@ -154,7 +154,7 @@ def test_confgen_hard_edges(src, dst):
 )
 def test_confgen_spot_edges(src, dst):
     # spot check so we have something in unit testing.
-    protein_path = "tmd/testsystems/data/hif2a_nowater_min.pdb"
+    protein_path = "tmd/testsystems/fep_benchmark/hif2a/5tbm_prepared.pdb"
     with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as ligand_path:
         mols_by_name = read_sdf_mols_by_name(ligand_path)
 

@@ -30,7 +30,7 @@ Mover<RealType>::move_host(const int N, const RealType *h_x,
 
   cudaStream_t stream = static_cast<cudaStream_t>(0);
 
-  this->move(N, d_x.data, d_box.data, stream);
+  this->move(1, N, d_x.data, d_box.data, stream);
   gpuErrchk(cudaStreamSynchronize(stream));
   std::vector<RealType> out_coords(d_x.length);
   std::vector<RealType> out_box(d_box.length);

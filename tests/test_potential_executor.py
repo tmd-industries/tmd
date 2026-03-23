@@ -47,7 +47,7 @@ def get_potentials_and_frames(host_name: str | None, precision):
 
     host_config = None
     if host_name == "complex":
-        with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as protein_path:
+        with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as protein_path:
             host_config = builders.build_protein_system(
                 str(protein_path), ff.protein_ff, ff.water_ff, mols=[mol_a, mol_b], box_margin=0.1
             )

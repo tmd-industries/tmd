@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,7 +24,22 @@ from xml.dom import minidom
 import numpy as np
 from openmm import unit
 
-from tmd.ff.charges import AM1BCC_CHARGES, AM1CCC_CHARGES, PRECOMPUTED_CHARGES, SIMPLE_CHARGES
+from tmd.ff.charges import AM1BCC_CHARGES, AM1CCC_CHARGES, AMBER_AM1_CCC_CHARGES, PRECOMPUTED_CHARGES, SIMPLE_CHARGES
+
+CHARGE_TYPE_AMBER_AM1BCC = "AMBER-BCC"
+CHARGE_TYPE_AMBER_AM1CCC = "AMBER-CCC"
+CHARGE_TYPE_AM1BCC = "BCC"
+CHARGE_TYPE_AM1CCC = "CCC"
+CHARGE_TYPE_SIMPLE = "SC"
+CHARGE_TYPE_PRECOMPUTED = "PRECOMPUTED"
+
+BOND_TAG = "Bond"
+ANGLE_TAG = "Angle"
+PROPER_TAG = "Proper"
+IMPROPER_TAG = "Improper"
+VDW_TAG = "Atom"
+
+tags = [BOND_TAG, ANGLE_TAG, PROPER_TAG, IMPROPER_TAG, VDW_TAG]
 
 
 # (ytz): lol i think i wrote this originally
@@ -98,21 +114,26 @@ def parse_quantity(number_string):
     return to_md_units(quantity)
 
 
-BOND_TAG = "Bond"
-ANGLE_TAG = "Angle"
-PROPER_TAG = "Proper"
-IMPROPER_TAG = "Improper"
-VDW_TAG = "Atom"
-
-tags = [BOND_TAG, ANGLE_TAG, PROPER_TAG, IMPROPER_TAG, VDW_TAG]
-
-
 if __name__ == "__main__":
     parser = ArgumentParser(description="Convert an openforcefield XML FF to a tmd FF")
     parser.add_argument("input_path", help="Path to XML ff")
-    parser.add_argument("--charge_type", default="SC", choices=["AMBER-BCC", "SC", "CCC", "BCC", "PRECOMPUTED"])
+    parser.add_argument(
+        "--charge_type",
+        default=CHARGE_TYPE_AMBER_AM1CCC,
+        choices=[
+            CHARGE_TYPE_AMBER_AM1BCC,
+            CHARGE_TYPE_AMBER_AM1CCC,
+            CHARGE_TYPE_SIMPLE,
+            CHARGE_TYPE_AM1CCC,
+            CHARGE_TYPE_AM1BCC,
+            CHARGE_TYPE_PRECOMPUTED,
+        ],
+    )
     parser.add_argument("--output_path", help="Path to write FF file", default=None)
     args = parser.parse_args()
+
+    if args.charge_type == CHARGE_TYPE_SIMPLE:
+        print("Warning: Simple charges should only be used for testing")
 
     xmldoc = minidom.parse(args.input_path)
     forcefield: dict[str, Any] = {}
@@ -200,18 +221,20 @@ if __name__ == "__main__":
                     continue
                 props[key] = val
             forcefield["LennardJones"] = {"patterns": params, "props": props}
-    if args.charge_type == "CCC":
+    if args.charge_type == CHARGE_TYPE_AM1CCC:
         forcefield["AM1CCC"] = AM1CCC_CHARGES
-    elif args.charge_type == "SC":
+    elif args.charge_type == CHARGE_TYPE_SIMPLE:
         forcefield["SimpleCharge"] = SIMPLE_CHARGES
-    elif args.charge_type == "BCC":
+    elif args.charge_type == CHARGE_TYPE_AM1BCC:
         forcefield["AM1BCC"] = AM1BCC_CHARGES
-    elif args.charge_type == "AMBER-BCC":
+    elif args.charge_type == CHARGE_TYPE_AMBER_AM1CCC:
+        forcefield["AmberAM1CCC"] = AMBER_AM1_CCC_CHARGES
+    elif args.charge_type == CHARGE_TYPE_AMBER_AM1BCC:
         forcefield["AmberAM1BCC"] = AM1BCC_CHARGES
-    elif args.charge_type == "PRECOMPUTED":
+    elif args.charge_type == CHARGE_TYPE_PRECOMPUTED:
         forcefield["PrecomputedCharge"] = PRECOMPUTED_CHARGES
     else:
-        assert False, "Unknown charge type"
+        assert False, f"Unknown charge type: {args.charge_type}"
 
     stream = None
     if args.output_path is not None:

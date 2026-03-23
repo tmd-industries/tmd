@@ -55,7 +55,7 @@ class VelocityVerletIntegrator:
     cbs: NDArray[np.float64] = field(init=False)
 
     def __post_init__(self):
-        cb = self.dt / self.masses
+        cb = self.dt / np.asarray(self.masses)
         cb *= -1
         self.cbs = cb
 

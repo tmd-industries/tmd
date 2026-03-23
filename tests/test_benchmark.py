@@ -215,6 +215,7 @@ def benchmark(
     bound_potentials: list[BoundPotential],
     dt: float = 1.5e-3,
     barostat_interval: int = 0,
+    num_systems: int = 1,
 ):
     if config.local_only:
         return
@@ -227,12 +228,18 @@ def benchmark(
     harmonic_bond_potential = get_bound_potential_by_type(bound_potentials, HarmonicBond)
     bond_list = get_bond_list(harmonic_bond_potential.potential)
 
-    intg = LangevinIntegrator(temperature, dt, 1.0, np.asarray(masses), seed).impl()
+    intg = LangevinIntegrator(temperature, dt, 1.0, np.array([masses] * num_systems), seed).impl()
 
     bps = []
 
     for potential in bound_potentials:
-        bps.append(potential.to_gpu(precision=np.float32).bound_impl)  # get the bound implementation
+        combined_bp = potential
+        for _ in range(num_systems - 1):
+            combined_bp = combined_bp.combine(potential)
+        bps.append(combined_bp.to_gpu(precision=np.float32).bound_impl)  # get the bound implementation
+
+    for bp in bps:
+        assert bp.num_systems() == num_systems
 
     movers = []
     if barostat_interval > 0:
@@ -248,9 +255,9 @@ def benchmark(
         movers.append(baro.impl(bps))
 
     ctxt = custom_ops.Context_f32(
-        x0.astype(np.float32),
-        v0.astype(np.float32),
-        box.astype(np.float32),
+        np.array([x0] * num_systems, dtype=np.float32).squeeze(),
+        np.array([v0] * num_systems, dtype=np.float32).squeeze(),
+        np.array([box] * num_systems, dtype=np.float32).squeeze(),
         intg,
         bps,
         movers=movers,
@@ -261,18 +268,18 @@ def benchmark(
 
     steps_per_batch = config.steps_per_batch
     num_batches = config.num_batches
-
     # run num_equil_batches before starting the time, can improve benchmark accuracy
     ctxt.multiple_steps(steps_per_batch * config.num_equil_batches)
 
-    start = time.time()
+    start = time.perf_counter()
 
     for batch in range(num_batches):
         # time the current batch
-        batch_start = time.time()
+        batch_start = time.perf_counter()
         xs, boxes = ctxt.multiple_steps(steps_per_batch)
-        batch_end = time.time()
-        box_volumes.append(compute_box_volume(boxes[-1]))
+        batch_end = time.perf_counter()
+        if num_systems == 1:
+            box_volumes.append(compute_box_volume(boxes[-1]))
 
         delta = batch_end - batch_start
 
@@ -282,22 +289,22 @@ def benchmark(
         steps_per_day = steps_per_second * SECONDS_PER_DAY
 
         ps_per_day = dt * steps_per_day
-        ns_per_day = ps_per_day * 1e-3
+        ns_per_day = (ps_per_day * 1e-3) * num_systems
 
         if config.verbose:
             print(f"steps per second: {steps_per_second:.3f}")
             print(f"ns per day: {ns_per_day:.3f}")
-
-    if config.generate_plots:
-        plot_batch_times(steps_per_batch, dt, batch_times, box_volumes, label)
 
     assert np.all(np.abs(ctxt.get_x_t()) < 1000)
 
     determinism_hash = hashlib.md5(xs[-1].tobytes()).hexdigest()[:8]
 
     print(
-        f"{label}: N={x0.shape[0]} speed: {ns_per_day:.2f}ns/day dt: {dt * 1e3}fs (ran {steps_per_batch * num_batches} steps in {(time.time() - start):.2f}s) | determinism hash: {determinism_hash}"
+        f"{label}: Systems={num_systems} N={x0.shape[0]} speed: {ns_per_day:.2f}ns/day dt: {dt * 1e3}fs (ran {steps_per_batch * num_batches} steps in {(time.perf_counter() - start):.2f}s) | determinism hash: {determinism_hash}"
     )
+
+    if config.generate_plots and num_systems == 1:
+        plot_batch_times(steps_per_batch, dt, batch_times, box_volumes, label)
 
 
 def benchmark_rbfe_water_sampling(
@@ -465,46 +472,50 @@ def run_single_topology_benchmarks(
     host_config: Optional[HostConfig],
 ):
     initial_state = setup_initial_state(st, 0.1, host_config, constants.DEFAULT_TEMP, 2022, True)
-    barostat_interval = 0
-    if host_config is not None:
-        host_fns = host_config.host_system.get_U_fns()
-        host_masses = host_config.masses
 
-        # RBFE
-        x0 = initial_state.x0[: len(host_config.conf)]
-        v0 = np.zeros_like(x0)
+    for num_systems in [1, 2, 4]:
+        barostat_interval = 0
+        if host_config is not None:
+            host_fns = host_config.host_system.get_U_fns()
+            host_masses = host_config.masses
 
-        harmonic_bond_potential = get_bound_potential_by_type(host_fns, HarmonicBond).potential
-        bond_list = get_bond_list(harmonic_bond_potential)
-        dt = 2.5e-3
-        hmr_masses = apply_hmr(host_masses, bond_list)
+            # RBFE
+            x0 = initial_state.x0[: len(host_config.conf)]
+            v0 = np.zeros_like(x0)
 
-        for barostat_interval in [0, 25]:
-            benchmark(
-                config,
-                f"{stage}-apo",
-                np.array(hmr_masses),
-                x0,
-                v0,
-                initial_state.box0,
-                host_fns,
-                barostat_interval=barostat_interval,
-                dt=dt,
-            )
-        assert initial_state.barostat is not None
-        barostat_interval = initial_state.barostat.interval
+            harmonic_bond_potential = get_bound_potential_by_type(host_fns, HarmonicBond).potential
+            bond_list = get_bond_list(harmonic_bond_potential)
+            dt = 2.5e-3
+            hmr_masses = apply_hmr(host_masses, bond_list)
 
-    benchmark(
-        config,
-        f"{stage}-rbfe",
-        initial_state.integrator.masses,
-        initial_state.x0,
-        initial_state.v0,
-        initial_state.box0,
-        initial_state.potentials,
-        dt=initial_state.integrator.dt,
-        barostat_interval=barostat_interval,
-    )
+            for barostat_interval in [0, 25]:
+                benchmark(
+                    config,
+                    f"{stage}-apo",
+                    np.array(hmr_masses),
+                    x0,
+                    v0,
+                    initial_state.box0,
+                    host_fns,
+                    barostat_interval=barostat_interval,
+                    dt=dt,
+                    num_systems=num_systems,
+                )
+            assert initial_state.barostat is not None
+            barostat_interval = initial_state.barostat.interval
+
+        benchmark(
+            config,
+            f"{stage}-rbfe",
+            initial_state.integrator.masses,
+            initial_state.x0,
+            initial_state.v0,
+            initial_state.box0,
+            initial_state.potentials,
+            dt=initial_state.integrator.dt,
+            barostat_interval=barostat_interval,
+            num_systems=num_systems,
+        )
 
     if host_config is not None:
         benchmark_local(
@@ -541,7 +552,19 @@ def benchmark_dhfr(config: BenchmarkConfig):
     hmr_masses = apply_hmr(host_masses, bond_list)
 
     for barostat_interval in [0, 25]:
-        benchmark(config, "dhfr-apo", hmr_masses, x0, v0, box, host_fns, barostat_interval=barostat_interval, dt=dt)
+        for num_systems in [1, 2, 4]:
+            benchmark(
+                config,
+                "dhfr-apo",
+                hmr_masses,
+                x0,
+                v0,
+                box,
+                host_fns,
+                barostat_interval=barostat_interval,
+                dt=dt,
+                num_systems=num_systems,
+            )
     benchmark_local(
         config,
         "dhfr-local",
@@ -603,17 +626,19 @@ def benchmark_ahfe(config: BenchmarkConfig):
     if initial_state.barostat is not None:
         barostat_interval = initial_state.barostat.interval
 
-    benchmark(
-        config,
-        "ahfe",
-        initial_state.integrator.masses,
-        initial_state.x0,
-        initial_state.v0,
-        initial_state.box0,
-        initial_state.potentials,
-        barostat_interval=barostat_interval,
-        dt=initial_state.integrator.dt,
-    )
+    for num_systems in [1, 2, 4]:
+        benchmark(
+            config,
+            "ahfe",
+            initial_state.integrator.masses,
+            initial_state.x0,
+            initial_state.v0,
+            initial_state.box0,
+            initial_state.potentials,
+            barostat_interval=barostat_interval,
+            dt=initial_state.integrator.dt,
+            num_systems=num_systems,
+        )
     if host_config is not None:
         benchmark_local(
             config,

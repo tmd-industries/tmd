@@ -137,6 +137,7 @@ def generate_waterbox_nb_args() -> NonbondedArgs:
     exclusion_idxs = np.zeros((0,), dtype=np.int32)
     scale_factors = np.zeros((0, 2))
 
+    assert isinstance(params, np.ndarray)
     args = (
         host_config.conf.astype(np.float64),
         params.astype(np.float64),

@@ -13,32 +13,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "assert.h"
 #include "fanout_summed_potential.hpp"
 #include "gpu_utils.cuh"
+#include "kernels/k_indices.cuh"
 #include "nonbonded_common.hpp"
-#include <cub/cub.cuh>
+#include "potential_utils.hpp"
 #include <memory>
 
 namespace tmd {
 
 template <typename RealType>
 FanoutSummedPotential<RealType>::FanoutSummedPotential(
-    const std::vector<std::shared_ptr<Potential<RealType>>> potentials,
+    const std::vector<std::shared_ptr<Potential<RealType>>> &potentials,
     const bool parallel)
     : potentials_(potentials), parallel_(parallel),
-      d_u_buffer_(potentials_.size()), sum_storage_bytes_(0) {
+      num_systems_(potentials.size() > 0 ? potentials[0]->num_systems() : 1),
+      d_u_buffer_(num_systems_ * potentials_.size()),
+      d_system_idxs_(num_systems_ * potentials_.size()),
+      nrg_accum_(num_systems_, potentials_.size() * num_systems_) {
 
-  gpuErrchk(cub::DeviceReduce::Sum(nullptr, sum_storage_bytes_,
-                                   d_u_buffer_.data, d_u_buffer_.data,
-                                   potentials_.size()));
-
-  gpuErrchk(cudaMalloc(&d_sum_temp_storage_, sum_storage_bytes_));
+  verify_potentials_are_compatible(potentials_);
+  k_segment_arange<<<dim3(ceil_divide(num_systems_, DEFAULT_THREADS_PER_BLOCK),
+                          potentials_.size()),
+                     DEFAULT_THREADS_PER_BLOCK>>>(
+      potentials_.size(), num_systems_, d_system_idxs_.data);
+  gpuErrchk(cudaPeekAtLastError());
 };
 
 template <typename RealType>
-FanoutSummedPotential<RealType>::~FanoutSummedPotential() {
-  gpuErrchk(cudaFree(d_sum_temp_storage_));
-};
+FanoutSummedPotential<RealType>::~FanoutSummedPotential(){};
 
 template <typename RealType>
 const std::vector<std::shared_ptr<Potential<RealType>>> &
@@ -48,8 +52,8 @@ FanoutSummedPotential<RealType>::get_potentials() {
 
 template <typename RealType>
 void FanoutSummedPotential<RealType>::execute_device(
-    const int N, const int P, const RealType *d_x, const RealType *d_p,
-    const RealType *d_box, unsigned long long *d_du_dx,
+    const int batches, const int N, const int P, const RealType *d_x,
+    const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
     unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
 
   if (d_u) {
@@ -70,8 +74,9 @@ void FanoutSummedPotential<RealType>::execute_device(
       pot_stream = manager_.get_stream(i);
     }
     potentials_[i]->execute_device(
-        N, P, d_x, d_p, d_box, d_du_dx, d_du_dp,
-        d_u == nullptr ? nullptr : d_u_buffer_.data + i, pot_stream);
+        batches, N, P, d_x, d_p, d_box, d_du_dx, d_du_dp,
+        d_u == nullptr ? nullptr : d_u_buffer_.data + num_systems_ * i,
+        pot_stream);
   }
 
   if (parallel_) {
@@ -80,9 +85,10 @@ void FanoutSummedPotential<RealType>::execute_device(
     }
   }
   if (d_u) {
-    gpuErrchk(cub::DeviceReduce::Sum(d_sum_temp_storage_, sum_storage_bytes_,
-                                     d_u_buffer_.data, d_u, potentials_.size(),
-                                     stream));
+    // nullptr for the d_system_idxs if num_systems_ == 1
+    nrg_accum_.sum_device(num_systems_ * potentials_.size(), d_u_buffer_.data,
+                          num_systems_ > 1 ? d_system_idxs_.data : nullptr, d_u,
+                          stream);
   }
 };
 
@@ -94,6 +100,11 @@ void FanoutSummedPotential<RealType>::du_dp_fixed_to_float(
   if (!potentials_.empty()) {
     potentials_[0]->du_dp_fixed_to_float(N, P, du_dp, du_dp_float);
   }
+}
+
+template <typename RealType>
+int FanoutSummedPotential<RealType>::num_systems() const {
+  return num_systems_;
 }
 
 template class FanoutSummedPotential<double>;

@@ -1,3 +1,18 @@
+# Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025 Forrest York
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from collections.abc import Sequence
 from dataclasses import replace
 from functools import cache
@@ -121,11 +136,12 @@ def test_single_topology_rest_vacuum(mol_pair, temperature_scale_interpolation_f
         )
 
         def compute_lig_lig_ixn_energy(state: GuestSystem, pair_pred: NDArray[np.bool_]):
+            assert isinstance(state.nonbonded_pair_list.params, (np.ndarray, jax.Array))
             nonbonded_pair_list = replace(
                 state.nonbonded_pair_list,
                 potential=replace(
                     state.nonbonded_pair_list.potential,
-                    idxs=state.nonbonded_pair_list.potential.idxs[pair_pred, :],
+                    idxs=state.nonbonded_pair_list.potential.idxs[pair_pred, :],  # type: ignore
                 ),
                 params=state.nonbonded_pair_list.params[pair_pred, :],
             )
@@ -148,7 +164,7 @@ def test_single_topology_rest_vacuum(mol_pair, temperature_scale_interpolation_f
             assert U_proper < U_proper_ref
 
         def compute_proper_energy(state: GuestSystem, ixn_idxs: Sequence[int]):
-            assert state.proper
+            assert state.proper and isinstance(state.proper.params, (np.ndarray, jax.Array))
             proper = replace(
                 state.proper,
                 potential=replace(state.proper.potential, idxs=state.proper.potential.idxs[ixn_idxs, :]),

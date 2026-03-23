@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -73,7 +74,8 @@ private:
       d_lse_exp_sum_src_; // [this->batch_size, this->num_target_mols_]
 
 public:
-  TIBDExchangeMove(const int N, const std::vector<int> ligand_idxs,
+  TIBDExchangeMove(const int num_systems, const int N,
+                   const std::vector<int> ligand_idxs,
                    const std::vector<std::vector<int>> &target_mols,
                    const std::vector<RealType> &params,
                    const RealType temperature, const RealType nb_beta,
@@ -83,9 +85,9 @@ public:
 
   ~TIBDExchangeMove();
 
-  void move(const int N,
-            RealType *d_coords, // [N, 3]
-            RealType *d_box,    // [3, 3]
+  void move(const int num_systems, const int N,
+            RealType *d_coords, // [num_systems, N, 3]
+            RealType *d_box,    // [num_systems, 3, 3]
             cudaStream_t stream) override;
 
   std::array<std::vector<RealType>, 2>

@@ -275,7 +275,7 @@ def test_intermediate_states(num_pairs_to_setup=10):
     as the src and dst end-states.
     """
 
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = read_sdf(path_to_ligand)
 
     pairs = [(mol_a, mol_b) for mol_a in mols for mol_b in mols]

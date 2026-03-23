@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2025, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,23 +35,26 @@ static const int BD_TRANSLATIONS_PER_STEP_XYZ = 3;
 
 template <typename RealType>
 BDExchangeMove<RealType>::BDExchangeMove(
-    const int N, const std::vector<std::vector<int>> &target_mols,
+    const int num_systems, const int N,
+    const std::vector<std::vector<int>> &target_mols,
     const std::vector<RealType> &params, const RealType temperature,
     const RealType nb_beta, const RealType cutoff, const int seed,
     const int num_proposals_per_move, const int interval, const int batch_size)
     : BDExchangeMove<RealType>(
-          N, target_mols, params, temperature, nb_beta, cutoff, seed,
-          num_proposals_per_move, interval, batch_size,
+          num_systems, N, target_mols, params, temperature, nb_beta, cutoff,
+          seed, num_proposals_per_move, interval, batch_size,
           BD_TRANSLATIONS_PER_STEP_XYZ * num_proposals_per_move) {}
 
 template <typename RealType>
 BDExchangeMove<RealType>::BDExchangeMove(
-    const int N, const std::vector<std::vector<int>> &target_mols,
+    const int num_systems, const int N,
+    const std::vector<std::vector<int>> &target_mols,
     const std::vector<RealType> &params, const RealType temperature,
     const RealType nb_beta, const RealType cutoff, const int seed,
     const int num_proposals_per_move, const int interval, const int batch_size,
     const int translation_buffer_size)
-    : Mover<RealType>(interval), N_(N), mol_size_(target_mols[0].size()),
+    : Mover<RealType>(num_systems, interval), N_(N),
+      mol_size_(target_mols[0].size()),
       num_proposals_per_move_(num_proposals_per_move),
       steps_per_move_(num_proposals_per_move_ / batch_size),
       num_target_mols_(target_mols.size()), nb_beta_(nb_beta),
@@ -58,7 +62,8 @@ BDExchangeMove<RealType>::BDExchangeMove(
                                   (BOLTZ * static_cast<double>(temperature)))),
       cutoff_squared_(cutoff * cutoff), batch_size_(batch_size),
       num_intermediates_per_reduce_(ceil_divide(N_, WEIGHT_THREADS_PER_BLOCK)),
-      num_attempted_(0), mol_potential_(N, target_mols, nb_beta, cutoff),
+      num_attempted_(num_systems, 0),
+      mol_potential_(N, target_mols, nb_beta, cutoff),
       sampler_(num_target_mols_, batch_size_, seed),
       logsumexp_(num_target_mols_, batch_size_),
       d_intermediate_coords_(batch_size_ * mol_size_ * 3), d_params_(params),
@@ -74,7 +79,7 @@ BDExchangeMove<RealType>::BDExchangeMove(
       d_samples_(batch_size_), d_selected_sample_(1),
       d_quaternions_(
           round_up_even(QUATERNIONS_PER_STEP * num_proposals_per_move_)),
-      d_mh_noise_(num_proposals_per_move), d_num_accepted_(1),
+      d_mh_noise_(num_proposals_per_move), d_num_accepted_(num_systems),
       d_target_mol_atoms_(batch_size_ * mol_size_),
       d_target_mol_offsets_(num_target_mols_ + 1),
       d_intermediate_sample_weights_(batch_size_ *
@@ -144,11 +149,13 @@ template <typename RealType> BDExchangeMove<RealType>::~BDExchangeMove() {
 }
 
 template <typename RealType>
-void BDExchangeMove<RealType>::move(const int N,
-                                    RealType *d_coords, // [N, 3]
-                                    RealType *d_box,    // [3, 3]
+void BDExchangeMove<RealType>::move(const int num_systems, const int N,
+                                    RealType *d_coords, // [num_systems, N, 3]
+                                    RealType *d_box,    // [num_systems, 3, 3]
                                     cudaStream_t stream) {
-
+  if (num_systems != this->num_systems_) {
+    throw std::runtime_error("num_systems != num_systems_");
+  }
   if (N != N_) {
     throw std::runtime_error("N != N_");
   }
@@ -161,6 +168,7 @@ void BDExchangeMove<RealType>::move(const int N,
     throw std::runtime_error("bug in the code: buffers with random values "
                              "don't match in batch size");
   }
+  const int tpb = DEFAULT_THREADS_PER_BLOCK;
 
   // Set the stream for the generators
   curandErrchk(curandSetStream(cr_rng_quat_, stream));
@@ -168,133 +176,143 @@ void BDExchangeMove<RealType>::move(const int N,
   curandErrchk(curandSetStream(cr_rng_samples_, stream));
   curandErrchk(curandSetStream(cr_rng_mh_, stream));
 
-  // Set the offset to 0
-  gpuErrchk(
-      cudaMemsetAsync(d_noise_offset_.data, 0, d_noise_offset_.size(), stream));
+  for (int system_idx = 0; system_idx < this->num_systems_; system_idx++) {
 
-  const int tpb = DEFAULT_THREADS_PER_BLOCK;
-  /* --Algorithm Description--
-   * Biased Deletion is done in several steps
-   * 1. Generate all random noise upfront to ensure bitwise identical results
-   * regardless of batch size
-   * 2. Compute the initial weights of each of the molecules (no batching)
-   * 3. Copy the initial weights (d_log_weights_before_) to the proposal weight
-   * buffers (d_log_weights_after_), duplicating the values for each proposal in
-   * the batch
-   * 4. For each proposal in the batch sample a molecule from the initial
-   * weights, aiming to select molecules with high energies
-   * 5. Generate the proposals for all of the sampled molecules in the batch,
-   * rotating and translating the mols to the new positions.
-   * 6. Compute the weights for each of the proposals in the batch
-   * 7. Compute the logexpsum (using SegmentedSumExp and
-   * compute_logsumexp_final) of each set of proposal weights
-   * 8. Find the first proposal in the batch that was accepted with the
-   * Metropolis-Hastings check
-   * 9. If a move was accepted, update the new proposed coordinates and
-   * increment the noise offset (d_noise_offset_) by the value in the batch that
-   * was accepted.
-   * 10. If running another move, copy the accepted weights, if any, to the
-   * initial weights buffer. Return to 4
-   *
-   * NOTE: The noise offset is used to determine where in the noise buffers the
-   * kernels should look. If a kernel is expecting to access data beyond the
-   * total number of proposals, the kernels leave the buffers untouched. This
-   * offset to to ensure that with a batch size of 1 or 1000 the sequence of
-   * proposals is bitwise identical, by using the same noise for each proposal
-   * in the sequence.
-   */
+    // Set the offset to 0
+    gpuErrchk(cudaMemsetAsync(d_noise_offset_.data, 0, d_noise_offset_.size(),
+                              stream));
 
-  this->compute_initial_log_weights_device(N, d_coords, d_box, stream);
+    /* --Algorithm Description--
+     * Biased Deletion is done in several steps
+     * 1. Generate all random noise upfront to ensure bitwise identical results
+     * regardless of batch size
+     * 2. Compute the initial weights of each of the molecules (no batching)
+     * 3. Copy the initial weights (d_log_weights_before_) to the proposal
+     * weight buffers (d_log_weights_after_), duplicating the values for each
+     * proposal in the batch
+     * 4. For each proposal in the batch sample a molecule from the initial
+     * weights, aiming to select molecules with high energies
+     * 5. Generate the proposals for all of the sampled molecules in the batch,
+     * rotating and translating the mols to the new positions.
+     * 6. Compute the weights for each of the proposals in the batch
+     * 7. Compute the logexpsum (using SegmentedSumExp and
+     * compute_logsumexp_final) of each set of proposal weights
+     * 8. Find the first proposal in the batch that was accepted with the
+     * Metropolis-Hastings check
+     * 9. If a move was accepted, update the new proposed coordinates and
+     * increment the noise offset (d_noise_offset_) by the value in the batch
+     * that was accepted.
+     * 10. If running another move, copy the accepted weights, if any, to the
+     * initial weights buffer. Return to 4
+     *
+     * NOTE: The noise offset is used to determine where in the noise buffers
+     * the kernels should look. If a kernel is expecting to access data beyond
+     * the total number of proposals, the kernels leave the buffers untouched.
+     * This offset to to ensure that with a batch size of 1 or 1000 the sequence
+     * of proposals is bitwise identical, by using the same noise for each
+     * proposal in the sequence.
+     */
 
-  // Compute logsumexp of energies once upfront to get log probabilities
-  logsumexp_.sum_device(num_target_mols_, 1, d_sample_segments_offsets_.data,
-                        d_log_weights_before_.data, d_lse_max_before_.data,
-                        d_lse_exp_sum_before_.data, stream);
+    RealType *coords_ptr = d_coords + N * system_idx * 3;
+    RealType *box_ptr = d_box + system_idx * 9;
+    const RealType *params_ptr =
+        d_params_.data + system_idx * N * PARAMS_PER_ATOM;
 
-  // All of the noise is generated upfront
-  curandErrchk(templateCurandNormal(cr_rng_quat_, d_quaternions_.data,
-                                    d_quaternions_.length, 0.0, 1.0));
-  curandErrchk(templateCurandUniform(cr_rng_translations_, d_translations_.data,
-                                     d_translations_.length));
-  curandErrchk(templateCurandUniform(cr_rng_samples_, d_sample_noise_.data,
-                                     d_sample_noise_.length));
-  curandErrchk(
-      templateCurandUniform(cr_rng_mh_, d_mh_noise_.data, d_mh_noise_.length));
-  // For the first pass just set the value to zero on the host
-  *p_noise_offset_.data = 0;
-  while (*p_noise_offset_.data < num_proposals_per_move_) {
-    if (*p_noise_offset_.data > 0) {
-      // Run only after the first pass, to maintain meaningful
-      // `log_probability_host` values Run a separate kernel to replace the
-      // before logsumexp values with the after if accepted a move Could also
-      // recompute the logsumexp each round, but more expensive than probably
-      // necessary.
-      k_store_accepted_log_probability<RealType><<<1, 1, 0, stream>>>(
-          num_target_mols_, batch_size_, d_selected_sample_.data,
-          d_lse_max_before_.data, d_lse_exp_sum_before_.data,
-          d_lse_max_after_.data, d_lse_exp_sum_after_.data);
+    this->compute_initial_log_weights_device(N, coords_ptr, box_ptr, params_ptr,
+                                             stream);
+
+    // Compute logsumexp of energies once upfront to get log probabilities
+    logsumexp_.sum_device(num_target_mols_, 1, d_sample_segments_offsets_.data,
+                          d_log_weights_before_.data, d_lse_max_before_.data,
+                          d_lse_exp_sum_before_.data, stream);
+
+    // All of the noise is generated upfront
+    curandErrchk(templateCurandNormal(cr_rng_quat_, d_quaternions_.data,
+                                      d_quaternions_.length, 0.0, 1.0));
+    curandErrchk(templateCurandUniform(
+        cr_rng_translations_, d_translations_.data, d_translations_.length));
+    curandErrchk(templateCurandUniform(cr_rng_samples_, d_sample_noise_.data,
+                                       d_sample_noise_.length));
+    curandErrchk(templateCurandUniform(cr_rng_mh_, d_mh_noise_.data,
+                                       d_mh_noise_.length));
+    // For the first pass just set the value to zero on the host
+    *p_noise_offset_.data = 0;
+    while (*p_noise_offset_.data < num_proposals_per_move_) {
+      if (*p_noise_offset_.data > 0) {
+        // Run only after the first pass, to maintain meaningful
+        // `log_probability_host` values Run a separate kernel to replace the
+        // before logsumexp values with the after if accepted a move Could also
+        // recompute the logsumexp each round, but more expensive than probably
+        // necessary.
+        k_store_accepted_log_probability<RealType><<<1, 1, 0, stream>>>(
+            num_target_mols_, batch_size_, d_selected_sample_.data,
+            d_lse_max_before_.data, d_lse_exp_sum_before_.data,
+            d_lse_max_after_.data, d_lse_exp_sum_after_.data);
+        gpuErrchk(cudaPeekAtLastError());
+      }
+
+      sampler_.sample_given_noise_and_offset_device(
+          num_target_mols_ * batch_size_, batch_size_, num_proposals_per_move_,
+          d_sample_segments_offsets_.data, d_log_weights_before_.data,
+          d_noise_offset_.data, d_sample_noise_.data,
+          d_sampling_intermediate_.data, d_samples_.data, stream);
+
+      // Don't move translations into computation of the incremental, as
+      // different translations can be used by different bias deletion movers
+      // (such as targeted insertion) scale the translations as they are between
+      // [0, 1]
+      this->compute_incremental_log_weights_device(
+          N, true, box_ptr, coords_ptr, params_ptr, this->d_quaternions_.data,
+          this->d_translations_.data, stream);
+
+      logsumexp_.sum_device(num_target_mols_ * batch_size_, batch_size_,
+                            d_sample_segments_offsets_.data,
+                            d_log_weights_after_.data, d_lse_max_after_.data,
+                            d_lse_exp_sum_after_.data, stream);
+
+      k_accept_first_valid_move<RealType>
+          <<<1, min(512, batch_size_), 0, stream>>>(
+              num_proposals_per_move_, num_target_mols_, batch_size_,
+              d_noise_offset_.data, d_samples_.data, d_lse_max_before_.data,
+              d_lse_exp_sum_before_.data, d_lse_max_after_.data,
+              d_lse_exp_sum_after_.data, d_mh_noise_.data,
+              d_selected_sample_.data);
+      gpuErrchk(cudaPeekAtLastError());
+
+      k_store_exchange_move<RealType>
+          <<<ceil_divide(num_target_mols_, tpb), tpb, 0, stream>>>(
+              batch_size_, num_target_mols_, d_selected_sample_.data,
+              d_samples_.data, d_target_mol_offsets_.data,
+              d_sample_segments_offsets_.data, d_intermediate_coords_.data,
+              coords_ptr, d_before_mol_energy_buffer_.data,
+              d_proposal_mol_energy_buffer_.data, d_noise_offset_.data,
+              nullptr, // No inner/outer flags in Biased deletion
+              d_num_accepted_.data + system_idx);
+      gpuErrchk(cudaPeekAtLastError());
+      gpuErrchk(cudaMemcpyAsync(p_noise_offset_.data, d_noise_offset_.data,
+                                d_noise_offset_.size(), cudaMemcpyDeviceToHost,
+                                stream));
+      // Synchronize to get the new offset
+      gpuErrchk(cudaStreamSynchronize(stream));
+      k_convert_energies_to_log_weights<RealType>
+          <<<ceil_divide(num_target_mols_, tpb), tpb, 0, stream>>>(
+              num_target_mols_, beta_, d_before_mol_energy_buffer_.data,
+              d_log_weights_before_.data);
       gpuErrchk(cudaPeekAtLastError());
     }
-
-    sampler_.sample_given_noise_and_offset_device(
-        num_target_mols_ * batch_size_, batch_size_, num_proposals_per_move_,
-        d_sample_segments_offsets_.data, d_log_weights_before_.data,
-        d_noise_offset_.data, d_sample_noise_.data,
-        d_sampling_intermediate_.data, d_samples_.data, stream);
-
-    // Don't move translations into computation of the incremental, as different
-    // translations can be used by different bias deletion movers (such as
-    // targeted insertion) scale the translations as they are between [0, 1]
-    this->compute_incremental_log_weights_device(
-        N, true, d_box, d_coords, this->d_quaternions_.data,
-        this->d_translations_.data, stream);
-
-    logsumexp_.sum_device(num_target_mols_ * batch_size_, batch_size_,
-                          d_sample_segments_offsets_.data,
-                          d_log_weights_after_.data, d_lse_max_after_.data,
-                          d_lse_exp_sum_after_.data, stream);
-
-    k_accept_first_valid_move<RealType>
-        <<<1, min(512, batch_size_), 0, stream>>>(
-            num_proposals_per_move_, num_target_mols_, batch_size_,
-            d_noise_offset_.data, d_samples_.data, d_lse_max_before_.data,
-            d_lse_exp_sum_before_.data, d_lse_max_after_.data,
-            d_lse_exp_sum_after_.data, d_mh_noise_.data,
-            d_selected_sample_.data);
-    gpuErrchk(cudaPeekAtLastError());
-
-    k_store_exchange_move<RealType>
-        <<<ceil_divide(num_target_mols_, tpb), tpb, 0, stream>>>(
-            batch_size_, num_target_mols_, d_selected_sample_.data,
-            d_samples_.data, d_target_mol_offsets_.data,
-            d_sample_segments_offsets_.data, d_intermediate_coords_.data,
-            d_coords, d_before_mol_energy_buffer_.data,
-            d_proposal_mol_energy_buffer_.data, d_noise_offset_.data,
-            nullptr, // No inner/outer flags in Biased deletion
-            d_num_accepted_.data);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaMemcpyAsync(p_noise_offset_.data, d_noise_offset_.data,
-                              d_noise_offset_.size(), cudaMemcpyDeviceToHost,
-                              stream));
-    // Synchronize to get the new offset
-    gpuErrchk(cudaStreamSynchronize(stream));
-    k_convert_energies_to_log_weights<RealType>
-        <<<ceil_divide(num_target_mols_, tpb), tpb, 0, stream>>>(
-            num_target_mols_, beta_, d_before_mol_energy_buffer_.data,
-            d_log_weights_before_.data);
-    gpuErrchk(cudaPeekAtLastError());
+    // Number of attempts is always the number of proposals per moves
+    num_attempted_[system_idx] += num_proposals_per_move_;
   }
-  // Number of attempts is always the number of proposals per moves
-  num_attempted_ += num_proposals_per_move_;
 }
 
 template <typename RealType>
 void BDExchangeMove<RealType>::compute_initial_log_weights_device(
-    const int N, RealType *d_coords, RealType *d_box, cudaStream_t stream) {
+    const int N, const RealType *d_coords, const RealType *d_box,
+    const RealType *d_params, cudaStream_t stream) {
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
   const int mol_blocks = ceil_divide(num_target_mols_, tpb);
   mol_potential_.mol_energies_device(
-      N, num_target_mols_, d_coords, d_params_.data, d_box,
+      N, num_target_mols_, d_coords, d_params, d_box,
       d_before_mol_energy_buffer_
           .data, // Don't need to zero, will be overridden
       stream);
@@ -319,6 +337,7 @@ void BDExchangeMove<RealType>::compute_incremental_log_weights_device(
     const int N, const bool scale,
     const RealType *d_box,          // [3, 3]
     const RealType *d_coords,       // [N, 3]
+    const RealType *d_params,       // [N, 4]
     const RealType *d_quaternions,  // [batch_size_, 4]
     const RealType *d_translations, // [batch_size_, 3]
     cudaStream_t stream) {
@@ -353,7 +372,7 @@ void BDExchangeMove<RealType>::compute_incremental_log_weights_device(
 
   k_atom_by_atom_energies<RealType><<<atom_by_atom_grid, tpb, 0, stream>>>(
       N, mol_size_ * batch_size_, d_target_mol_atoms_.data, nullptr, d_coords,
-      d_params_.data, d_box, nb_beta_, cutoff_squared_,
+      d_params, d_box, nb_beta_, cutoff_squared_,
       d_sample_per_atom_energy_buffer_.data);
   gpuErrchk(cudaPeekAtLastError());
 
@@ -371,7 +390,7 @@ void BDExchangeMove<RealType>::compute_incremental_log_weights_device(
 
   k_atom_by_atom_energies<RealType><<<atom_by_atom_grid, tpb, 0, stream>>>(
       N, mol_size_ * batch_size_, d_target_mol_atoms_.data,
-      d_intermediate_coords_.data, d_coords, d_params_.data, d_box, nb_beta_,
+      d_intermediate_coords_.data, d_coords, d_params, d_box, nb_beta_,
       cutoff_squared_, d_sample_per_atom_energy_buffer_.data);
   gpuErrchk(cudaPeekAtLastError());
 
@@ -444,14 +463,14 @@ BDExchangeMove<RealType>::compute_incremental_log_weights_host(
 
   // Setup the initial weights
   this->compute_initial_log_weights_device(N, d_coords.data, d_box.data,
-                                           stream);
+                                           d_params_.data, stream);
 
   this->compute_incremental_log_weights_device(
       N,
       false, // Never scale the translations here, expect the user to do that in
              // python
-      d_box.data, d_coords.data, d_quaternions_.data, d_translations_.data,
-      stream);
+      d_box.data, d_coords.data, this->d_params_.data, d_quaternions_.data,
+      d_translations_.data, stream);
 
   gpuErrchk(cudaStreamSynchronize(stream));
 
@@ -492,7 +511,7 @@ BDExchangeMove<RealType>::compute_initial_log_weights_host(
 
   // Setup the initial weights
   this->compute_initial_log_weights_device(N, d_coords.data, d_box.data,
-                                           stream);
+                                           d_params_.data, stream);
   gpuErrchk(cudaStreamSynchronize(stream));
 
   return this->get_before_log_weights();
@@ -538,9 +557,9 @@ RealType BDExchangeMove<RealType>::log_probability_host() {
 }
 
 template <typename RealType>
-size_t BDExchangeMove<RealType>::n_accepted() const {
-  size_t h_accepted;
-  d_num_accepted_.copy_to(&h_accepted);
+std::vector<size_t> BDExchangeMove<RealType>::n_accepted() const {
+  std::vector<size_t> h_accepted(this->num_systems_);
+  d_num_accepted_.copy_to(&h_accepted[0]);
   return h_accepted;
 }
 

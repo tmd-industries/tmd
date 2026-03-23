@@ -42,7 +42,7 @@ def test_harmonic_angle(n_particles, n_angles, precision, rtol, seed):
 
     box = np.eye(3, dtype=precision)  # note: ignored
     angle_idxs, coords, params = generate_system(n_particles, n_angles, seed, precision)
-    potential = HarmonicAngle(angle_idxs)
+    potential = HarmonicAngle(n_particles, angle_idxs)
     test_impl = potential.to_gpu(precision)
     GradientTest().compare_forces(coords, params, box, potential, test_impl, rtol)
     GradientTest().assert_differentiable_interface_consistency(coords, params, box, test_impl)
@@ -57,8 +57,8 @@ def test_harmonic_angle_bitwise_symmetric(n_particles, n_angles, precision, seed
 
     angle_idxs, coords, params = generate_system(n_particles, n_angles, seed, precision)
 
-    test_potential_impl = HarmonicAngle(angle_idxs).to_gpu(precision).unbound_impl
-    test_potential_rev_impl = HarmonicAngle(angle_idxs[:, ::-1]).to_gpu(precision).unbound_impl
+    test_potential_impl = HarmonicAngle(n_particles, angle_idxs).to_gpu(precision).unbound_impl
+    test_potential_rev_impl = HarmonicAngle(n_particles, angle_idxs[:, ::-1]).to_gpu(precision).unbound_impl
 
     box = np.eye(3, dtype=precision)  # note: ignored
     test_du_dx, test_du_dp, test_u = test_potential_impl.execute(coords, params, box, 1, 1, 1)
@@ -87,7 +87,7 @@ def test_harmonic_angle_finite_force_with_vanishing_bond_length(potential, param
     angle_idxs = np.array([(0, 1, 2)], dtype=np.int32)
     coords = np.array([(0, 0, 0), (1e-9, 0, 0), (0, 1, 0)], dtype=precision)
     params = np.array(params, dtype=precision)
-    impl = potential(angle_idxs).to_gpu(precision).unbound_impl
+    impl = potential(len(coords), angle_idxs).to_gpu(precision).unbound_impl
     box = np.eye(3, dtype=precision) * 100.0
     du_dx, _, _ = impl.execute(coords, params, box, 1, 0, 0)
     assert (np.abs(du_dx) < 1e7).all()

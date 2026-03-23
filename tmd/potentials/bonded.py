@@ -229,15 +229,13 @@ def periodic_torsion(conf, params, box, torsion_idxs):
     return jnp.sum(nrg, axis=-1)
 
 
-def _flat_bottom_bond_impl(conf, params, box, bond_idxs):
+def _flat_bottom_bond_impl(r, params, box):
     """
     U(r; k, r_min, r_max) =
         (k/4) * (r - r_max)**4 if r > r_max
         (k/4) * (r - r_min)**4 if r < r_min
     """
     # compute distances
-    i, j = bond_idxs.T
-    r = jnp.sqrt(jnp.sum(delta_r(conf[i], conf[j], box) ** 2, 1))
 
     # compute energies
     k, r_min, r_max = params.T
@@ -251,15 +249,32 @@ def flat_bottom_bond(conf, params, box, bond_idxs):
         (k/4) * (r - r_max)**4 if r > r_max
         (k/4) * (r - r_min)**4 if r < r_min
     """
-    bond_nrgs = _flat_bottom_bond_impl(conf, params, box, bond_idxs)
+    i, j = bond_idxs.T
+    r = jnp.sqrt(jnp.sum(delta_r(conf[i], conf[j], box) ** 2, 1))
+    bond_nrgs = _flat_bottom_bond_impl(r, params, box)
     return jnp.sum(bond_nrgs)
+
+
+def flat_bottom_restraint(conf, params, box, atom_idxs, restraint_coords):
+    """
+    Identical to the flat_bottom_bond except that atoms are restrained to specific coordinates
+
+    U(r; k, r_min, r_max) =
+        (k/4) * (r - r_max)**4 if r > r_max
+        (k/4) * (r - r_min)**4 if r < r_min
+    """
+    r = jnp.sqrt(jnp.sum(delta_r(conf[atom_idxs], restraint_coords, box) ** 2, 1))
+    restraint_nrgs = _flat_bottom_bond_impl(r, params, box)
+    return jnp.sum(restraint_nrgs)
 
 
 def log_flat_bottom_bond(conf, params, box, bond_idxs, beta):
     """
     Implements the log inverse of the flat bottom potential
     """
-    nrgs = _flat_bottom_bond_impl(conf, params, box, bond_idxs)
+    i, j = bond_idxs.T
+    r = jnp.sqrt(jnp.sum(delta_r(conf[i], conf[j], box) ** 2, 1))
+    nrgs = _flat_bottom_bond_impl(r, params, box)
     log_nrgs = -jnp.log(1 - jnp.exp(-beta * nrgs))
     # note the extra 1/beta is to be consistent with other potentials
     # so that energies have units of kJ/mol

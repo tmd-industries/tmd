@@ -142,6 +142,7 @@ def test_barostat_with_clashes():
     baro = custom_ops.MonteCarloBarostat_f32(
         coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
     )
+    assert baro.num_systems() == 1
 
     # The clashes will result in overflows, so the box should never change as no move is accepted
     ctxt = custom_ops.Context_f32(
@@ -193,6 +194,7 @@ def test_barostat_zero_interval():
     baro = custom_ops.MonteCarloBarostat_f32(
         coords.shape[0], pressure, temperature, group_indices, 1, u_impls, seed, True, 0.0
     )
+    assert baro.num_systems() == 1
     # Setting back to 0 should raise another error
     with pytest.raises(RuntimeError):
         baro.set_interval(0)
@@ -250,6 +252,7 @@ def test_barostat_partial_group_idxs():
     baro = custom_ops.MonteCarloBarostat_f32(
         coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
     )
+    assert baro.num_systems() == 1
 
     ctxt = custom_ops.Context_f32(
         coords.astype(np.float32),
@@ -263,22 +266,25 @@ def test_barostat_partial_group_idxs():
 
 
 @pytest.mark.parametrize(
-    "box_width, iterations",
+    "box_width, iterations, num_systems",
     [
-        pytest.param(3.0, 30, marks=pytest.mark.memcheck),
+        pytest.param(3.0, 30, 1, marks=pytest.mark.memcheck),
+        pytest.param(3.0, 30, 2, marks=pytest.mark.memcheck),
+        (3.0, 30, 4),
+        (3.0, 30, 12),
         # fyork: This test only fails 50-50 times. It tests a race condition in which the coordinates could be corrupted.
         # Needs to be a large system to trigger the failure.
-        (10.0, 1000),
+        (10.0, 1000, 1),
     ],
 )
 @pytest.mark.parametrize("klass", [custom_ops.MonteCarloBarostat_f32, custom_ops.AnisotropicMonteCarloBarostat_f32])
-def test_barostat_is_deterministic(box_width, iterations, klass):
+def test_barostat_is_deterministic(box_width, iterations, num_systems, klass):
     """Verify that the barostat results in the same box size shift after a fixed number of steps
     This is important to debugging as well as providing the ability to replicate
     simulations
     """
     temperature = DEFAULT_TEMP
-    timestep = 1.5e-3
+    timestep = 2.5e-3
     barostat_interval = 3
     collision_rate = 1.0
     seed = 2021
@@ -290,57 +296,68 @@ def test_barostat_is_deterministic(box_width, iterations, klass):
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
     unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(
-        mol_a, ff, box_width=box_width, lamb=1.0, minimize_energy=False
+        mol_a, ff, box_width=box_width, lamb=1.0, minimize_energy=False, margin=0.1
     )
+
+    batch_coords = np.array([coords] * num_systems).astype(np.float32)
+    batch_boxes = np.array([box] * num_systems).astype(np.float32)
 
     # get list of molecules for barostat by looking at bond table
     harmonic_bond_potential = get_potential_by_type(unbound_potentials, HarmonicBond)
     bond_list = get_bond_list(harmonic_bond_potential)
+    masses = model_utils.apply_hmr(masses, bond_list)
     group_indices = get_group_indices(bond_list, len(masses))
 
     u_impls = []
     for params, unbound_pot in zip(sys_params, unbound_potentials):
         bp = unbound_pot.bind(params)
+        for _ in range(num_systems - 1):
+            bp = bp.combine(unbound_pot.bind(params))
         bp_impl = bp.to_gpu(precision=np.float32).bound_impl
         u_impls.append(bp_impl)
+        assert bp_impl.num_systems() == num_systems
 
     integrator = LangevinIntegrator(
         temperature,
         timestep,
         collision_rate,
-        masses,
+        [masses] * num_systems,
         seed,
     )
 
-    v_0 = sample_velocities(masses, temperature, seed)
+    v_0 = np.array([sample_velocities(masses, temperature, seed + i) for i in range(num_systems)])
 
     baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
 
     ctxt = custom_ops.Context_f32(
-        coords.astype(np.float32),
-        v_0.astype(np.float32),
-        box.astype(np.float32),
+        batch_coords.squeeze(),
+        v_0.squeeze(),
+        batch_boxes.squeeze(),
         integrator.impl(),
         u_impls,
         movers=[baro],
     )
-    ctxt.multiple_steps(iterations * barostat_interval)
+    _, boxes = ctxt.multiple_steps(iterations * barostat_interval, 100)
     atm_box = ctxt.get_box()
-    # Verify that the volume of the box has changed
-    assert compute_box_volume(atm_box) != compute_box_volume(box)
+    if num_systems == 1:
+        # Verify that the volume of the box has changed
+        assert compute_box_volume(atm_box) != compute_box_volume(box)
+    else:
+        for sys_box in atm_box:
+            assert compute_box_volume(sys_box) != compute_box_volume(box)
 
     baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
     ctxt = custom_ops.Context_f32(
-        coords.astype(np.float32),
-        v_0.astype(np.float32),
-        box.astype(np.float32),
+        batch_coords.squeeze(),
+        v_0.squeeze(),
+        batch_boxes.squeeze(),
         integrator.impl(),
         u_impls,
         movers=[baro],
     )
     ctxt.multiple_steps(iterations * barostat_interval)
     # Verify that we get back bitwise reproducible boxes
-    assert compute_box_volume(atm_box) == compute_box_volume(ctxt.get_box())
+    np.testing.assert_array_equal(atm_box, ctxt.get_box())
 
 
 def test_barostat_varying_pressure():
@@ -378,6 +395,7 @@ def test_barostat_varying_pressure():
     baro = custom_ops.MonteCarloBarostat_f32(
         host_config.conf.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0
     )
+    assert baro.num_systems() == 1
 
     ctxt = custom_ops.Context_f32(
         host_config.conf.astype(np.float32),
@@ -681,7 +699,7 @@ def test_barostat_scaling_behavior(klass):
 
     baro = klass(coords.shape[0], pressure, temperature, group_indices, barostat_interval, u_impls, seed, True, 0.0)
     # Initial volume scaling is 0
-    assert baro.get_volume_scale_factor() == 0.0
+    assert np.all(np.array(baro.get_volume_scale_factor()) == 0.0)
     assert baro.get_adaptive_scaling()
 
     ctxt = custom_ops.Context_f32(
@@ -696,32 +714,32 @@ def test_barostat_scaling_behavior(klass):
 
     # Verify that the volume scaling is non-zero
     scaling = baro.get_volume_scale_factor()
-    assert scaling > 0
+    assert np.all(np.array(scaling) > 0)
 
     # Set to an intentionally bad factor to ensure it adapts
     bad_scaling_factor = 0.5 * compute_box_volume(box)
     baro.set_volume_scale_factor(bad_scaling_factor)
-    assert baro.get_volume_scale_factor() == bad_scaling_factor
+    assert np.all(np.array(baro.get_volume_scale_factor()) == bad_scaling_factor)
     ctxt.multiple_steps(100)
     # The scaling should adapt between moves
     assert bad_scaling_factor > baro.get_volume_scale_factor()
 
     # Reset the scaling to the previous value
-    baro.set_volume_scale_factor(scaling)
-    assert scaling == baro.get_volume_scale_factor()
+    baro.set_volume_scale_factor(scaling[0])
+    assert np.all(np.array(baro.get_volume_scale_factor()) == scaling)
 
     # Set back to the initial volume scaling, effectively disabling the barostat
     baro.set_volume_scale_factor(0.0)
     baro.set_adaptive_scaling(False)
     assert not baro.get_adaptive_scaling()
     ctxt.multiple_steps(100)
-    assert baro.get_volume_scale_factor() == 0.0
+    assert np.all(np.array(baro.get_volume_scale_factor()) == 0.0)
 
     # Turning adaptive scaling back on should change the scaling after some MD
     baro.set_adaptive_scaling(True)
     assert baro.get_adaptive_scaling()
     ctxt.multiple_steps(100)
-    assert baro.get_volume_scale_factor() != 0.0
+    assert np.all(np.array(baro.get_volume_scale_factor()) != 0.0)
 
     # Check that the adaptive_scaling_enabled, initial_volume_scale_factor constructor arguments works as expected
     baro = klass(
@@ -736,7 +754,7 @@ def test_barostat_scaling_behavior(klass):
         initial_volume_scale_factor=1.23,
     )
     assert not baro.get_adaptive_scaling()
-    assert baro.get_volume_scale_factor() == np.float32(1.23)
+    assert np.all(np.array(baro.get_volume_scale_factor()) == np.float32(1.23))
 
 
 @pytest.mark.parametrize("scale_x, scale_y, scale_z", itertools.product([False, True], repeat=3))
@@ -770,16 +788,6 @@ def test_anisotropic_barostat(scale_x, scale_y, scale_z):
         bp_impl = bp.to_gpu(precision=np.float32).bound_impl
         u_impls.append(bp_impl)
 
-    integrator = LangevinIntegrator(
-        temperature,
-        timestep,
-        collision_rate,
-        masses,
-        seed,
-    )
-
-    v_0 = sample_velocities(masses, temperature, seed)
-
     if not (scale_x or scale_y or scale_z):
         with pytest.raises(RuntimeError, match="must scale at least one dimension"):
             custom_ops.AnisotropicMonteCarloBarostat_f32(
@@ -797,6 +805,16 @@ def test_anisotropic_barostat(scale_x, scale_y, scale_z):
                 scale_z,
             )
         return
+
+    integrator = LangevinIntegrator(
+        temperature,
+        timestep,
+        collision_rate,
+        masses,
+        seed,
+    )
+
+    v_0 = sample_velocities(masses, temperature, seed)
 
     # Reduce the default scaling factor
     baro = custom_ops.AnisotropicMonteCarloBarostat_f32(
@@ -833,4 +851,4 @@ def test_anisotropic_barostat(scale_x, scale_y, scale_z):
     assert np.all(np.diag(box)[adjusted_dims] != np.diag(boxes[-1])[adjusted_dims])
     # Verify that the volume scaling is non-zero
     scaling = baro.get_volume_scale_factor()
-    assert scaling > 0
+    assert np.all(np.array(scaling) > 0)

@@ -25,7 +25,9 @@ namespace tmd {
 template <typename RealType> class Mover {
 
 protected:
-  Mover<RealType>(const int interval) : interval_(interval), step_(0){};
+  Mover<RealType>(const int num_systems, const int interval)
+      : num_systems_(num_systems), interval_(interval), step_(0){};
+  const int num_systems_;
   int interval_;
   int step_;
 
@@ -52,10 +54,12 @@ public:
     this->step_ = 0;
   }
 
-  int get_interval() { return this->interval_; };
+  int get_interval() const { return this->interval_; };
 
-  virtual void move(const int N, RealType *d_x, RealType *d_box,
-                    cudaStream_t stream) = 0;
+  int num_systems() const { return this->num_systems_; };
+
+  virtual void move(const int num_systems, const int N, RealType *d_x,
+                    RealType *d_box, cudaStream_t stream) = 0;
 
   virtual std::array<std::vector<RealType>, 2>
   move_host(const int N, const RealType *h_x, const RealType *h_box);

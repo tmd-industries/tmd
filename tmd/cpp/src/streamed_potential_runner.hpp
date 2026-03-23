@@ -32,6 +32,7 @@ public:
 
   // wrap execute_device
   void execute_potentials(
+      const int num_systems,
       std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps, const int N,
       const RealType *d_x, const RealType *d_box, unsigned long long *d_du_dx,
       unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream);

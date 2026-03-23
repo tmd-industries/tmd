@@ -72,6 +72,7 @@ class Forcefield:
             nonbonded.AM1CCCHandler,
             nonbonded.AM1BCCCCCHandler,
             nonbonded.AmberAM1BCCHandler,
+            nonbonded.AmberAM1CCCHandler,
             nonbonded.PrecomputedChargeHandler,
             nonbonded.NNHandler,
         ]
@@ -82,7 +83,8 @@ class Forcefield:
             nonbonded.AM1BCCIntraHandler,
             nonbonded.AM1CCCIntraHandler,
             nonbonded.AM1BCCCCCIntraHandler,
-            nonbonded.AmberAM1BCCHandler,
+            nonbonded.AmberAM1BCCIntraHandler,
+            nonbonded.AmberAM1CCCIntraHandler,
             nonbonded.PrecomputedChargeHandler,
             nonbonded.NNHandler,
         ]
@@ -203,6 +205,7 @@ class Forcefield:
                     nonbonded.AM1CCCIntraHandler,
                     nonbonded.AM1BCCIntraHandler,
                     nonbonded.AmberAM1BCCIntraHandler,
+                    nonbonded.AmberAM1CCCIntraHandler,
                     nonbonded.SimpleChargeIntraHandler,
                     nonbonded.PrecomputedChargeIntraHandler,
                 ),
@@ -217,6 +220,7 @@ class Forcefield:
                     nonbonded.AM1CCCSolventHandler,
                     nonbonded.AM1BCCSolventHandler,
                     nonbonded.AmberAM1BCCSolventHandler,
+                    nonbonded.AmberAM1CCCSolventHandler,
                     nonbonded.SimpleChargeSolventHandler,
                 ),
             ):
@@ -229,6 +233,7 @@ class Forcefield:
                     nonbonded.AM1CCCHandler,
                     nonbonded.AM1BCCHandler,
                     nonbonded.AmberAM1BCCHandler,
+                    nonbonded.AmberAM1CCCHandler,
                     nonbonded.SimpleChargeHandler,
                     nonbonded.PrecomputedChargeHandler,
                     nonbonded.NNHandler,
@@ -263,6 +268,8 @@ class Forcefield:
                 q_handle_intra = nonbonded.AM1BCCIntraHandler(q_handle.smirks, q_handle.params, q_handle.props)
             elif isinstance(q_handle, nonbonded.AmberAM1BCCHandler):
                 q_handle_intra = nonbonded.AmberAM1BCCIntraHandler(q_handle.smirks, q_handle.params, q_handle.props)
+            elif isinstance(q_handle, nonbonded.AmberAM1CCCHandler):
+                q_handle_intra = nonbonded.AmberAM1CCCIntraHandler(q_handle.smirks, q_handle.params, q_handle.props)
             elif isinstance(q_handle, nonbonded.SimpleChargeHandler):
                 q_handle_intra = nonbonded.SimpleChargeIntraHandler(q_handle.smirks, q_handle.params, q_handle.props)
             elif isinstance(q_handle, nonbonded.PrecomputedChargeHandler):

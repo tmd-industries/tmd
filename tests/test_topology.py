@@ -34,7 +34,7 @@ from tmd.utils import path_to_internal_file
 
 @pytest.mark.nocuda
 def test_base_topology_14_exclusions():
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         all_mols = read_sdf(path_to_ligand)
 
     mol = all_mols[0]
@@ -211,7 +211,7 @@ def host_guest_nonbonded_impl(ctor, precision, rtol, atol, use_tiny_mol):
         u_impl = u.bind(ixn_params).to_gpu(precision=precision).bound_impl
         return u_impl.execute(x0, box)
 
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols_by_name = read_sdf_mols_by_name(path_to_ligand)
 
     # mol with no intramolecular NB terms and no dihedrals

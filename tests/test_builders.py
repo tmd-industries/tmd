@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,8 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import jax
 import numpy as np
 import pytest
 from common import ligand_from_smiles
@@ -24,16 +27,21 @@ from rdkit import Chem
 from tmd.constants import DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, ONE_4PI_EPS0, NBParamIdx
 from tmd.fe.free_energy import HostConfig
 from tmd.fe.utils import get_romol_conf, read_sdf, read_sdf_mols_by_name, set_romol_conf
-from tmd.ff import get_water_ff_model
+from tmd.ff import Forcefield, get_water_ff_model
 from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
 from tmd.md.builders import (
     WATER_RESIDUE_NAME,
+    build_host_config_from_omm,
     build_membrane_system,
     build_protein_system,
     build_water_system,
+    construct_default_omm_system,
+    count_water_atoms,
     get_box_from_coords,
     load_pdb_system,
+    make_waters_contiguous,
     strip_units,
+    verify_pdb_structure,
 )
 from tmd.md.minimizer import check_force_norm
 from tmd.potentials import Nonbonded
@@ -90,7 +98,7 @@ def test_build_water_system_raises_on_water_ff_with_virtual_sites(water_ff):
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("water_ff", ["amber14/tip3p", "amber14/spce", "amber14/opc3"])
+@pytest.mark.parametrize("water_ff", ["tip3p", "spce", "opc3", "amber14/tip3p", "amber14/spce", "amber14/opc3"])
 def test_build_water_system_different_water_ffs(water_ff):
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
     host_config = build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
@@ -139,12 +147,14 @@ def validate_host_config_ions_and_charge(
     expected_host_charge: int,
     neutralized: bool,
     input_host_charge: int = 0,
+    num_protein_atoms: int = 0,
 ):
     mol_formal_charge = 0
 
     if mol is not None:
         mol_formal_charge = Chem.GetFormalCharge(mol)
 
+    assert isinstance(host_config.host_system.nonbonded_all_pairs.params, (np.ndarray, jax.Array))
     test_charges = np.sum(host_config.host_system.nonbonded_all_pairs.params[:, NBParamIdx.Q_IDX]) / np.sqrt(
         ONE_4PI_EPS0
     )
@@ -157,6 +167,11 @@ def validate_host_config_ions_and_charge(
 
     all_group_idxs = get_group_indices(bond_indices, host_config.conf.shape[0])
     ions = [group for group in all_group_idxs if len(group) == 1]
+
+    assert len(ions) + host_config.num_water_atoms + host_config.num_membrane_atoms + num_protein_atoms == len(
+        host_config.conf
+    )
+
     num_ions = len(ions)
     if ionic_concentration > 0.0:
         assert num_ions > 0
@@ -252,7 +267,7 @@ def test_protein_system_ion_concentration_and_neutralization(ionic_concentration
     negative_mol = ligand_from_smiles("[N+](=O)([O-])[O-]")
     neutral_mol = ligand_from_smiles("c1ccccc1")
 
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as pdb_path:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = str(pdb_path)
 
     host_config_no_ions = build_protein_system(
@@ -291,6 +306,11 @@ def test_protein_system_ion_concentration_and_neutralization(ionic_concentration
         ionic_concentration=ionic_concentration,
         neutralize=neutralize,
     )
+
+    host_pdb = app.PDBFile(host_pdbfile)
+    starting_waters = count_water_atoms(host_pdb.topology)
+    protein_atoms = host_pdb.topology.getNumAtoms() - starting_waters
+
     input_host_charge = int(np.rint(reference_protein_charge))
     expected_charge = reference_protein_charge
     if neutralize:
@@ -302,6 +322,7 @@ def test_protein_system_ion_concentration_and_neutralization(ionic_concentration
         expected_charge,
         neutralize,
         input_host_charge=input_host_charge,
+        num_protein_atoms=protein_atoms,
     )
     for mol in [positive_mol, negative_mol, neutral_mol]:
         host_config = build_protein_system(
@@ -323,12 +344,13 @@ def test_protein_system_ion_concentration_and_neutralization(ionic_concentration
             expected_charge,
             neutralize,
             input_host_charge=input_host_charge,
+            num_protein_atoms=protein_atoms,
         )
 
 
 @pytest.mark.nocuda
 def test_deserialize_protein_system_1_4_exclusions():
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as pdb_path:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = str(pdb_path)
     host_config = build_protein_system(host_pdbfile, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
 
@@ -359,8 +381,8 @@ def test_deserialize_protein_system_1_4_exclusions():
 @pytest.mark.nocuda
 def test_build_protein_system_waters_before_protein():
     num_waters = 100
-    # Construct a PDB file with the waters before the protein, should raise an exception
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as pdb_path:
+    # Construct a PDB file with the waters before the protein, to verify that the code correctly handles it.
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = app.PDBFile(str(pdb_path))
 
     host_ff = app.ForceField(f"{DEFAULT_PROTEIN_FF}.xml", f"{DEFAULT_WATER_FF}.xml")
@@ -377,15 +399,39 @@ def test_build_protein_system_waters_before_protein():
         with open(temp.name, "w") as ofs:
             app.PDBFile.writeFile(modeller.getTopology(), modeller.getPositions(), file=ofs)
 
-        with pytest.raises(AssertionError, match="Waters in PDB must be at the end of the file"):
-            build_protein_system(temp.name, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
+        build_protein_system(temp.name, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
+
+
+@pytest.mark.nocuda
+def test_verify_pdb_structure():
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
+        # The initial structure should be valid either provided as a string or as app.PDBFile
+        verify_pdb_structure(str(pdb_path), ff)
+        host_pdbfile = app.PDBFile(str(pdb_path))
+        verify_pdb_structure(host_pdbfile, ff)
+
+    top = app.Topology()
+    pos = unit.Quantity((), unit.angstroms)
+    modeller = app.Modeller(top, pos)
+
+    # Scale down the units, the new file should be invalid.
+    modeller.add(host_pdbfile.topology, (strip_units(host_pdbfile.positions) / 10) * unit.nanometers)
+
+    with NamedTemporaryFile(suffix=".pdb") as temp:
+        with open(temp.name, "w") as ofs:
+            app.PDBFile.writeFile(modeller.getTopology(), modeller.getPositions(), file=ofs)
+
+        with pytest.raises(RuntimeError, match="PDB structure contains clashing pairs of atoms"):
+            verify_pdb_structure(temp.name, ff)
 
 
 def test_build_protein_system():
     rng = np.random.default_rng(2024)
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
 
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as pdb_path:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = str(pdb_path)
     host_config = build_protein_system(host_pdbfile, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF, box_margin=0.1)
     num_host_atoms = host_config.conf.shape[0] - host_config.num_water_atoms
@@ -396,9 +442,9 @@ def test_build_protein_system():
     num_host_atoms_with_mol = host_with_mols_config.conf.shape[0] - host_with_mols_config.num_water_atoms
 
     assert num_host_atoms == num_host_atoms_with_mol
-    # Waters won't be deleted since the pocket has no waters
     assert host_config.num_water_atoms == host_with_mols_config.num_water_atoms
-    np.testing.assert_equal(compute_box_volume(host_config.box), compute_box_volume(host_with_mols_config.box))
+    # Water in the pocket will be deleted if mol provided
+    assert compute_box_volume(host_config.box) != compute_box_volume(host_with_mols_config.box)
 
     for bp in host_config.host_system.get_U_fns():
         (
@@ -431,6 +477,79 @@ def test_build_protein_system():
     host_atoms_with_moved_ligands = moved_host_config.conf.shape[0] - moved_host_config.num_water_atoms
     assert num_host_atoms == host_atoms_with_moved_ligands
     assert compute_box_volume(host_config.box) < compute_box_volume(moved_host_config.box)
+
+
+@pytest.mark.nocuda
+def test_build_host_config_from_omm():
+    """Verify that it is possible to setup a system that is not handled by the default build_protein_system
+
+    This test demonstrates setting up a system with DNA.
+    """
+    lipid_patch = Path(app.__file__).parent / "data" / "POPC.pdb"
+    with pytest.raises(ValueError, match=r"No template found for residue 1"):
+        build_protein_system(str(lipid_patch), DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
+
+    omm_pdb = app.PDBFile(str(lipid_patch))
+    host_ff = app.ForceField("amber14/lipid17.xml", f"{DEFAULT_WATER_FF}.xml")
+    modeller = app.Modeller(omm_pdb.topology, omm_pdb.positions)
+    host_config = build_host_config_from_omm(
+        modeller,
+        host_ff,
+        padding=1.0,
+        box_margin=0.1,
+    )
+    assert host_config is not None
+    # Host atoms are excluded from membrane atom detection. This is janky...
+    assert host_config.num_membrane_atoms == 0
+    assert host_config.num_water_atoms > 0
+
+    called = False
+
+    def verify_system_build_func_without_ions(ff, modeller, residue_templates):
+        nonlocal called
+        called = True
+        assert len(residue_templates) == 0, "Residues unexpectedly included"
+        assert isinstance(ff, app.ForceField)
+        assert isinstance(modeller, app.Modeller)
+        return construct_default_omm_system(ff, modeller, residue_templates)
+
+    host_config = build_host_config_from_omm(
+        modeller,
+        host_ff,
+        padding=0.5,
+        box_margin=0.1,
+        construct_system_func=verify_system_build_func_without_ions,
+    )
+    assert host_config is not None
+    assert host_config.num_membrane_atoms == 0
+    assert host_config.num_water_atoms > 0
+
+    assert called
+
+    called = False
+
+    def verify_system_build_func_with_ions(ff, modeller, residue_templates):
+        nonlocal called
+        called = True
+        # Should have residue templates thanks to the ions
+        assert len(residue_templates) > 0, "No residues included"
+        assert isinstance(ff, app.ForceField)
+        assert isinstance(modeller, app.Modeller)
+        return construct_default_omm_system(ff, modeller, residue_templates)
+
+    host_config = build_host_config_from_omm(
+        modeller,
+        host_ff,
+        padding=0.5,
+        box_margin=0.1,
+        ionic_concentration=0.15,
+        construct_system_func=verify_system_build_func_with_ions,
+    )
+    assert host_config is not None
+    assert host_config.num_membrane_atoms == 0
+    assert host_config.num_water_atoms > 0
+
+    assert called
 
 
 @pytest.mark.nocuda
@@ -484,3 +603,40 @@ def test_build_protein_wat_residue_names():
             res.name == WATER_RESIDUE_NAME for res in host_config.omm_topology.residues() if len(list(res.atoms())) == 3
         ]
         assert len(water_res_names_match) > 0 and all(water_res_names_match)
+
+
+@pytest.mark.nocuda
+def test_adjusting_water_order_doesnt_change_positions():
+    """Verify that adjusting the location of waters does not change the positions"""
+    cdk8_system = Path(__file__).parent / "data" / "cdk8_incorrectly_ordered_waters.pdb"
+
+    host_pdbfile = app.PDBFile(str(cdk8_system))
+
+    modeller = app.Modeller(host_pdbfile.topology, host_pdbfile.positions)
+    water_residues = [residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]
+    water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_residues])
+    assert np.any(np.diff(water_indices) != 1)
+
+    adjusted_modeller = deepcopy(modeller)
+    make_waters_contiguous(adjusted_modeller)
+    assert adjusted_modeller.topology.getNumAtoms() == modeller.topology.getNumAtoms()
+
+    updated_positions = strip_units(adjusted_modeller.positions)
+    ref_positions = strip_units(modeller.positions)
+
+    # Ordering has changed, so positions won't match
+    assert not np.all(updated_positions == ref_positions)
+
+    new_water_residues = [
+        residue for residue in adjusted_modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME
+    ]
+    new_water_indices = np.concatenate([[a.index for a in res.atoms()] for res in new_water_residues])
+
+    # Verify that the water positions are identical
+    np.testing.assert_equal(updated_positions[new_water_indices], ref_positions[water_indices])
+
+    all_idxs = np.arange(modeller.topology.getNumAtoms())
+    reference_other_idxs = np.delete(all_idxs, water_indices)
+    updated_other_idxs = np.delete(all_idxs, new_water_indices)
+
+    np.testing.assert_equal(updated_positions[updated_other_idxs], ref_positions[reference_other_idxs])

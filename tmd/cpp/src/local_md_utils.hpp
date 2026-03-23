@@ -25,14 +25,14 @@ namespace tmd {
 template <typename RealType>
 void verify_nonbonded_potential_for_local_md(
     const std::shared_ptr<Potential<RealType>> pot,
-    const int expected_idx_count);
+    const int expected_system_count, const int expected_idx_count);
 
 template <typename RealType>
 void set_nonbonded_ixn_potential_idxs(std::shared_ptr<Potential<RealType>> pot,
-                                      const int num_col_idxs,
-                                      const int num_row_idxs,
-                                      unsigned int *d_col_idxs,
-                                      unsigned int *d_row_idxs,
+                                      const std::vector<int> &num_col_idxs,
+                                      const std::vector<int> &num_row_idxs,
+                                      const unsigned int *d_col_idxs,
+                                      const unsigned int *d_row_idxs,
                                       const cudaStream_t stream);
 
 template <typename RealType>

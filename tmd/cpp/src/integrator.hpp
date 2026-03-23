@@ -24,6 +24,8 @@ template <typename RealType> class Integrator {
 public:
   virtual ~Integrator() {};
 
+  virtual int num_systems() const = 0;
+
   virtual void
   step_fwd(std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
            RealType *d_x_t, RealType *d_v_t, RealType *d_box_t,

@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -62,7 +63,7 @@ setup_chiral_dummy_interactions_from_ff = functools.partial(
 
 
 def _get_hif2a_mol_pairs(shuffle: bool = False, seed: int = 2029) -> list[Chem.Mol]:
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = read_sdf(path_to_ligand)
 
     pairs = [(mol_a, mol_b) for mol_a in mols for mol_b in mols]
@@ -410,9 +411,8 @@ def test_charge_perturbation_is_invalid():
     core[:, 0] = np.arange(core.shape[0])
     core[:, 1] = core[:, 0]
 
-    with pytest.raises(ChargePertubationError) as e:
+    with pytest.raises(ChargePertubationError, match=r"mol a and mol b don't have the same charge: a: 0 b: 1"):
         SingleTopology(mol_a, mol_b, core, ff)
-    assert str(e.value) == "mol a and mol b don't have the same charge: a: 0 b: 1"
 
 
 def bond_idxs_are_canonical(all_idxs):
@@ -634,7 +634,7 @@ def test_combine_masses_hmr():
 def arbitrary_transformation():
     # NOTE: test system can probably be simplified; we just need
     # any SingleTopology and conformation
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = read_sdf_mols_by_name(path_to_ligand)
 
     mol_a = mols["206"]
@@ -763,7 +763,16 @@ def test_no_chiral_atom_restraints():
 def test_no_chiral_bond_restraints():
     mol_a = ligand_from_smiles("C")
     mol_b = ligand_from_smiles("CI")
-    core = _get_core_by_mcs(mol_a, mol_b)
+
+    atom_map_kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    atom_map_kwargs["heavy_matches_heavy_only"] = False
+    all_cores = atom_mapping.get_cores(
+        mol_a,
+        mol_b,
+        **atom_map_kwargs,
+    )
+
+    core = all_cores[0]
 
     forcefield = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     st = SingleTopology(mol_a, mol_b, core, forcefield)
@@ -1360,7 +1369,7 @@ def assert_symmetric_interpolation(mol_a, mol_b, core):
 
 @pytest.mark.nocuda
 def test_hif2a_end_state_symmetry_unit_test():
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = read_sdf(path_to_ligand)
 
     mol_a = mols[0]

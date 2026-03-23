@@ -233,7 +233,7 @@ def test_energy_overflow_cancelled_by_exclusions(precision, rtol, atol):
         col_atom_idxs=atom_idxs,
     )
     pair_list = NonbondedExclusions(
-        potential.exclusion_idxs, potential.scale_factors.astype(precision), potential.beta, potential.cutoff
+        N, potential.exclusion_idxs, potential.scale_factors.astype(precision), potential.beta, potential.cutoff
     )
 
     def compute_potential_energy(pot):

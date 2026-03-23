@@ -57,7 +57,7 @@ def test_recomputation_of_energies(precision, rtol, atol, seed):
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
     # build the protein system.
-    with path_to_internal_file("tmd.testsystems.data", "hif2a_nowater_min.pdb") as path_to_pdb:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as path_to_pdb:
         host_config = builders.build_protein_system(str(path_to_pdb), ff.protein_ff, ff.water_ff, mols=[mol_a, mol_b])
 
     min_coords = minimizer.fire_minimize_host([mol_a, mol_b], host_config, ff)

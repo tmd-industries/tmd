@@ -32,7 +32,7 @@ def test_hif2a_free_energy_estimates():
 
     forcefield = Forcefield.load_default()
 
-    with path_to_internal_file("tmd.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         all_mols = utils.read_sdf(path_to_ligand)
 
     mol_a = all_mols[1]

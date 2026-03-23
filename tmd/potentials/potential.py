@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2025, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,6 +32,14 @@ Precision = Any
 _P = TypeVar("_P", bound="Potential", covariant=True)
 
 
+def combine_pot_params(param_a, param_b) -> list:
+    if isinstance(param_a, (np.ndarray, Array)):
+        param_a = [param_a]
+    if isinstance(param_b, (np.ndarray, Array)):
+        param_b = [param_b]
+    return param_a + param_b
+
+
 @dataclass
 class Potential(ABC):
     @abstractmethod
@@ -61,6 +70,10 @@ class Potential(ABC):
         suffix = get_custom_ops_class_name_suffix(precision)
         return f"{cls.__name__}_{suffix}"
 
+    @abstractmethod
+    def combine(self, other_pot: _P) -> _P:
+        raise NotImplementedError()
+
 
 @dataclass
 class BoundPotential(Generic[_P]):
@@ -68,6 +81,7 @@ class BoundPotential(Generic[_P]):
     params: Params
 
     def __call__(self, conf: Conf, box: Box) -> float | Array:
+        assert isinstance(self.params, (np.ndarray, Array))
         return self.potential(conf, self.params, box)
 
     @overload
@@ -78,6 +92,13 @@ class BoundPotential(Generic[_P]):
 
     def to_gpu(self, precision: Precision) -> "BoundGpuImplWrapper_f32 | BoundGpuImplWrapper_f64":
         return self.potential.to_gpu(precision).bind(np.asarray(self.params, dtype=precision))
+
+    def combine(self, other_pot: "BoundPotential[_P]") -> "BoundPotential[_P]":
+        if not isinstance(other_pot, self.__class__):
+            raise TypeError("Must combine with bound potential")
+        combined_pot = self.potential.combine(other_pot.potential)
+        combined_params = combine_pot_params(self.params, other_pot.params)
+        return BoundPotential(combined_pot, combined_params)
 
 
 @dataclass

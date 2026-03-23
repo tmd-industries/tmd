@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ from tmd.fe.bar import (
     sanitize_energies_for_bar,
     works_from_ukln,
 )
+from tmd.fe.lambda_schedule import interpolate_pre_optimized_protocol
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_dG_errs_figure,
@@ -319,8 +320,49 @@ class SimulationResult:
 
     def compute_u_kn(self) -> tuple[NDArray, NDArray]:
         """get MBAR input matrices u_kn and N_k"""
+        u_kln, N_k = self.compute_u_kln()
+        u_kn = kln_to_kn(u_kln, N_k)
+        return u_kn, N_k
 
-        return compute_u_kn(self.trajectories, self.final_result.initial_states)
+    def compute_u_kln(self) -> tuple[NDArray, NDArray]:
+        """get MBAR input matrices u_kln and N_k"""
+        return compute_u_kln(self.trajectories, self.final_result.initial_states)
+
+    def reconstruct_ukln(self) -> tuple[NDArray, NDArray]:
+        """Compute the u_kln matrix implied by the intermediate results"""
+        return reconstruct_ukln(self.intermediate_results)
+
+
+def reconstruct_ukln(results: list[PairBarResult]) -> tuple[NDArray, NDArray]:
+    """Generate the U_kln matrix implied by a series of pair bar results."""
+    assert len(results) > 0
+    current_lambda_schedule = [state.lamb for state in results[-1].initial_states]
+    N_k = np.array([results[-1].u_kln_by_component_by_lambda.shape[-1]] * len(current_lambda_schedule))
+    u_kln = np.full(
+        (len(current_lambda_schedule), len(current_lambda_schedule), np.max(N_k)),
+        np.inf,
+        dtype=results[-1].u_kln_by_component_by_lambda.dtype,
+    )
+    seen_pairs = set()
+    for result in results:
+        for bar_res_idx, (state_a, state_b) in enumerate(zip(result.initial_states, result.initial_states[1:])):
+            pair = (state_a.lamb, state_b.lamb)
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            bar_res = result.bar_results[bar_res_idx]
+            idx_a = current_lambda_schedule.index(state_a.lamb)
+            idx_b = current_lambda_schedule.index(state_b.lamb)
+            pairbar_ukln = bar_res.u_kln_by_component.sum(0)
+
+            for i in range(pairbar_ukln.shape[0]):
+                for j in range(pairbar_ukln.shape[1]):
+                    state_idx_a = idx_a if i == 0 else idx_b
+                    state_idx_b = idx_a if j == 0 else idx_b
+                    u_kln[state_idx_a, state_idx_b, :] = np.where(
+                        np.isnan(pairbar_ukln[i, j]), np.inf, pairbar_ukln[i, j]
+                    )
+    return u_kln, N_k
 
 
 @dataclass
@@ -612,6 +654,75 @@ def get_summed_potential_from_bps(bps: Sequence[BoundPotential_f32]) -> SummedPo
     return SummedPotential_f32([bp.get_potential() for bp in bps], [bp.size() for bp in bps])
 
 
+def get_batched_context(initial_states: Sequence[InitialState], md_params: Optional[MDParams] = None) -> Context_f32:
+    for s in initial_states[1:]:
+        assert_ensembles_compatible(initial_states[0], s)
+
+    assert len(initial_states) > 1
+    bps = [bp for bp in initial_states[0].potentials]
+    for state in initial_states[1:]:
+        for i, pot in enumerate(state.potentials):
+            combined_pot = bps[i].combine(pot)
+            bps[i] = combined_pot
+
+    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
+
+    assert isinstance(initial_states[0].integrator, LangevinIntegrator)
+    intg = LangevinIntegrator(
+        initial_states[0].integrator.temperature,
+        initial_states[0].integrator.dt,
+        initial_states[0].integrator.friction,
+        np.array([initial_states[0].integrator.masses for _ in range(len(initial_states))]),
+        initial_states[0].integrator.seed,
+    )
+    intg_impl = intg.impl(np.float32)
+    movers = []
+    if initial_states[0].barostat is not None:
+        # Requires that the barostat is consistent across states
+        movers.append(initial_states[0].barostat.impl(bound_impls))
+
+    if md_params is not None and md_params.water_sampling_params is not None:
+        hb_potential = get_bound_potential_by_type(initial_states[0].potentials, HarmonicBond).potential
+        group_indices = get_group_indices(get_bond_list(hb_potential), len(initial_states[0].integrator.masses))
+
+        water_idxs = get_water_idxs(group_indices, ligand_idxs=initial_states[0].ligand_idxs)
+
+        # Select a Nonbonded Potential to get the the cutoff/beta, assumes all have same cutoff/beta.
+        nb = get_bound_potential_by_type(initial_states[0].potentials, Nonbonded).potential
+
+        water_params = np.array([get_water_sampler_params(initial_state) for initial_state in initial_states])
+        assert water_params.shape[0] == len(initial_states)
+
+        # Generate a new random seed based on the integrator seed, MDParams seed is constant across states
+        rng = np.random.default_rng(initial_states[0].integrator.seed)
+        water_sampler_seed = rng.integers(np.iinfo(np.int32).max)
+
+        water_sampler = custom_ops.TIBDExchangeMove_f32(
+            initial_states[0].x0.shape[0],
+            initial_states[0].ligand_idxs.tolist(),  # type: ignore
+            water_idxs,
+            water_params,
+            initial_states[0].integrator.temperature,
+            nb.beta,
+            nb.cutoff,
+            md_params.water_sampling_params.radius,
+            water_sampler_seed,
+            md_params.water_sampling_params.n_proposals,
+            md_params.water_sampling_params.interval,
+            batch_size=md_params.water_sampling_params.batch_size,
+        )
+        movers.append(water_sampler)
+
+    return Context_f32(
+        np.stack([state.x0 for state in initial_states]),
+        np.stack([state.v0 for state in initial_states]),
+        np.stack([state.box0 for state in initial_states]),
+        intg_impl,
+        bound_impls,
+        movers=movers,
+    )
+
+
 def get_context(initial_state: InitialState, md_params: Optional[MDParams] = None) -> Context_f32:
     """
     Construct a Context from the potentials defined by the initial state
@@ -782,7 +893,9 @@ def sample_with_context(
 
     assert np.all(np.isfinite(all_coords[-1])), "Production resulted in a nan"
 
-    final_barostat_volume_scale_factor = ctxt.get_barostat().get_volume_scale_factor() if ctxt.get_barostat() else None
+    final_barostat_volume_scale_factor = (
+        float(np.mean(ctxt.get_barostat().get_volume_scale_factor())) if ctxt.get_barostat() else None
+    )
 
     return Trajectory(all_coords, all_boxes, final_velocities, final_barostat_volume_scale_factor)
 
@@ -998,7 +1111,7 @@ class MinOverlapWarning(UserWarning):
     pass
 
 
-def run_sims_bisection(
+def _run_sequential_bisection(
     initial_lambdas: Sequence[float],
     make_initial_state: Callable[[float], InitialState],
     md_params: MDParams,
@@ -1051,7 +1164,7 @@ def run_sims_bisection(
     get_initial_state = cache(make_initial_state)
     rng = np.random.default_rng(md_params.seed)
 
-    # Set up a single context and potentisl for generating the BarResult objects
+    # Set up a single context and potential for generating the BarResult objects
     context = get_context(get_initial_state(lambdas[0]), md_params=md_params)
     bound_potentials = context.get_potentials()
     assert len(bound_potentials) == len(get_initial_state(lambdas[0]).potentials)
@@ -1157,6 +1270,312 @@ def run_sims_bisection(
     return results, trajectories
 
 
+def _run_batched_bisection(
+    initial_lambdas: Sequence[float],
+    make_initial_state: Callable[[float], InitialState],
+    md_params: MDParams,
+    n_bisections: int,
+    temperature: float,
+    min_overlap: Optional[float] = None,
+    verbose: bool = True,
+    batch_size: int = 8,
+) -> tuple[list[PairBarResult], list[Trajectory]]:
+    r"""Starting from a specified lambda schedule, successively bisect the lambda interval between the pair of states
+    with the lowest BAR overlap and sample the new state with MD.
+
+    Parameters
+    ----------
+    initial_lambdas: sequence of float, length >= 2, monotonically increasing
+        Initial protocol; starting point for bisection.
+
+    make_initial_state: callable
+        Function returning an InitialState (i.e., starting point for MD) given lambda
+
+    md_params: MDParams
+        Parameters used to simulate new states
+
+    n_bisections: int
+        Number of bisection steps to perform
+
+    temperature: float
+        Temperature in K
+
+    min_overlap: float or None, optional
+        If not None, return early when the BAR overlap between all neighboring pairs of states exceeds this value
+
+    verbose: bool, optional
+        Whether to print diagnostic information
+
+    batch_size: int
+        Number of simulations to simulate in each batch. Must be greater than 1. There is likely a trade off between
+        the batch size and effectiveness of batch size. May return up to batch_size * (n_bisections + 1) windows.
+
+    Returns
+    -------
+    list of IntermediateResult
+        For each iteration of bisection, object containing the current list of states and array of energy-decomposed
+        u_kln matrices.
+
+    list of Trajectory
+        Trajectory for each state
+    """
+
+    if batch_size <= 1:
+        raise ValueError(f"Batch size must be greater than 1, got {batch_size}")
+    assert len(initial_lambdas) >= 2
+    assert np.all(np.diff(initial_lambdas) > 0), "initial lambda schedule must be monotonically increasing"
+    if len(initial_lambdas) > batch_size:
+        raise RuntimeError("Batched Bisection doesn't support more initial lambdas than batch size")
+    get_initial_state = cache(make_initial_state)
+    rng = np.random.default_rng(md_params.seed)
+
+    if len(initial_lambdas) == 2:
+        lambdas_ = np.linspace(initial_lambdas[0], initial_lambdas[-1], batch_size)
+    else:
+        # if the user has provided initial lambdas, replace the nearest linear lambda with the provided lambda
+        lambdas_ = interpolate_pre_optimized_protocol(np.asarray(initial_lambdas), batch_size, validate=False)
+
+        def find_nearest_lamb(lamb: float):
+            abs_delta = np.abs(lambdas_ - lamb)
+            nearest_idx = np.argmin(abs_delta)
+            return nearest_idx
+
+        for i, user_lamb in enumerate(initial_lambdas):
+            # Ignore the endstates
+            if i == 0 or i == len(initial_lambdas) - 1:
+                continue
+            nearest_idx = find_nearest_lamb(user_lamb)
+            lambdas_[nearest_idx] = user_lamb
+        # Verify that all of the lambdas are correctly assigned
+        for lamb in initial_lambdas:
+            assert lamb in lambdas_
+
+    lambdas = [float(x) for x in lambdas_]
+
+    # Set up a single context and potential for generating the BarResult objects
+    context = get_batched_context([get_initial_state(lamb) for lamb in lambdas], md_params=md_params)  # type: ignore
+    bound_potentials = context.get_potentials()
+    assert len(bound_potentials) == len(get_initial_state(lambdas[0]).potentials)
+
+    temp_ctxt = get_context(get_initial_state(initial_lambdas[0]))
+    nrg_pots = [bp.get_potential() for bp in temp_ctxt.get_potentials()]
+    del temp_ctxt
+
+    barostat = context.get_barostat()
+
+    first_state = get_initial_state(initial_lambdas[0])
+    initial_volume_scale_factor = 0.0
+    ligand_idxs = first_state.ligand_idxs
+    if barostat is not None:
+        assert first_state.barostat is not None
+        initial_volume_scale_factor = first_state.barostat.initial_volume_scale_factor or 0.0
+
+    trajs_by_lamb = {}
+
+    def sample_lambdas(lambs: list[float]):
+        if len(trajs_by_lamb) > 0:
+            states = [get_initial_state(lamb) for lamb in lambs]
+            context.set_x_t(np.stack([state.x0 for state in states]))
+            context.set_v_t(np.stack([state.v0 for state in states]))
+            context.set_box(np.stack([state.box0 for state in states]))
+            for i, bp in enumerate(bound_potentials):
+                bp.set_params(np.stack([state.potentials[i].params for state in states]))
+            for mover in context.get_movers():
+                mover.set_step(0)
+                if isinstance(mover, WATER_SAMPLER_MOVERS):
+                    mover.set_params(np.stack([get_water_sampler_params(state) for state in states]))
+                elif isinstance(mover, BAROSTAT_MOVERS):
+                    # assert initial_state.barostat is not None
+                    # If initial_volume_scale factor is None, set to 0.0. Which indicates 1% of box volume.
+                    mover.set_volume_scale_factor(initial_volume_scale_factor)
+
+        samples_by_lamb: list[Trajectory] = [Trajectory.empty() for _ in lambs]
+        # TBD: Handle the ligand idxs in a more dynamic manner
+        for frames, boxes, velos in sample_with_context_iter(
+            context,
+            replace(md_params, seed=rng.integers(np.iinfo(np.int32).max)),
+            temperature,
+            ligand_idxs,
+            batch_size=1,
+        ):
+            frames = frames.reshape(1, batch_size, -1, 3)
+            boxes = boxes.reshape(1, batch_size, 3, 3)
+            velos = velos.reshape(batch_size, -1, 3)
+            for i in range(len(lambs)):
+                samples_by_lamb[i].frames.extend([frames[0, i]])
+                samples_by_lamb[i].boxes.extend([boxes[0, i]])
+                samples_by_lamb[i].final_velocities = velos[i]
+
+        if barostat is not None:
+            volume_scales = barostat.get_volume_scale_factor()
+            for i in range(len(lambs)):
+                samples_by_lamb[i].final_barostat_volume_scale_factor = volume_scales[i]
+        for lamb, traj in zip(lambs, samples_by_lamb):
+            assert lamb not in trajs_by_lamb
+            trajs_by_lamb[lamb] = traj
+
+    sample_lambdas(lambdas)
+
+    @cache
+    def get_bar_result(lamb1: float, lamb2: float) -> BarResult:
+        initial_states = [get_initial_state(lamb1), get_initial_state(lamb2)]
+        trajs = [trajs_by_lamb[lamb1], trajs_by_lamb[lamb2]]
+        u_kln_by_component = generate_pair_bar_ulkns(initial_states, trajs, temperature, nrg_pots)
+
+        # Trim off the first dimension
+        assert u_kln_by_component.shape[0] == 1
+        u_kln_by_component = u_kln_by_component.reshape(u_kln_by_component.shape[1:])
+        assert len(u_kln_by_component.shape) == 4
+        return estimate_free_energy_bar(u_kln_by_component, temperature, n_bootstrap=0)
+
+    def compute_intermediate_result(lambdas: Sequence[float]) -> PairBarResult:
+        refined_initial_states = [get_initial_state(lamb) for lamb in lambdas]
+        bar_results = []
+        for lamb1, lamb2 in zip(lambdas, lambdas[1:]):
+            bar_res = get_bar_result(lamb1, lamb2)
+            bar_results.append(bar_res)
+        return PairBarResult(refined_initial_states, bar_results)
+
+    def get_next_lambda_batch(lambs: Sequence[float]) -> tuple[NDArray, list[float]]:
+        overlaps = np.array([get_bar_result(lamb1, lamb2).overlap for lamb1, lamb2 in zip(lambs, lambs[1:])])
+        idxs_below_overlap = np.argsort(overlaps)
+        target_overlap = min_overlap if min_overlap is not None else 1.0
+
+        num_gaps = np.sum(overlaps < target_overlap)
+        assert num_gaps >= 1
+
+        lambs_to_add = []
+
+        lambs_per_gaps = max(1, int(np.ceil(batch_size / num_gaps)))
+
+        for idx in idxs_below_overlap:
+            if overlaps[idx] >= target_overlap:
+                break
+            if len(lambs_to_add) == batch_size:
+                break
+            spots_left = batch_size - len(lambs_to_add)
+            assert spots_left > 0
+            to_add = min(spots_left, lambs_per_gaps)
+            delta = abs(lambs[idx + 1] - lambs[idx]) / (to_add + 1)
+
+            lambs_to_add.extend(np.linspace(lambs[idx] + delta, lambs[idx + 1], to_add, endpoint=False))
+
+        assert len(lambs_to_add) == batch_size
+        return overlaps, lambs_to_add
+
+    result = compute_intermediate_result(lambdas)
+    results = [result]
+
+    n_bisections = n_bisections // batch_size
+
+    for iteration in range(n_bisections):
+        if min_overlap is not None and np.all(np.array(result.overlaps) > min_overlap):
+            if verbose:
+                print(f"All BAR overlaps exceed min_overlap={min_overlap}. Returning after {iteration} iterations.")
+            break
+
+        overlaps, new_lambs_to_sample = get_next_lambda_batch(lambdas)
+        if verbose:
+            if min_overlap is not None:
+                overlap_info = f"Current minimum BAR overlap {np.min(overlaps):.3g} <= {min_overlap:.3g} "
+            else:
+                overlap_info = f"Current minimum BAR overlap {np.min(overlaps):.3g} (min_overlap == None) "
+
+            print(
+                f"Bisection iteration {iteration + 1} (of {n_bisections}): "
+                + overlap_info
+                + f"Sampling new states at λ={[float(np.round(x, 2)) for x in sorted(new_lambs_to_sample)]}…"
+            )
+        sample_lambdas(new_lambs_to_sample)
+
+        lambdas = [float(x) for x in sorted(lambdas + new_lambs_to_sample)]
+        result = compute_intermediate_result(lambdas)
+        results.append(result)
+    else:
+        if min_overlap is not None and np.min(result.overlaps) < min_overlap:
+            warn(
+                f"Reached n_bisections={n_bisections} iterations without achieving min_overlap={min_overlap}. "
+                f"The minimum BAR overlap was {np.min(result.overlaps)}.",
+                MinOverlapWarning,
+            )
+
+    trajectories = [trajs_by_lamb[lamb] for lamb in lambdas]
+
+    return results, trajectories
+
+
+def run_sims_bisection(
+    initial_lambdas: Sequence[float],
+    make_initial_state: Callable[[float], InitialState],
+    md_params: MDParams,
+    n_bisections: int,
+    temperature: float,
+    min_overlap: Optional[float] = None,
+    verbose: bool = True,
+    batch_size: int = 1,
+) -> tuple[list[PairBarResult], list[Trajectory]]:
+    r"""Starting from a specified lambda schedule, successively bisect the lambda interval between the pair of states
+    with the lowest BAR overlap and sample the new state with MD.
+
+    Parameters
+    ----------
+    initial_lambdas: sequence of float, length >= 2, monotonically increasing
+        Initial protocol; starting point for bisection.
+
+    make_initial_state: callable
+        Function returning an InitialState (i.e., starting point for MD) given lambda
+
+    md_params: MDParams
+        Parameters used to simulate new states
+
+    n_bisections: int
+        Number of bisection steps to perform
+
+    temperature: float
+        Temperature in K
+
+    min_overlap: float or None, optional
+        If not None, return early when the BAR overlap between all neighboring pairs of states exceeds this value
+
+    verbose: bool, optional
+        Whether to print diagnostic information
+
+    batch_size: int
+        Number of simulations to run in each batch. Setting to 1 disables any batching.
+
+    Returns
+    -------
+    list of IntermediateResult
+        For each iteration of bisection, object containing the current list of states and array of energy-decomposed
+        u_kln matrices.
+
+    list of Trajectory
+        Trajectory for each state
+    """
+
+    if batch_size > 1:
+        return _run_batched_bisection(
+            initial_lambdas,
+            make_initial_state,
+            md_params,
+            n_bisections,
+            temperature,
+            min_overlap,
+            verbose,
+            batch_size,
+        )
+    else:
+        return _run_sequential_bisection(
+            initial_lambdas,
+            make_initial_state,
+            md_params,
+            n_bisections,
+            temperature,
+            min_overlap,
+            verbose,
+        )
+
+
 def compute_potential_matrix(
     potential: custom_ops.Potential_f32,
     hrex: HREX[CoordsVelBox],
@@ -1222,7 +1641,7 @@ def batch_compute_potential_matrix(
     computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
     set to `np.inf`.
 
-    A batched variant of `compute_potential_matrix`.
+    A batched variant of `compute_potential_matrix` that parallelizes the computation of energies on the GPU using streams.
 
     Parameters
     ----------
@@ -1327,8 +1746,10 @@ def assert_ensembles_compatible(state_a: InitialState, state_b: InitialState):
         assert (state_a.box0 == state_b.box0).all()
 
 
-def compute_u_kn(trajs, initial_states) -> tuple[NDArray, NDArray]:
-    """makes K calls to execute_batch
+def compute_u_kln(trajs: Sequence[Trajectory], initial_states: Sequence[InitialState]) -> tuple[NDArray, NDArray]:
+    """Compute the complete U kln energy matrix given trajectories and the associated states.
+
+    Makes K, where K is the number of trajectories, calls to execute_batch
 
 
     Notes
@@ -1341,7 +1762,7 @@ def compute_u_kn(trajs, initial_states) -> tuple[NDArray, NDArray]:
         assert_potentials_compatible(initial_states[0].potentials, s.potentials)
         assert_ensembles_compatible(initial_states[0], s)
 
-    N_k = [len(traj.frames) for traj in trajs]
+    N_k = np.array([len(traj.frames) for traj in trajs], dtype=np.int32)
     kBTs = [BOLTZ * state.integrator.temperature for state in initial_states]
     assert len(set(kBTs)) == 1
     summed_pot = make_summed_potential(initial_states[0].potentials)
@@ -1355,7 +1776,7 @@ def compute_u_kn(trajs, initial_states) -> tuple[NDArray, NDArray]:
 
     unbound_impl = summed_pot.potential.to_gpu(np.float32).unbound_impl
     assert len(initial_states) == K
-    u_kln = np.nan * np.zeros((K, K, max(N_k)))
+    u_kln = np.full((K, K, np.max(N_k)), np.nan)
     for i, traj in enumerate(trajs):
         # The computations of the energies are computed serially on the GPU
         # TBD: Compute the parameters sets in parallel for improved throughput
@@ -1365,9 +1786,17 @@ def compute_u_kn(trajs, initial_states) -> tuple[NDArray, NDArray]:
         Us = Us.T  # Transpose to get energies by params
         us = Us.reshape(K, N_k[i]) / kBTs[i]
         u_kln[i, :, : N_k[i]] = np.nan_to_num(us, nan=+np.inf)
+    return u_kln, N_k
 
+
+def compute_u_kn(trajs: Sequence[Trajectory], initial_states: Sequence[InitialState]) -> tuple[NDArray, NDArray]:
+    """Compute the U kn matrix given trajectories and the associated states.
+
+    See compute_u_kln for more details
+    """
+    u_kln, N_k = compute_u_kln(trajs, initial_states)
     u_kn = kln_to_kn(u_kln, N_k)
-    return u_kn, np.array(N_k)
+    return u_kn, N_k
 
 
 def generate_pair_bar_ulkns(
@@ -1442,11 +1871,200 @@ def generate_pair_bar_ulkns(
     return u_kln_by_component_by_lambda
 
 
+def run_sequential_hrex_step(
+    hrex: HREX,
+    nrg_pots: list[custom_ops.Potential_f32],
+    params_by_state_by_pot: list[NDArray],
+    water_params_by_state: NDArray | None,
+    context: custom_ops.Context_f32,
+    md_params: MDParams,
+    ligand_idxs: NDArray[np.int32],
+    temperature: float,
+    current_frame: int,
+):
+    assert md_params.hrex_params is not None
+    bound_potentials = context.get_potentials()
+
+    barostat = context.get_barostat()
+    water_sampler: custom_ops.TIBDExchangeMove_f32 | custom_ops.TIBDExchangeMove_f64 | None = None
+
+    if barostat is not None and md_params.water_sampling_params is not None:
+        # Should have a barostat and a water sampler
+        assert len(context.get_movers()) == 2
+        water_sampler = next(mover for mover in context.get_movers() if isinstance(mover, WATER_SAMPLER_MOVERS))
+
+    water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(hrex.replicas))]
+
+    def sample_replica(xvb: CoordsVelBox, state_idx: StateIdx) -> tuple[NDArray, NDArray, NDArray, Optional[float]]:
+        context.set_x_t(xvb.coords)
+        context.set_v_t(xvb.velocities)
+        context.set_box(xvb.box)
+
+        for i, bp in enumerate(bound_potentials):
+            bp.set_params(params_by_state_by_pot[i][state_idx])
+
+        # Movers are not called during local steps, so if local moves are mixed in need to account only for global steps
+        current_mover_step = current_frame * md_params.steps_per_frame
+        if md_params.local_md_params is not None:
+            current_mover_step = current_frame * (md_params.steps_per_frame - md_params.local_md_params.local_steps)
+        # Setup the MC movers of the Context
+        starting_water_acceptances = 0
+        starting_water_proposals = 0
+        if water_sampler is not None:
+            assert water_params_by_state is not None
+            water_sampler.set_params(water_params_by_state[state_idx])
+            water_sampler.set_step(current_mover_step)
+            assert water_sampler.num_systems() == 1
+            starting_water_proposals = water_sampler.n_proposed()[0]
+            starting_water_acceptances = water_sampler.n_accepted()[0]
+        if barostat is not None:
+            barostat.set_step(current_mover_step)
+
+        md_params_replica = replace(
+            md_params,
+            n_frames=1,
+            # Run equilibration as part of the first frame
+            n_eq_steps=md_params.n_eq_steps if current_frame == 0 else 0,
+            seed=state_idx + current_frame,
+        )
+
+        assert md_params_replica.n_frames == 1
+        # Get the next set of frames from the iterator, which will be the only value returned
+        frame, box, final_velos = next(
+            sample_with_context_iter(context, md_params_replica, temperature, ligand_idxs, batch_size=1)
+        )
+        assert frame.shape[0] == 1
+
+        if water_sampler is not None:
+            final_water_proposals = water_sampler.n_proposed()[0] - starting_water_proposals
+            final_water_acceptances = water_sampler.n_accepted()[0] - starting_water_acceptances
+            water_sampling_acceptance_proposal_counts_by_state[state_idx] = (
+                final_water_acceptances,
+                final_water_proposals,
+            )
+
+        final_barostat_volume_scale_factor = (
+            float(np.mean(barostat.get_volume_scale_factor())) if barostat is not None else None
+        )
+
+        return frame[-1], box[-1], final_velos, final_barostat_volume_scale_factor
+
+    def replica_from_samples(last_sample: tuple[NDArray, NDArray, NDArray, Optional[float]]) -> CoordsVelBox:
+        frame, box, velos, _ = last_sample
+        return CoordsVelBox(frame, velos, box)
+
+    hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica, replica_from_samples)
+    # Generate the per-potential U_kl, avoids the need to re-compute the U_kln at the end
+    U_kl_raw = batch_compute_potential_matrix(
+        nrg_pots,
+        hrex,
+        params_by_state_by_pot,
+        md_params.hrex_params.max_delta_states,
+    )
+
+    return hrex, samples_by_state_iter, U_kl_raw, water_sampling_acceptance_proposal_counts_by_state
+
+
+def run_batched_hrex_step(
+    hrex: HREX,
+    nrg_pots: list[custom_ops.Potential_f32],
+    params_by_state_by_pot: list[NDArray],
+    water_params_by_state: NDArray | None,
+    context: custom_ops.Context_f32,
+    md_params: MDParams,
+    ligand_idxs: NDArray[np.int32],
+    temperature: float,
+    current_frame: int,
+):
+    assert md_params.hrex_params is not None
+    bound_potentials = context.get_potentials()
+    barostat = context.get_barostat()
+
+    water_sampler: custom_ops.TIBDExchangeMove_f32 | custom_ops.TIBDExchangeMove_f64 | None = None
+
+    if md_params.water_sampling_params is not None:
+        # Should have a barostat and a water sampler
+        assert len(context.get_movers()) == 2
+        water_sampler = next(mover for mover in context.get_movers() if isinstance(mover, WATER_SAMPLER_MOVERS))
+
+    water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(hrex.replicas))]
+
+    state_to_replica = np.argsort(hrex.replica_idx_by_state).tolist()
+
+    # Note that the index of the frames is the replica index, the params need to be permuted accordingly
+    if current_frame > 0:
+        for i, bp in enumerate(bound_potentials):
+            params = np.stack(params_by_state_by_pot[i])[state_to_replica]  # type: ignore
+            bp.set_params(params)
+
+    # Setup the MC movers of the Context
+    if water_sampler is not None:
+        accepted = np.asarray(water_sampler.n_accepted())[state_to_replica]
+        proposed = np.asarray(water_sampler.n_proposed())[state_to_replica]
+        for i, (acc, prop) in enumerate(zip(accepted, proposed)):
+            water_sampling_acceptance_proposal_counts_by_state[i] = (acc, prop)
+
+        assert water_params_by_state is not None
+        water_sampler.set_params(water_params_by_state[state_to_replica])
+
+    md_params_replica = replace(
+        md_params,
+        n_frames=1,
+        # Run equilibration as part of the first frame
+        n_eq_steps=md_params.n_eq_steps if current_frame == 0 else 0,
+        seed=md_params.seed + current_frame,
+    )
+
+    assert md_params_replica.n_frames == 1
+    # Get the next set of frames from the iterator, which will be the only value returned
+    frame, box, final_velos = next(
+        sample_with_context_iter(context, md_params_replica, temperature, ligand_idxs, batch_size=1)
+    )
+
+    assert frame.shape[0] == 1
+    assert frame.shape[1] == len(hrex.replicas)
+
+    if water_sampler is not None:
+        accepted = np.asarray(water_sampler.n_accepted())[state_to_replica]
+        proposed = np.asarray(water_sampler.n_proposed())[state_to_replica]
+        for i, (acc, prop) in enumerate(zip(accepted, proposed)):
+            last_acc, last_prop = water_sampling_acceptance_proposal_counts_by_state[i]
+            water_sampling_acceptance_proposal_counts_by_state[i] = (acc - last_acc, prop - last_prop)
+
+    final_barostat_volume_scale_factors = barostat.get_volume_scale_factor() if barostat is not None else None
+
+    def sample_replica_wrapper(xvb: CoordsVelBox, state_idx: StateIdx):
+        replica_idx = state_to_replica.index(state_idx)  # type: ignore
+
+        return (
+            frame[-1, replica_idx],
+            box[-1, replica_idx],
+            final_velos[replica_idx],
+            None if final_barostat_volume_scale_factors is None else final_barostat_volume_scale_factors[replica_idx],
+        )
+
+    def replica_from_samples(last_sample: tuple[NDArray, NDArray, NDArray, Optional[float]]) -> CoordsVelBox:
+        x, b, v, _ = last_sample
+        return CoordsVelBox(x, v, b)
+
+    hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica_wrapper, replica_from_samples)
+
+    U_kl_raw = batch_compute_potential_matrix(
+        nrg_pots,
+        hrex,
+        params_by_state_by_pot,
+        md_params.hrex_params.max_delta_states,
+    )
+
+    return hrex, samples_by_state_iter, U_kl_raw, water_sampling_acceptance_proposal_counts_by_state
+
+
 def run_sims_hrex(
     initial_states: Sequence[InitialState],
     md_params: MDParams,
     n_swap_attempts_per_iter: Optional[int] = None,
     print_diagnostics_interval: Optional[int] = 10,
+    batch_simulations: bool = False,
 ) -> tuple[PairBarResult, list[Trajectory], HREXDiagnostics, WaterSamplingDiagnostics | None]:
     r"""Sample from a sequence of states using nearest-neighbor Hamiltonian Replica EXchange (HREX).
 
@@ -1466,6 +2084,9 @@ def run_sims_hrex(
 
     print_diagnostics_interval: int or None, optional
         If not None, print diagnostics every N iterations
+
+    batch_simulations: bool
+        Run simulations in batch mode. May result in GPU running out of memory
 
     Returns
     -------
@@ -1495,9 +2116,16 @@ def run_sims_hrex(
         assert_potentials_compatible(initial_states[0].potentials, s.potentials)
 
     # Set up overall potential and context using the first state.
-    context = get_context(initial_states[0], md_params=md_params)
-    bound_potentials = context.get_potentials()
-    assert len(bound_potentials) == len(initial_states[0].potentials)
+    if batch_simulations:
+        context = get_batched_context(initial_states, md_params=md_params)
+
+        temp_ctxt = get_context(initial_states[0])
+        nrg_pots = [bp.get_potential() for bp in temp_ctxt.get_potentials()]
+        del temp_ctxt
+    else:
+        context = get_context(initial_states[0], md_params=md_params)
+        nrg_pots = [bp.get_potential() for bp in context.get_potentials()]
+    assert len(context.get_potentials()) == len(initial_states[0].potentials)
     temperature = initial_states[0].integrator.temperature
     ligand_idxs = initial_states[0].ligand_idxs
 
@@ -1507,27 +2135,19 @@ def run_sims_hrex(
     params_by_state = [get_state_params(initial_state) for initial_state in initial_states]
 
     params_by_state_by_pot = [
-        np.asarray([params[i] for params in params_by_state]) for i in range(len(bound_potentials))
+        np.asarray([params[i] for params in params_by_state]) for i in range(len(initial_states[0].potentials))
     ]
 
     water_params_by_state: Optional[NDArray] = None
     if md_params.water_sampling_params is not None:
         water_params_by_state = np.array([get_water_sampler_params(initial_state) for initial_state in initial_states])
 
-    state_idxs = [StateIdx(i) for i, _ in enumerate(initial_states)]
+    state_idxs = [StateIdx(i) for i in range(len(initial_states))]
     neighbor_pairs = list(zip(state_idxs, state_idxs[1:]))
 
     if len(initial_states) == 2:
         # Add an identity move to the mixture to ensure aperiodicity
         neighbor_pairs = [(StateIdx(0), StateIdx(0)), *neighbor_pairs]
-
-    barostat = context.get_barostat()
-    water_sampler: custom_ops.TIBDExchangeMove_f32 | custom_ops.TIBDExchangeMove_f64 | None = None
-
-    if barostat is not None and md_params.water_sampling_params is not None:
-        # Should have a barostat and a water sampler
-        assert len(context.get_movers()) == 2
-        water_sampler = next(mover for mover in context.get_movers() if isinstance(mover, WATER_SAMPLER_MOVERS))
 
     hrex = HREX.from_replicas([CoordsVelBox(s.x0, s.v0, s.box0) for s in initial_states])
 
@@ -1548,77 +2168,28 @@ def run_sims_hrex(
     kBT = temperature * BOLTZ
 
     iterated_u_kln = np.full(
-        (len(bound_potentials), len(initial_states), len(initial_states), md_params.n_frames), np.inf, dtype=np.float32
+        (len(initial_states[0].potentials), len(initial_states), len(initial_states), md_params.n_frames),
+        np.inf,
+        dtype=np.float32,
     )
 
+    hrex_func = run_sequential_hrex_step if not batch_simulations else run_batched_hrex_step
+
     for current_frame in range(md_params.n_frames):
-        water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(initial_states))]
-
-        def sample_replica(xvb: CoordsVelBox, state_idx: StateIdx) -> tuple[NDArray, NDArray, NDArray, Optional[float]]:
-            context.set_x_t(xvb.coords)
-            context.set_v_t(xvb.velocities)
-            context.set_box(xvb.box)
-
-            params_by_bp = params_by_state[state_idx]
-            for bp, params in zip(bound_potentials, params_by_bp):
-                bp.set_params(params)
-
-            # Movers are not called during local steps, so if local moves are mixed in need to account only for global steps
-            current_mover_step = current_frame * md_params.steps_per_frame
-            if md_params.local_md_params is not None:
-                current_mover_step = current_frame * (md_params.steps_per_frame - md_params.local_md_params.local_steps)
-            # Setup the MC movers of the Context
-            starting_water_acceptances = 0
-            starting_water_proposals = 0
-            if water_sampler is not None:
-                assert water_params_by_state is not None
-                water_sampler.set_params(water_params_by_state[state_idx])
-                water_sampler.set_step(current_mover_step)
-                starting_water_proposals = water_sampler.n_proposed()
-                starting_water_acceptances = water_sampler.n_accepted()
-            if barostat is not None:
-                barostat.set_step(current_mover_step)
-
-            md_params_replica = replace(
-                md_params,
-                n_frames=1,
-                # Run equilibration as part of the first frame
-                n_eq_steps=md_params.n_eq_steps if current_frame == 0 else 0,
-                seed=state_idx + current_frame,
-            )
-
-            assert md_params_replica.n_frames == 1
-            # Get the next set of frames from the iterator, which will be the only value returned
-            frame, box, final_velos = next(
-                sample_with_context_iter(context, md_params_replica, temperature, ligand_idxs, batch_size=1)
-            )
-            assert frame.shape[0] == 1
-
-            if water_sampler is not None:
-                final_water_proposals = water_sampler.n_proposed() - starting_water_proposals
-                final_water_acceptances = water_sampler.n_accepted() - starting_water_acceptances
-                water_sampling_acceptance_proposal_counts_by_state[state_idx] = (
-                    final_water_acceptances,
-                    final_water_proposals,
-                )
-
-            final_barostat_volume_scale_factor = barostat.get_volume_scale_factor() if barostat is not None else None
-
-            return frame[-1], box[-1], final_velos, final_barostat_volume_scale_factor
-
-        def replica_from_samples(last_sample: tuple[NDArray, NDArray, NDArray, Optional[float]]) -> CoordsVelBox:
-            frame, box, velos, _ = last_sample
-            return CoordsVelBox(frame, velos, box)
-
-        hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica, replica_from_samples)
-        water_sampler_proposals_by_state_by_iter.append(water_sampling_acceptance_proposal_counts_by_state)
-        # Generate the per-potential U_kl, avoids the need to re-compute the U_kln at the end
-        U_kl_raw = batch_compute_potential_matrix(
-            [bp.get_potential() for bp in bound_potentials],
+        hrex, samples_by_state_iter, U_kl_raw, water_sampler_proposals_by_state = hrex_func(
             hrex,
+            nrg_pots,  # TBD: Use the batched potentials for computing the energy matrix
             params_by_state_by_pot,
-            md_params.hrex_params.max_delta_states,
+            water_params_by_state,
+            context,
+            md_params,
+            ligand_idxs,
+            temperature,
+            current_frame,
         )
+
+        water_sampler_proposals_by_state_by_iter.append(water_sampler_proposals_by_state)
+
         # Sum the per-potential components for performing swaps
         U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 

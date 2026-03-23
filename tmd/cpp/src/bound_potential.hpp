@@ -33,6 +33,8 @@ template <typename RealType> struct BoundPotential {
   DeviceBuffer<RealType> d_p;
   std::shared_ptr<Potential<RealType>> potential;
 
+  int num_systems() const;
+
   std::vector<RealType> get_params() const;
 
   void set_params(const std::vector<RealType> &params);
@@ -40,12 +42,14 @@ template <typename RealType> struct BoundPotential {
   void set_params_device(const int size, const RealType *d_p,
                          const cudaStream_t stream);
 
-  void execute_host(const int N, const RealType *h_x, const RealType *h_box,
-                    unsigned long long *h_du_dx, __int128 *h_u);
+  void execute_host(const int batches, const int N, const RealType *h_x,
+                    const RealType *h_box, unsigned long long *h_du_dx,
+                    __int128 *h_u);
 
-  void execute_device(const int N, const RealType *d_x, const RealType *d_box,
-                      unsigned long long *d_du_dx, unsigned long long *d_du_dp,
-                      __int128 *d_u, cudaStream_t stream);
+  void execute_device(const int batches, const int N, const RealType *d_x,
+                      const RealType *d_box, unsigned long long *d_du_dx,
+                      unsigned long long *d_du_dp, __int128 *d_u,
+                      cudaStream_t stream);
 
   void execute_batch_host(const int coord_batch_size, const int N,
                           const RealType *h_x, const RealType *h_box,

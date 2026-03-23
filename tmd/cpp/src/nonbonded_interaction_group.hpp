@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include "energy_accum.hpp"
 #include "hilbert_sort.hpp"
 #include "neighborlist.hpp"
 #include "nonbonded_common.hpp"
@@ -31,37 +32,43 @@ enum class NonbondedInteractionType { DISJOINT, OVERLAPPING };
 template <typename RealType>
 class NonbondedInteractionGroup : public Potential<RealType> {
 
-  typedef void (*k_nonbonded_fn)(const int N, const int NR,
-                                 const unsigned int *__restrict__ ixn_count,
-                                 const unsigned int *__restrict__ d_atom_idxs,
-                                 const RealType *__restrict__ coords,
-                                 const RealType *__restrict__ params, // [N]
-                                 const RealType *__restrict__ box,
-                                 const RealType beta, const RealType cutoff,
-                                 const int *__restrict__ ixn_tiles,
-                                 const unsigned int *__restrict__ ixn_atoms,
-                                 unsigned long long *__restrict__ du_dx,
-                                 unsigned long long *__restrict__ du_dp,
-                                 __int128 *__restrict__ u_buffer);
+  typedef void (*k_nonbonded_fn)(
+      const int num_systems, const int N, const int max_index,
+      const int u_buffer_stride, const int ixn_atoms_stride,
+      const unsigned int *row_indice_counts,
+      const unsigned int *__restrict__ ixn_count,
+      const unsigned int *__restrict__ d_atom_idxs,
+      const RealType *__restrict__ coords, const RealType *__restrict__ params,
+      const RealType *__restrict__ box, const RealType beta,
+      const RealType cutoff, const int *__restrict__ ixn_tiles,
+      const unsigned int *__restrict__ ixn_atoms,
+      unsigned long long *__restrict__ du_dx,
+      unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
+  const int num_systems_;
   const int
       N_; // total number of atoms, i.e. first dimension of input coords, params
-  int NR_; // number of row atoms
-  int NC_; // number of column atoms
 
   const NonbondedInteractionType interaction_type_;
   bool compute_col_grads_;
 
-  size_t sum_storage_bytes_;
-  void *d_sum_temp_storage_;
+  EnergyAccumulator nrg_accum_;
 
   std::array<k_nonbonded_fn, 32> kernel_ptrs_;
 
-  unsigned int *d_col_atom_idxs_;
-  unsigned int *d_row_atom_idxs_;
+  std::vector<int> column_idx_counts_; // [num_systems_] Number of atoms in
+                                       // column, N_ for each system by default
+  std::vector<int> row_idx_counts_; // [num_systems_] Number of atoms in row, N_
+                                    // for each system by default
 
-  unsigned int *d_arange_buffer_;
+  unsigned int *d_col_atom_idxs_;
+  int *d_col_atom_idxs_counts_;
+  unsigned int *d_row_atom_idxs_;
+  int *d_row_atom_idxs_counts_;
+
+  unsigned int *d_nblist_row_idxs_;
+  unsigned int *d_nblist_col_idxs_;
 
   int *p_ixn_count_; // pinned memory
 
@@ -72,7 +79,8 @@ private:
   Neighborlist<RealType> nblist_;
 
   RealType nblist_padding_;
-  __int128 *d_u_buffer_;   // [NONBONDED_KERNEL_BLOCKS]
+  __int128 *d_u_buffer_;   // [num_systems, NONBONDED_KERNEL_BLOCKS]
+  int *d_system_idxs_;     // [num_systems, NONBONDED_KERNEL_BLOCKS]
   RealType *d_nblist_x_;   // coords which were used to compute the nblist
   RealType *d_nblist_box_; // box which was used to rebuild the nblist
   int *m_rebuild_nblist_;  // mapped, zero-copy memory
@@ -99,13 +107,16 @@ private:
 
   void sort(const RealType *d_x, const RealType *d_box, cudaStream_t stream);
 
-  void validate_idxs(const int N, const std::vector<int> &row_atom_idxs,
-                     const std::vector<int> &col_atom_idxs,
+  void validate_idxs(const int N,
+                     const std::vector<std::vector<int>> &row_atom_idxs,
+                     const std::vector<std::vector<int>> &col_atom_idxs,
                      const bool allow_empty);
 
   int get_max_nonbonded_kernel_blocks() const;
 
   int get_cur_nonbonded_kernel_blocks() const;
+
+  int get_max_atoms() const;
 
 public:
   RealType get_cutoff() const { return cutoff_; };
@@ -113,35 +124,40 @@ public:
   void set_nblist_padding(const RealType padding);
   RealType get_nblist_padding() const { return nblist_padding_; };
 
-  void set_compute_col_grads(bool value);
+  void set_compute_col_grads(const bool value);
   bool get_compute_col_grads() const { return compute_col_grads_; };
 
   RealType get_beta() const { return beta_; };
 
-  int get_num_col_idxs() const { return NC_; };
-  int get_num_row_idxs() const { return NR_; };
+  int get_num_col_idxs() const;
+  int get_num_row_idxs() const;
 
   std::vector<int> get_row_idxs() const;
   std::vector<int> get_col_idxs() const;
 
-  void set_atom_idxs_device(const int NR, const int NC,
-                            unsigned int *d_row_idxs,
-                            unsigned int *d_column_idxs,
+  virtual int num_systems() const override;
+
+  void set_atom_idxs_device(const std::vector<int> &row_counts,
+                            const std::vector<int> &col_counts,
+                            const unsigned int *d_row_idxs,
+                            const unsigned int *d_column_idxs,
                             const cudaStream_t stream);
 
-  void set_atom_idxs(const std::vector<int> &row_atom_idxs,
-                     const std::vector<int> &col_atom_idxs);
+  void set_atom_idxs(const std::vector<std::vector<int>> &row_atom_idxs,
+                     const std::vector<std::vector<int>> &col_atom_idxs);
 
-  NonbondedInteractionGroup(const int N, const std::vector<int> &row_atom_idxs,
-                            const std::vector<int> &col_atom_idxs,
+  NonbondedInteractionGroup(const int num_systems, const int N,
+                            const std::vector<std::vector<int>> &row_atom_idxs,
+                            const std::vector<std::vector<int>> &col_atom_idxs,
                             const RealType beta, const RealType cutoff,
                             const bool disable_hilbert_sort = false,
                             const RealType nblist_padding = 0.1);
 
   ~NonbondedInteractionGroup();
 
-  virtual void execute_device(const int N, const int P, const RealType *d_x,
-                              const RealType *d_p, const RealType *d_box,
+  virtual void execute_device(const int batches, const int N, const int P,
+                              const RealType *d_x, const RealType *d_p,
+                              const RealType *d_box,
                               unsigned long long *d_du_dx,
                               unsigned long long *d_du_dp, __int128 *d_u,
                               cudaStream_t stream) override;

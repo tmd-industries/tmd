@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@
 #include "fanout_summed_potential.hpp"
 #include "fixed_point.hpp"
 #include "flat_bottom_bond.hpp"
+#include "flat_bottom_restraint.hpp"
 #include "harmonic_angle.hpp"
 #include "harmonic_bond.hpp"
 #include "langevin_integrator.hpp"
@@ -65,6 +66,18 @@
 namespace py = pybind11;
 using namespace tmd;
 
+void verify_bond_idxs(const py::array_t<int, py::array::c_style> &bond_idxs,
+                      const int idxs_per_bond) {
+  size_t bond_dims = bond_idxs.ndim();
+  if (bond_dims != 2) {
+    throw std::runtime_error("idxs dimensions must be 2");
+  }
+  if (bond_idxs.shape(bond_dims - 1) != idxs_per_bond) {
+    throw std::runtime_error("idxs must be of length " +
+                             std::to_string(idxs_per_bond));
+  }
+}
+
 void verify_coords(const py::array_t<double, py::array::c_style> &coords) {
   size_t coord_dimensions = coords.ndim();
   if (coord_dimensions != 2) {
@@ -76,9 +89,10 @@ void verify_coords(const py::array_t<double, py::array::c_style> &coords) {
 }
 
 // A utility to make sure that the coords and box shapes are correct
+template <typename RealType>
 void verify_coords_and_box(
-    const py::array_t<double, py::array::c_style> &coords,
-    const py::array_t<double, py::array::c_style> &box) {
+    const py::array_t<RealType, py::array::c_style> &coords,
+    const py::array_t<RealType, py::array::c_style> &box) {
   verify_coords(coords);
   if (box.ndim() != 2 || box.shape(0) != 3 || box.shape(1) != 3) {
     throw std::runtime_error("box must be 3x3");
@@ -86,11 +100,11 @@ void verify_coords_and_box(
   auto box_data = box.data();
   for (int i = 0; i < box.size(); i++) {
     if (i == 0 || i == 4 || i == 8) {
-      if (box_data[i] <= 0.0) {
+      if (box_data[i] <= 0) {
         throw std::runtime_error(
             "box must have positive values along diagonal");
       }
-    } else if (box_data[i] != 0.0) {
+    } else if (box_data[i] != 0) {
       throw std::runtime_error("box must be ortholinear");
     }
   }
@@ -140,10 +154,13 @@ void declare_neighborlist(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("Neighborlist_") + typestr;
   py::class_<Class>(m, pyclass_name.c_str(), py::buffer_protocol(),
                     py::dynamic_attr())
-      .def(py::init([](int N, bool compute_upper_triangular) {
-             return new Neighborlist<RealType>(N, compute_upper_triangular);
+      .def(py::init([](const int num_systems, const int N,
+                       const bool compute_upper_triangular) {
+             return new Neighborlist<RealType>(num_systems, N,
+                                               compute_upper_triangular);
            }),
-           py::arg("N"), py::arg("compute_upper_triangular"))
+           py::arg("num_systems"), py::arg("N"),
+           py::arg("compute_upper_triangular"))
       .def(
           "compute_block_bounds",
           [](Neighborlist<RealType> &nblist,
@@ -155,21 +172,32 @@ void declare_neighborlist(py::module &m, const char *typestr) {
               // is fixed to the CUDA warpSize
               throw std::runtime_error("Block size must be 32.");
             }
-            verify_coords_and_box(coords, box);
-            int N = coords.shape()[0];
-            int D = coords.shape()[1];
-            int B = (N + block_size - 1) / block_size;
-
-            py::array_t<RealType, py::array::c_style> py_bb_ctrs({B, D});
-            py::array_t<RealType, py::array::c_style> py_bb_exts({B, D});
+            int num_systems = 1;
+            int N;
+            int D;
+            if (coords.ndim() == 3) {
+              num_systems = coords.shape()[0];
+              N = coords.shape()[1];
+              D = coords.shape()[2];
+            } else {
+              verify_coords_and_box(coords, box);
+              N = coords.shape()[0];
+              D = coords.shape()[1];
+            }
+            const int B = ceil_divide(N, block_size);
 
             std::vector<RealType> real_coords =
                 py_array_to_vector_with_cast<double, RealType>(coords);
             std::vector<RealType> real_box =
                 py_array_to_vector_with_cast<double, RealType>(box);
 
+            py::array_t<RealType, py::array::c_style> py_bb_ctrs(
+                {num_systems, B, D});
+            py::array_t<RealType, py::array::c_style> py_bb_exts(
+                {num_systems, B, D});
+
             nblist.compute_block_bounds_host(
-                N, real_coords.data(), real_box.data(),
+                num_systems, N, real_coords.data(), real_box.data(),
                 py_bb_ctrs.mutable_data(), py_bb_exts.mutable_data());
 
             // returns real type
@@ -181,18 +209,26 @@ void declare_neighborlist(py::module &m, const char *typestr) {
           [](Neighborlist<RealType> &nblist,
              const py::array_t<double, py::array::c_style> &coords,
              const py::array_t<double, py::array::c_style> &box,
-             const double cutoff,
-             const double padding) -> std::vector<std::vector<int>> {
-            int N = coords.shape()[0];
-            verify_coords_and_box(coords, box);
+             const double cutoff, const double padding)
+              -> std::vector<std::vector<std::vector<int>>> {
+            int num_systems = 1;
+            int N;
+            if (coords.ndim() == 3) {
+              num_systems = coords.shape()[0];
+              N = coords.shape()[1];
+            } else {
+              verify_coords_and_box(coords, box);
+              N = coords.shape()[0];
+            }
 
             std::vector<RealType> real_coords =
                 py_array_to_vector_with_cast<double, RealType>(coords);
             std::vector<RealType> real_box =
                 py_array_to_vector_with_cast<double, RealType>(box);
 
-            std::vector<std::vector<int>> ixn_list = nblist.get_nblist_host(
-                N, real_coords.data(), real_box.data(), cutoff, padding);
+            auto ixn_list =
+                nblist.get_nblist_host(num_systems, N, real_coords.data(),
+                                       real_box.data(), cutoff, padding);
 
             return ixn_list;
           },
@@ -216,7 +252,31 @@ void declare_neighborlist(py::module &m, const char *typestr) {
             nblist.set_row_idxs_and_col_idxs(row_idxs, col_idxs);
           },
           py::arg("row_idxs"), py::arg("col_idxs"))
+      .def(
+          "set_row_idxs_and_col_idxs",
+          [](Neighborlist<RealType> &nblist,
+             const std::vector<py::array_t<unsigned int, py::array::c_style>>
+                 &row_idxs_i,
+             const std::vector<py::array_t<unsigned int, py::array::c_style>>
+                 &col_idxs_i) {
+            const auto num_sets = row_idxs_i.size();
+            if (num_sets != col_idxs_i.size()) {
+              throw std::runtime_error(
+                  "Number of sets of row and column indices must match");
+            }
+            std::vector<std::vector<unsigned int>> row_idxs;
+            for (auto row_idx_subset : row_idxs_i) {
+              row_idxs.push_back(py_array_to_vector(row_idx_subset));
+            }
+            std::vector<std::vector<unsigned int>> col_idxs;
+            for (auto col_idx_subset : col_idxs_i) {
+              col_idxs.push_back(py_array_to_vector(col_idx_subset));
+            }
+            nblist.set_row_idxs_and_col_idxs(row_idxs, col_idxs);
+          },
+          py::arg("row_idxs"), py::arg("col_idxs"))
       .def("reset_row_idxs", &Neighborlist<RealType>::reset_row_idxs)
+      .def("get_num_systems", &Neighborlist<RealType>::get_num_systems)
       .def("get_tile_ixn_count", &Neighborlist<RealType>::num_tile_ixns)
       .def("get_max_ixn_count", &Neighborlist<RealType>::max_ixn_count)
       .def("resize", &Neighborlist<RealType>::resize, py::arg("size"))
@@ -238,8 +298,8 @@ void declare_hilbert_sort(py::module &m, const char *typestr) {
              const py::array_t<double, py::array::c_style> &coords,
              const py::array_t<double, py::array::c_style> &box)
               -> const py::array_t<uint32_t, py::array::c_style> {
-            const int N = coords.shape()[0];
             verify_coords_and_box(coords, box);
+            const int N = coords.shape()[0];
 
             std::vector<RealType> real_coords =
                 py_array_to_vector_with_cast<double, RealType>(coords);
@@ -295,7 +355,7 @@ void declare_segmented_weighted_random_sampler(py::module &m,
         Returns
         -------
         Array of sample indices
-            Shape (num_batches, )
+            Shape (num_systems, )
         )pbdoc");
 }
 
@@ -377,15 +437,46 @@ void declare_context(py::module &m, const char *typestr) {
                   std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
                   std::optional<std::vector<std::shared_ptr<Mover<RealType>>>>
                       movers) {
-                 int N = x0.shape()[0];
-                 int D = x0.shape()[1];
-                 verify_coords_and_box(x0, box0);
-                 if (N != v0.shape()[0]) {
-                   throw std::runtime_error("v0 N != x0 N");
+                 if (bps.size() == 0) {
+                   throw std::runtime_error(
+                       "must provide at least one bound potential");
                  }
-
-                 if (D != v0.shape()[1]) {
-                   throw std::runtime_error("v0 D != x0 D");
+                 const int num_systems = bps[0]->potential->num_systems();
+                 if (num_systems < 1) {
+                   throw std::runtime_error(
+                       "batch size of potentials must be at least 1");
+                 }
+                 if (intg->num_systems() != num_systems) {
+                   throw std::runtime_error(
+                       "integrator batch size (" +
+                       std::to_string(intg->num_systems()) +
+                       ") does not match bound potential batch size (" +
+                       std::to_string(num_systems) + ")");
+                 }
+                 int N, D;
+                 if (num_systems == 1) {
+                   N = x0.shape()[0];
+                   D = x0.shape()[1];
+                   verify_coords_and_box(x0, box0);
+                   if (N != v0.shape()[0]) {
+                     throw std::runtime_error("v0 N != x0 N");
+                   }
+                   if (D != v0.shape()[1]) {
+                     throw std::runtime_error("v0 D != x0 D");
+                   }
+                 } else {
+                   if (x0.shape()[0] != num_systems) {
+                     throw std::runtime_error(
+                         "x0 batch size != bound potential batch size");
+                   }
+                   N = x0.shape()[1];
+                   D = x0.shape()[2];
+                   if (N != v0.shape()[1]) {
+                     throw std::runtime_error("v0 N != x0 N");
+                   }
+                   if (D != v0.shape()[2]) {
+                     throw std::runtime_error("v0 D != x0 D");
+                   }
                  }
 
                  std::vector<std::shared_ptr<Mover<RealType>>> v_movers(0);
@@ -398,8 +489,9 @@ void declare_context(py::module &m, const char *typestr) {
                    }
                  }
 
-                 return new Context<RealType>(N, x0.data(), v0.data(),
-                                              box0.data(), intg, bps, v_movers);
+                 return new Context<RealType>(num_systems, N, x0.data(),
+                                              v0.data(), box0.data(), intg, bps,
+                                              v_movers);
                }),
            py::arg("x0"), py::arg("v0"), py::arg("box"), py::arg("integrator"),
            py::arg("bps"), py::arg("movers") = py::none())
@@ -431,10 +523,15 @@ void declare_context(py::module &m, const char *typestr) {
             // computed to be able to allocate the buffers up front to avoid
             // allocating memory twice
             const int n_samples = n_steps / x_interval;
-            py::array_t<RealType, py::array::c_style> out_x_buffer(
-                {n_samples, N, D});
-            py::array_t<RealType, py::array::c_style> box_buffer(
-                {n_samples, D, D});
+            std::vector<int> out_x_shape({n_samples, N, D});
+            std::vector<int> out_box_shape({n_samples, D, D});
+            if (ctxt.num_systems() > 1) {
+              out_x_shape.insert(out_x_shape.begin() + 1, ctxt.num_systems());
+              out_box_shape.insert(out_box_shape.begin() + 1,
+                                   ctxt.num_systems());
+            }
+            py::array_t<RealType, py::array::c_style> out_x_buffer(out_x_shape);
+            py::array_t<RealType, py::array::c_style> box_buffer(out_box_shape);
             auto res = py::make_tuple(out_x_buffer, box_buffer);
             ctxt.multiple_steps(n_steps, n_samples, out_x_buffer.mutable_data(),
                                 box_buffer.mutable_data());
@@ -499,10 +596,15 @@ void declare_context(py::module &m, const char *typestr) {
             // computed to be able to allocate the buffers up front to avoid
             // allocating memory twice
             const int n_samples = n_steps / x_interval;
-            py::array_t<RealType, py::array::c_style> out_x_buffer(
-                {n_samples, N, D});
-            py::array_t<RealType, py::array::c_style> box_buffer(
-                {n_samples, D, D});
+            std::vector<int> out_x_shape({n_samples, N, D});
+            std::vector<int> out_box_shape({n_samples, D, D});
+            if (ctxt.num_systems() > 1) {
+              out_x_shape.insert(out_x_shape.begin() + 1, ctxt.num_systems());
+              out_box_shape.insert(out_box_shape.begin() + 1,
+                                   ctxt.num_systems());
+            }
+            py::array_t<RealType, py::array::c_style> out_x_buffer(out_x_shape);
+            py::array_t<RealType, py::array::c_style> box_buffer(out_box_shape);
             auto res = py::make_tuple(out_x_buffer, box_buffer);
 
             ctxt.multiple_steps_local(
@@ -608,10 +710,15 @@ void declare_context(py::module &m, const char *typestr) {
             // computed to be able to allocate the buffers up front to avoid
             // allocating memory twice
             const int n_samples = n_steps / x_interval;
-            py::array_t<RealType, py::array::c_style> out_x_buffer(
-                {n_samples, N, D});
-            py::array_t<RealType, py::array::c_style> box_buffer(
-                {n_samples, D, D});
+            std::vector<int> out_x_shape({n_samples, N, D});
+            std::vector<int> out_box_shape({n_samples, D, D});
+            if (ctxt.num_systems() > 1) {
+              out_x_shape.insert(out_x_shape.begin() + 1, ctxt.num_systems());
+              out_box_shape.insert(out_box_shape.begin() + 1,
+                                   ctxt.num_systems());
+            }
+            py::array_t<RealType, py::array::c_style> out_x_buffer(out_x_shape);
+            py::array_t<RealType, py::array::c_style> box_buffer(out_box_shape);
             auto res = py::make_tuple(out_x_buffer, box_buffer);
 
             ctxt.multiple_steps_local_selection(
@@ -769,9 +876,31 @@ void declare_context(py::module &m, const char *typestr) {
           "set_x_t",
           [](Context<RealType> &ctxt,
              const py::array_t<RealType, py::array::c_style> &new_x_t) {
-            if (new_x_t.shape()[0] != ctxt.num_atoms()) {
+            const int num_systems = ctxt.num_systems();
+            const int num_atoms = ctxt.num_atoms();
+            const int input_dims = new_x_t.ndim();
+            if (input_dims == 2) {
+              if (num_systems != 1) {
+                throw std::runtime_error("expect coords for each system");
+              }
+              if (new_x_t.shape()[0] != num_atoms) {
+                throw std::runtime_error(
+                    "number of new coords disagree with number of atoms");
+              }
+            } else if (input_dims == 3) {
+              if (new_x_t.shape(0) != num_systems) {
+                throw std::runtime_error("expect coords for each system");
+              }
+              if (new_x_t.shape()[1] != num_atoms) {
+                throw std::runtime_error(
+                    "number of new coords disagree with number of atoms");
+              }
+            } else {
+              throw std::runtime_error("coords expects 2 or 3 dimensions");
+            }
+            if (new_x_t.shape(input_dims - 1) != 3) {
               throw std::runtime_error(
-                  "number of new coords disagree with current coords");
+                  "coords must have have final dimension of 3");
             }
             ctxt.set_x_t(new_x_t.data());
           },
@@ -780,10 +909,34 @@ void declare_context(py::module &m, const char *typestr) {
           "set_v_t",
           [](Context<RealType> &ctxt,
              const py::array_t<RealType, py::array::c_style> &new_v_t) {
-            if (new_v_t.shape()[0] != ctxt.num_atoms()) {
-              throw std::runtime_error(
-                  "number of new velocities disagree with current coords");
+            const int num_systems = ctxt.num_systems();
+            const int num_atoms = ctxt.num_atoms();
+            const int input_dims = new_v_t.ndim();
+            if (input_dims == 2) {
+              if (num_systems != 1) {
+                throw std::runtime_error("expect velocities for each system");
+              }
+              if (new_v_t.shape()[0] != num_atoms) {
+                throw std::runtime_error(
+                    "number of new velocities disagree with number of atoms");
+              }
+            } else if (input_dims == 3) {
+              if (new_v_t.shape(0) != num_systems) {
+                throw std::runtime_error(
+                    "number boxes must match number of systems");
+              }
+              if (new_v_t.shape()[1] != num_atoms) {
+                throw std::runtime_error(
+                    "number of new velocities disagree with number of atoms");
+              }
+            } else {
+              throw std::runtime_error("velocities expects 2 or 3 dimensions");
             }
+            if (new_v_t.shape(input_dims - 1) != 3) {
+              throw std::runtime_error(
+                  "velocities must have have final dimension of 3");
+            }
+
             ctxt.set_v_t(new_v_t.data());
           },
           py::arg("velocities"))
@@ -791,7 +944,23 @@ void declare_context(py::module &m, const char *typestr) {
           "set_box",
           [](Context<RealType> &ctxt,
              const py::array_t<RealType, py::array::c_style> &new_box_t) {
-            if (new_box_t.size() != 9 || new_box_t.shape()[0] != 3) {
+            const int num_systems = ctxt.num_systems();
+            if (new_box_t.ndim() == 2) {
+              if (num_systems != 1) {
+                throw std::runtime_error("expected one box per system");
+              }
+              if (new_box_t.size() != 9 || new_box_t.shape()[0] != 3) {
+                throw std::runtime_error("box must be 3x3");
+              }
+            } else if (new_box_t.ndim() == 3) {
+              if (new_box_t.shape(0) != num_systems) {
+                throw std::runtime_error(
+                    "number boxes must match number of systems");
+              }
+              if (new_box_t.shape()[1] != 3 || new_box_t.shape()[2] != 3) {
+                throw std::runtime_error("box must be 3x3 for each system");
+              }
+            } else {
               throw std::runtime_error("box must be 3x3");
             }
             ctxt.set_box(new_box_t.data());
@@ -800,26 +969,38 @@ void declare_context(py::module &m, const char *typestr) {
       .def("get_x_t",
            [](Context<RealType> &ctxt)
                -> py::array_t<RealType, py::array::c_style> {
-             unsigned int N = ctxt.num_atoms();
-             unsigned int D = 3;
-             py::array_t<RealType, py::array::c_style> buffer({N, D});
+             const int N = ctxt.num_atoms();
+             const int D = 3;
+             py::array_t<RealType, py::array::c_style> buffer(
+                 {ctxt.num_systems(), N, D});
+             if (ctxt.num_systems() == 1) {
+               buffer.resize({N, D});
+             }
              ctxt.get_x_t(buffer.mutable_data());
              return buffer;
            })
       .def("get_v_t",
            [](Context<RealType> &ctxt)
                -> py::array_t<RealType, py::array::c_style> {
-             unsigned int N = ctxt.num_atoms();
-             unsigned int D = 3;
-             py::array_t<RealType, py::array::c_style> buffer({N, D});
+             const int N = ctxt.num_atoms();
+             const int D = 3;
+             py::array_t<RealType, py::array::c_style> buffer(
+                 {ctxt.num_systems(), N, D});
+             if (ctxt.num_systems() == 1) {
+               buffer.resize({N, D});
+             }
              ctxt.get_v_t(buffer.mutable_data());
              return buffer;
            })
       .def("get_box",
            [](Context<RealType> &ctxt)
                -> py::array_t<RealType, py::array::c_style> {
-             unsigned int D = 3;
-             py::array_t<RealType, py::array::c_style> buffer({D, D});
+             constexpr int D = 3;
+             py::array_t<RealType, py::array::c_style> buffer(
+                 {ctxt.num_systems(), D, D});
+             if (ctxt.num_systems() == 1) {
+               buffer.resize({D, D});
+             }
              ctxt.get_box(buffer.mutable_data());
              return buffer;
            })
@@ -834,7 +1015,8 @@ void declare_integrator(py::module &m, const char *typestr) {
   using Class = Integrator<RealType>;
   std::string pyclass_name = std::string("Integrator_") + typestr;
   py::class_<Class, std::shared_ptr<Class>>(
-      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr());
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def("num_systems", &Class::num_systems);
 }
 
 template <typename RealType>
@@ -845,9 +1027,19 @@ void declare_langevin_integrator(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Integrator<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const py::array_t<RealType, py::array::c_style> &masses,
-                       RealType temperature, RealType dt, RealType friction,
-                       int seed) {
-             return new Class(masses.size(), masses.data(), temperature, dt,
+                       const RealType temperature, const RealType dt,
+                       const RealType friction, const int seed) {
+             int num_systems = 1;
+             int N = masses.size();
+             if (masses.ndim() == 2) {
+               num_systems = masses.shape(0);
+               N = masses.shape(1);
+             } else if (masses.ndim() != 1) {
+               throw std::runtime_error(
+                   "masses must be either 1 or 2d dimensional, got " +
+                   std::to_string(masses.ndim()) + " dimensions");
+             }
+             return new Class(num_systems, N, masses.data(), temperature, dt,
                               friction, seed);
            }),
            py::arg("masses"), py::arg("temperature"), py::arg("dt"),
@@ -863,7 +1055,17 @@ void declare_velocity_verlet_integrator(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](RealType dt,
                        const py::array_t<RealType, py::array::c_style> &cbs) {
-             return new VelocityVerletIntegrator<RealType>(cbs.size(), dt,
+             int num_systems = 1;
+             int N = cbs.size();
+             if (cbs.ndim() == 2) {
+               num_systems = cbs.shape(0);
+               N = cbs.shape(1);
+             } else if (cbs.ndim() != 1) {
+               throw std::runtime_error(
+                   "cbs must be either 1 or 2d dimensional, got " +
+                   std::to_string(cbs.ndim()) + " dimensions");
+             }
+             return new VelocityVerletIntegrator<RealType>(num_systems, N, dt,
                                                            cbs.data());
            }),
            py::arg("dt"), py::arg("cbs"));
@@ -876,6 +1078,7 @@ void declare_potential(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("Potential_") + typestr;
   py::class_<Class, std::shared_ptr<Class>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def("num_systems", &Class::num_systems)
       .def(
           "execute_batch",
           [](Potential<RealType> &pot,
@@ -1005,11 +1208,11 @@ void declare_potential(py::module &m, const char *typestr) {
         Returns
         -------
         3-tuple of du_dx, du_dp, u
-            coord_batch_size = coords.shape[0]
-            param_batch_size = params.shape[0]
-            du_dx has shape (coords_batch_size, param_batch_size, N, 3)
-            du_dp has shape (coords_batch_size, param_batch_size, P)
-            u has shape (coords_batch_size, param_batch_size)
+            coord_num_systems = coords.shape[0]
+            param_num_systems = params.shape[0]
+            du_dx has shape (coords_num_systems, param_num_systems, N, 3)
+            du_dp has shape (coords_num_systems, param_num_systems, P)
+            u has shape (coords_num_systems, param_num_systems)
 
     )pbdoc")
       .def(
@@ -1048,13 +1251,13 @@ void declare_potential(py::module &m, const char *typestr) {
                   "length");
             }
 
-            const long unsigned int batch_size = coords_batch_idxs.size();
+            const long unsigned int num_systems = coords_batch_idxs.size();
             const unsigned int *coords_batch_idxs_data =
                 coords_batch_idxs.data();
             const unsigned int *params_batch_idxs_data =
                 params_batch_idxs.data();
 
-            for (long unsigned int i = 0; i < batch_size; i++) {
+            for (long unsigned int i = 0; i < num_systems; i++) {
               if (coords_batch_idxs_data[i] >= coords.shape()[0]) {
                 throw std::runtime_error("coords_batch_idxs contains an index "
                                          "that is out of bounds");
@@ -1077,19 +1280,19 @@ void declare_potential(py::module &m, const char *typestr) {
             // initialize memory when needed, as buffers can be quite large
             std::vector<unsigned long long> du_dx;
             if (compute_du_dx) {
-              du_dx.assign(batch_size * N * D, 9999);
+              du_dx.assign(num_systems * N * D, 9999);
             }
             std::vector<unsigned long long> du_dp;
             if (compute_du_dp) {
-              du_dp.assign(batch_size * P, 9999);
+              du_dp.assign(num_systems * P, 9999);
             }
             std::vector<__int128> u;
             if (compute_u) {
-              u.assign(batch_size, 9999);
+              u.assign(num_systems, 9999);
             }
 
             pot.execute_batch_sparse_host(
-                coords_size, N, params_size, P, batch_size,
+                coords_size, N, params_size, P, num_systems,
                 coords_batch_idxs_data, params_batch_idxs_data, coords.data(),
                 params.data(), boxes.data(),
                 compute_du_dx ? du_dx.data() : nullptr,
@@ -1099,7 +1302,7 @@ void declare_potential(py::module &m, const char *typestr) {
             auto result = py::make_tuple(py::none(), py::none(), py::none());
             if (compute_du_dx) {
               py::array_t<RealType, py::array::c_style> py_du_dx(
-                  {batch_size, N, D});
+                  {num_systems, N, D});
               for (unsigned int i = 0; i < du_dx.size(); i++) {
                 py_du_dx.mutable_data()[i] = FIXED_TO_FLOAT<RealType>(du_dx[i]);
               }
@@ -1109,10 +1312,10 @@ void declare_potential(py::module &m, const char *typestr) {
             if (compute_du_dp) {
               std::vector<ssize_t> pshape(params.shape(),
                                           params.shape() + params.ndim());
-              pshape[0] = batch_size;
+              pshape[0] = num_systems;
 
               py::array_t<RealType, py::array::c_style> py_du_dp(pshape);
-              for (unsigned int i = 0; i < batch_size; i++) {
+              for (unsigned int i = 0; i < num_systems; i++) {
                 pot.du_dp_fixed_to_float(N, P, &du_dp[0] + (i * P),
                                          py_du_dp.mutable_data() + (i * P));
               }
@@ -1120,7 +1323,7 @@ void declare_potential(py::module &m, const char *typestr) {
             }
 
             if (compute_u) {
-              py::array_t<RealType, py::array::c_style> py_u(batch_size);
+              py::array_t<RealType, py::array::c_style> py_u(num_systems);
 
               for (unsigned int i = 0; i < py_u.size(); i++) {
                 py_u.mutable_data()[i] = convert_energy_to_fp(u[i]);
@@ -1162,10 +1365,10 @@ void declare_potential(py::module &m, const char *typestr) {
             (coords_size, 3, 3) array containing a batch of boxes
 
         coords_batch_idxs: NDArray
-            (batch_size,) indices of the coordinates to use for each evaluation
+            (num_systems,) indices of the coordinates to use for each evaluation
 
         params_batch_idxs: NDArray
-            (batch_size,) indices of the parameters to use for each evaluation
+            (num_systems,) indices of the parameters to use for each evaluation
 
         compute_du_dx: bool
             Indicates to compute du_dx, else returns None for du_dx
@@ -1180,10 +1383,10 @@ void declare_potential(py::module &m, const char *typestr) {
         Returns
         -------
         3-tuple of du_dx, du_dp, u
-            batch_size = coords_batch_idxs.shape[0]
-            du_dx has shape (batch_size, N, 3)
-            du_dp has shape (batch_size, P)
-            u has shape (batch_size,)
+            num_systems = coords_batch_idxs.shape[0]
+            du_dx has shape (num_systems, N, 3)
+            du_dp has shape (num_systems, P)
+            u has shape (num_systems,)
 
     )pbdoc")
       .def(
@@ -1214,7 +1417,7 @@ void declare_potential(py::module &m, const char *typestr) {
               u.assign(1, 9999);
             }
 
-            pot.execute_host(N, P, coords.data(), params.data(), box.data(),
+            pot.execute_host(1, N, P, coords.data(), params.data(), box.data(),
                              compute_du_dx ? &du_dx[0] : nullptr,
                              compute_du_dp ? &du_dp[0] : nullptr,
                              compute_u ? &u[0] : nullptr);
@@ -1239,9 +1442,109 @@ void declare_potential(py::module &m, const char *typestr) {
             }
             if (compute_u) {
               RealType u_sum = convert_energy_to_fp(u[0]);
-              // returning a plain of float32 causes python to interpet it as a
+              // returning a raw float32 causes python to interpret it as a
               // 'float' type (which is 64bit)
               result[2] = u_sum;
+            }
+
+            return result;
+          },
+          py::arg("coords"), py::arg("params"), py::arg("box"),
+          py::arg("compute_du_dx") = true, py::arg("compute_du_dp") = true,
+          py::arg("compute_u") = true)
+      .def(
+          "execute_dim",
+          [](Potential<RealType> &pot,
+             const py::array_t<RealType, py::array::c_style> &coords,
+             const std::vector<py::array_t<RealType, py::array::c_style>>
+                 &params,
+             const py::array_t<RealType, py::array::c_style> &boxes,
+             const bool compute_du_dx, const bool compute_du_dp,
+             const bool compute_u) -> py::tuple {
+            const long batches = coords.shape(0);
+            if (static_cast<long>(params.size()) != batches) {
+              throw std::runtime_error(
+                  "Parameters must have same number of batches as coords");
+            } else if (boxes.shape(0) != batches) {
+              throw std::runtime_error(
+                  "Boxes must have same number of batches as coords");
+            }
+
+            const long unsigned int N = coords.shape(1);
+            const long unsigned int D = coords.shape(2);
+
+            long unsigned int P = 0;
+            for (auto batch : params) {
+              P += batch.size();
+            }
+            py::array_t<RealType, py::array::c_style> param_data(P);
+            int offset = 0;
+            for (auto batch : params) {
+              std::memcpy(param_data.mutable_data() + offset, batch.data(),
+                          batch.size() * sizeof(RealType));
+              offset += batch.size();
+            }
+
+            // initialize with fixed garbage values for debugging convenience
+            // (these should be overwritten by `execute_host`)
+            std::vector<unsigned long long> du_dx;
+            if (compute_du_dx) {
+              du_dx.assign(batches * N * D, 9999);
+            }
+            std::vector<unsigned long long> du_dp;
+            if (compute_du_dp) {
+              du_dp.assign(P, 9999);
+            }
+            std::vector<__int128> u;
+            if (compute_u) {
+              u.assign(batches, 9999);
+            }
+
+            pot.execute_host(batches, N, P, coords.data(), param_data.data(),
+                             boxes.data(), compute_du_dx ? &du_dx[0] : nullptr,
+                             compute_du_dp ? &du_dp[0] : nullptr,
+                             compute_u ? &u[0] : nullptr);
+
+            auto result = py::make_tuple(py::none(), py::none(), py::none());
+
+            if (compute_du_dx) {
+              py::array_t<RealType, py::array::c_style> py_du_dx(
+                  {static_cast<long unsigned int>(batches), N, D});
+              for (unsigned int i = 0; i < du_dx.size(); i++) {
+                py_du_dx.mutable_data()[i] = FIXED_TO_FLOAT<RealType>(du_dx[i]);
+              }
+              result[0] = py_du_dx;
+            }
+            if (compute_du_dp) {
+              std::vector<py::array_t<RealType, py::array::c_style>> py_du_dp;
+              int offset = 0;
+              for (auto batch : params) {
+                // There has to be a cleaner way to handle this
+                if (batch.ndim() == 2) {
+                  py::array_t<RealType, py::array::c_style> batch_du_dp(
+                      {batch.shape(0), batch.shape(1)});
+                  pot.du_dp_fixed_to_float(N, batch.size(), &du_dp[0] + offset,
+                                           batch_du_dp.mutable_data());
+                  py_du_dp.push_back(batch_du_dp);
+                } else {
+                  py::array_t<RealType, py::array::c_style> batch_du_dp(
+                      {batch.shape(0)});
+                  pot.du_dp_fixed_to_float(N, batch.size(), &du_dp[0] + offset,
+                                           batch_du_dp.mutable_data());
+                  py_du_dp.push_back(batch_du_dp);
+                }
+                offset += batch.size();
+              }
+              result[1] = py_du_dp;
+            }
+            if (compute_u) {
+              py::array_t<RealType, py::array::c_style> py_u({batches});
+              for (unsigned int i = 0; i < u.size(); i++) {
+                py_u.mutable_data()[i] = convert_energy_to_fp(u[i]);
+              }
+              // returning a raw float32 causes python to interpret it as a
+              // 'float' type (which is 64bit)
+              result[2] = py_u;
             }
 
             return result;
@@ -1273,7 +1576,8 @@ void declare_potential(py::module &m, const char *typestr) {
 
             return py_du_dx;
           },
-          py::arg("coords"), py::arg("params"), py::arg("box"));
+          py::arg("coords"), py::arg("params"), py::arg("box"))
+      .def("num_systems", &Class::num_systems);
 }
 
 template <typename RealType>
@@ -1287,8 +1591,8 @@ void declare_bound_potential(py::module &m, const char *typestr) {
           py::init([](std::shared_ptr<Potential<RealType>> potential,
                       const py::array_t<RealType, py::array::c_style> &params) {
             int params_dim = 1; // Has to be at least one
-            if (params.ndim() == 2) {
-              params_dim = params.shape()[1];
+            if (params.ndim() >= 2) {
+              params_dim = params.shape()[params.ndim() - 1];
             }
             return new BoundPotential<RealType>(
                 potential, py_array_to_vector(params), params_dim);
@@ -1297,6 +1601,7 @@ void declare_bound_potential(py::module &m, const char *typestr) {
       .def("get_potential",
            [](const BoundPotential<RealType> &bp) { return bp.potential; })
       .def("get_flat_params", &BoundPotential<RealType>::get_params)
+      .def("num_systems", &BoundPotential<RealType>::num_systems)
       .def(
           "set_params",
           [](BoundPotential<RealType> &bp,
@@ -1311,29 +1616,46 @@ void declare_bound_potential(py::module &m, const char *typestr) {
              const py::array_t<RealType, py::array::c_style> &coords,
              const py::array_t<RealType, py::array::c_style> &box,
              bool compute_du_dx, bool compute_u) -> py::tuple {
-            const long unsigned int N = coords.shape()[0];
-            const long unsigned int D = coords.shape()[1];
-            verify_coords_and_box(coords, box);
-
+            long unsigned int N;
+            long unsigned int D;
+            if (coords.ndim() == 2) {
+              N = coords.shape()[0];
+              D = coords.shape()[1];
+              verify_coords_and_box(coords, box);
+            } else if (coords.ndim() == 3) {
+              N = coords.shape(1);
+              D = coords.shape(2);
+            } else {
+              // Should always fail at this stage;
+              verify_coords_and_box(coords, box);
+              throw std::runtime_error(
+                  "BoundPotential::execute failed for unknown reason");
+            }
+            const int num_systems = bp.potential->num_systems();
             // initialize with fixed garbage values for debugging convenience
             // (these should be overwritten by `execute_host`)
             std::vector<unsigned long long> du_dx;
             if (compute_du_dx) {
-              du_dx.assign(N * D, 9999);
+              du_dx.assign(num_systems * N * D, 9999);
             }
             std::vector<__int128> u;
             if (compute_u) {
-              u.assign(1, 9999);
+              u.assign(num_systems, 9999);
             }
 
-            bp.execute_host(N, coords.data(), box.data(),
+            bp.execute_host(num_systems, N, coords.data(), box.data(),
                             compute_du_dx ? &du_dx[0] : nullptr,
                             compute_u ? &u[0] : nullptr);
 
             auto result = py::make_tuple(py::none(), py::none());
 
             if (compute_du_dx) {
-              py::array_t<RealType, py::array::c_style> py_du_dx({N, D});
+              std::vector<long unsigned int> du_dx_shape = {N, D};
+              if (num_systems > 1) {
+                du_dx_shape.insert(du_dx_shape.begin(),
+                                   static_cast<long unsigned int>(num_systems));
+              }
+              py::array_t<RealType, py::array::c_style> py_du_dx(du_dx_shape);
               if (compute_du_dx) {
                 for (unsigned int i = 0; i < du_dx.size(); i++) {
                   py_du_dx.mutable_data()[i] =
@@ -1343,8 +1665,11 @@ void declare_bound_potential(py::module &m, const char *typestr) {
               result[0] = py_du_dx;
             }
             if (compute_u) {
-              RealType u_sum = convert_energy_to_fp(u[0]);
-              result[1] = u_sum;
+              py::array_t<RealType, py::array::c_style> py_u({num_systems});
+              for (unsigned int i = 0; i < py_u.size(); i++) {
+                py_u.mutable_data()[i] = convert_energy_to_fp(u[i]);
+              }
+              result[1] = py_u;
             }
 
             return result;
@@ -1432,9 +1757,9 @@ void declare_bound_potential(py::module &m, const char *typestr) {
         Returns
         -------
         2-tuple of du_dx, u
-            coord_batch_size = coords.shape[0]
-            du_dx has shape (coords_batch_size, N, 3)
-            u has shape (coords_batch_size)
+            coord_num_systems = coords.shape[0]
+            du_dx has shape (coords_num_systems, N, 3)
+            u has shape (coords_num_systems)
 
     )pbdoc")
       .def(
@@ -1447,7 +1772,7 @@ void declare_bound_potential(py::module &m, const char *typestr) {
             verify_coords_and_box(coords, box);
             std::vector<__int128> u(1, 9999);
 
-            bp.execute_host(N, coords.data(), box.data(), nullptr, &u[0]);
+            bp.execute_host(1, N, coords.data(), box.data(), nullptr, &u[0]);
 
             py::array_t<uint64_t, py::array::c_style> py_u(1);
             if (fixed_point_overflow(u[0])) {
@@ -1867,13 +2192,13 @@ void declare_potential_executor(py::module &m, const char *typestr) {
                   "length");
             }
 
-            const int batch_size = coords_batch_idxs.size();
+            const int num_batches = coords_batch_idxs.size();
             const unsigned int *coords_batch_idxs_data =
                 coords_batch_idxs.data();
             const unsigned int *params_batch_idxs_data =
                 params_batch_idxs.data();
 
-            for (int i = 0; i < batch_size; i++) {
+            for (int i = 0; i < num_batches; i++) {
               if (coords_batch_idxs_data[i] >= coord_batches) {
                 throw std::runtime_error("coords_batch_idxs contains an index "
                                          "that is out of bounds");
@@ -1909,20 +2234,20 @@ void declare_potential_executor(py::module &m, const char *typestr) {
             // (these should be overwritten by `execute_potentials`)
             std::vector<unsigned long long> du_dx;
             if (compute_du_dx) {
-              du_dx.assign(batch_size * num_pots * N * D, 9999);
+              du_dx.assign(num_batches * num_pots * N * D, 9999);
             }
             std::vector<__int128> u;
             if (compute_u) {
-              u.assign(batch_size * num_pots, 9999);
+              u.assign(num_batches * num_pots, 9999);
             }
 
             std::vector<unsigned long long> du_dp;
             if (compute_du_dp) {
-              du_dp.assign(batch_size * P, 9999);
+              du_dp.assign(num_batches * P, 9999);
             }
 
             runner.execute_batch_potentials_sparse(
-                N, vec_batch_param_sizes, batch_size, coord_batches,
+                N, vec_batch_param_sizes, num_batches, coord_batches,
                 param_batches, coords_batch_idxs_data, params_batch_idxs_data,
                 pots, coords.data(), combined_params.data(), boxes.data(),
                 compute_du_dx ? &du_dx[0] : nullptr,
@@ -1932,7 +2257,8 @@ void declare_potential_executor(py::module &m, const char *typestr) {
             auto result = py::make_tuple(py::none(), py::none(), py::none());
             if (compute_du_dx) {
               py::array_t<RealType, py::array::c_style> py_du_dx(
-                  {num_pots, static_cast<long unsigned int>(batch_size), N, D});
+                  {num_pots, static_cast<long unsigned int>(num_batches), N,
+                   D});
               for (unsigned int i = 0; i < du_dx.size(); i++) {
                 py_du_dx.mutable_data()[i] = FIXED_TO_FLOAT<RealType>(du_dx[i]);
               }
@@ -1947,9 +2273,9 @@ void declare_potential_executor(py::module &m, const char *typestr) {
                 std::vector<ssize_t> pshape(
                     params[i].shape(), params[i].shape() + params[i].ndim());
                 // set the batch dimension
-                pshape[0] = batch_size;
+                pshape[0] = num_batches;
                 py::array_t<RealType, py::array::c_style> py_du_dp(pshape);
-                pots[i]->du_dp_fixed_to_float(N * batch_size, py_du_dp.size(),
+                pots[i]->du_dp_fixed_to_float(N * num_batches, py_du_dp.size(),
                                               &du_dp[0] + offset,
                                               py_du_dp.mutable_data());
                 offset += py_du_dp.size();
@@ -1960,7 +2286,7 @@ void declare_potential_executor(py::module &m, const char *typestr) {
 
             if (compute_u) {
               py::array_t<RealType, py::array::c_style> py_u(
-                  {num_pots, static_cast<long unsigned int>(batch_size)});
+                  {num_pots, static_cast<long unsigned int>(num_batches)});
 
               for (unsigned int i = 0; i < py_u.size(); i++) {
                 py_u.mutable_data()[i] = convert_energy_to_fp(u[i]);
@@ -2004,10 +2330,10 @@ void declare_potential_executor(py::module &m, const char *typestr) {
             (coords_size, 3, 3) array containing a batch of boxes
 
         coords_batch_idxs: NDArray
-            (batch_size,) indices of the coordinates to use for each evaluation
+            (num_batches,) indices of the coordinates to use for each evaluation
 
         params_batch_idxs: NDArray
-            (batch_size,) indices of the parameters to use for each evaluation
+            (num_batches,) indices of the parameters to use for each evaluation
 
         compute_du_dx: bool
             Indicates to compute du_dx, else returns None for du_dx
@@ -2022,12 +2348,27 @@ void declare_potential_executor(py::module &m, const char *typestr) {
         Returns
         -------
         3-tuple of du_dx, du_dp, u
-            batch_size = coords_batch_idxs.shape[0]
-            du_dx has shape (n_pots, batch_size, N, 3)
-            du_dp has shape (n_pots, batch_size, P)
-            u has shape (n_pots, batch_size,)
+            num_batches = coords_batch_idxs.shape[0]
+            du_dx has shape (n_pots, num_batches, N, 3)
+            du_dp has shape (n_pots, num_batches, P)
+            u has shape (n_pots, num_batches,)
 
     )pbdoc");
+}
+
+// TBD: Is this needed?
+template <typename T>
+std::vector<T> flatten_vector_of_arrays(
+    const std::vector<py::array_t<T, py::array::c_style>> &input) {
+  int offset = 0;
+  std::vector<T> output;
+
+  for (int i = 0; i < input.size(); i++) {
+    const unsigned long arr_size = input[i].size();
+    output.resize(output.size() + arr_size);
+    std::memcpy(output.data() + offset, input[i].data(), arr_size * sizeof(T));
+    offset += arr_size;
+  }
 }
 
 template <typename RealType>
@@ -2037,10 +2378,42 @@ void declare_harmonic_bond(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("HarmonicBond_") + typestr;
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const py::array_t<int, py::array::c_style> &bond_idxs) {
-             return new HarmonicBond<RealType>(py_array_to_vector(bond_idxs));
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &bond_idxs) {
+             verify_bond_idxs(bond_idxs, 2);
+             // Create a vector with all zeros
+             std::vector<int> bond_system_idxs(bond_idxs.shape(0), 0);
+             const int num_systems = 1;
+             return new HarmonicBond<RealType>(num_systems, num_atoms,
+                                               py_array_to_vector(bond_idxs),
+                                               bond_system_idxs);
            }),
-           py::arg("bond_idxs"))
+           py::arg("num_atoms"), py::arg("bond_idxs"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &bond_idxs) {
+             const int num_systems = bond_idxs.size();
+             std::vector<int> combined_bond_vec;
+             std::vector<int> bond_system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_systems; i++) {
+               verify_bond_idxs(bond_idxs[i], 2);
+               const unsigned long bond_arr_size = bond_idxs[i].size();
+               combined_bond_vec.resize(combined_bond_vec.size() +
+                                        bond_arr_size);
+               std::memcpy(combined_bond_vec.data() + offset,
+                           bond_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               bond_system_idxs.resize(bond_system_idxs.size() +
+                                       bond_idxs[i].shape(0));
+               std::fill(bond_system_idxs.end() - bond_idxs[i].shape(0),
+                         bond_system_idxs.end(), i);
+             }
+             return new HarmonicBond<RealType>(
+                 num_systems, num_atoms, combined_bond_vec, bond_system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("bond_idxs"))
       .def("get_idxs", [](Class &pot) -> py::array_t<int, py::array::c_style> {
         std::vector<int> output_idxs = pot.get_idxs_host();
         py::array_t<int, py::array::c_style> out_idx_buffer(
@@ -2056,11 +2429,107 @@ void declare_flat_bottom_bond(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("FlatBottomBond_") + typestr;
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const py::array_t<int, py::array::c_style> &bond_idxs) {
-             return new FlatBottomBond<RealType>(py_array_to_vector(bond_idxs));
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &bond_idxs) {
+             verify_bond_idxs(bond_idxs, 2);
+             // Create a vector with all zeros
+             std::vector<int> bond_system_idxs(bond_idxs.shape(0), 0);
+             const int num_systems = 1;
+             return new FlatBottomBond<RealType>(num_systems, num_atoms,
+                                                 py_array_to_vector(bond_idxs),
+                                                 bond_system_idxs);
            }),
-           py::arg("bond_idxs"))
+           py::arg("num_atoms"), py::arg("bond_idxs"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &bond_idxs) {
+             const int num_systems = bond_idxs.size();
+             std::vector<int> combined_bond_vec;
+             std::vector<int> bond_system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_systems; i++) {
+               verify_bond_idxs(bond_idxs[i], 2);
+               const unsigned long bond_arr_size = bond_idxs[i].size();
+               combined_bond_vec.resize(combined_bond_vec.size() +
+                                        bond_arr_size);
+               std::memcpy(combined_bond_vec.data() + offset,
+                           bond_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               bond_system_idxs.resize(bond_system_idxs.size() +
+                                       bond_idxs[i].shape(0));
+               std::fill(bond_system_idxs.end() - bond_idxs[i].shape(0),
+                         bond_system_idxs.end(), i);
+             }
+             return new FlatBottomBond<RealType>(
+                 num_systems, num_atoms, combined_bond_vec, bond_system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("bond_idxs"))
       .def("get_num_bonds", &Class::num_bonds);
+}
+
+template <typename RealType>
+void declare_flat_bottom_restraint(py::module &m, const char *typestr) {
+  using Class = FlatBottomRestraint<RealType>;
+  std::string pyclass_name = std::string("FlatBottomRestraint_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &atom_idxs,
+                       const py::array_t<RealType, py::array::c_style>
+                           &restraint_coords) {
+             std::vector<int> system_idxs(atom_idxs.shape(0), 0);
+             return new Class(1, num_atoms, py_array_to_vector(atom_idxs),
+                              py_array_to_vector(restraint_coords),
+                              system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("atom_idxs"),
+           py::arg("restraint_coords"))
+      .def(py::init(
+               [](const int num_atoms,
+                  const std::vector<py::array_t<int, py::array::c_style>>
+                      &atom_idxs,
+                  const std::vector<py::array_t<RealType, py::array::c_style>>
+                      &restraint_coords) {
+                 const int num_systems = atom_idxs.size();
+                 std::vector<int> combined_atom_vec;
+                 std::vector<RealType> combined_coords;
+                 std::vector<int> atom_system_indices;
+                 int atom_offset = 0;
+                 int coord_offset = 0;
+                 for (int i = 0; i < num_systems; i++) {
+                   const auto atom_arr_size = atom_idxs[i].size();
+                   const auto coord_arr_size = restraint_coords[i].size();
+                   if (restraint_coords[i].shape(0) != atom_arr_size) {
+                     throw std::runtime_error(
+                         "Restraint coords and atom indices must be same size, "
+                         "mismatch in batch " +
+                         std::to_string(i));
+                   }
+                   combined_atom_vec.resize(combined_atom_vec.size() +
+                                            atom_arr_size);
+                   combined_coords.resize(combined_coords.size() +
+                                          restraint_coords[i].size());
+                   std::memcpy(combined_atom_vec.data() + atom_offset,
+                               atom_idxs[i].data(),
+                               atom_arr_size * sizeof(int));
+                   std::memcpy(combined_coords.data() + coord_offset,
+                               restraint_coords[i].data(),
+                               coord_arr_size * sizeof(RealType));
+                   atom_offset += atom_arr_size;
+                   coord_offset += coord_arr_size;
+
+                   atom_system_indices.resize(atom_system_indices.size() +
+                                              atom_idxs[i].size());
+                   std::fill(atom_system_indices.end() - atom_arr_size,
+                             atom_system_indices.end(), i);
+                 }
+                 return new Class(num_systems, num_atoms, combined_atom_vec,
+                                  combined_coords, atom_system_indices);
+               }),
+           py::arg("num_atoms"), py::arg("atom_idxs"),
+           py::arg("restraint_coords"))
+      .def("get_num_atoms", &Class::num_atoms);
 }
 
 template <typename RealType>
@@ -2070,12 +2539,44 @@ void declare_log_flat_bottom_bond(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("LogFlatBottomBond_") + typestr;
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const py::array_t<int, py::array::c_style> &bond_idxs,
-                       double beta) {
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &bond_idxs,
+                       const double beta) {
+             verify_bond_idxs(bond_idxs, 2);
+             std::vector<int> bond_system_idxs(bond_idxs.shape(0), 0);
+             const int num_systems = 1;
              return new LogFlatBottomBond<RealType>(
-                 py_array_to_vector(bond_idxs), beta);
+                 num_systems, num_atoms, py_array_to_vector(bond_idxs),
+                 bond_system_idxs, beta);
            }),
-           py::arg("bond_idxs"), py::arg("beta"))
+           py::arg("num_atoms"), py::arg("bond_idxs"), py::arg("beta"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &bond_idxs,
+                       const double beta) {
+             const int num_systems = bond_idxs.size();
+             std::vector<int> combined_bond_vec;
+             std::vector<int> bond_system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_systems; i++) {
+               verify_bond_idxs(bond_idxs[i], 2);
+               const unsigned long bond_arr_size = bond_idxs[i].size();
+               combined_bond_vec.resize(combined_bond_vec.size() +
+                                        bond_arr_size);
+               std::memcpy(combined_bond_vec.data() + offset,
+                           bond_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               bond_system_idxs.resize(bond_system_idxs.size() +
+                                       bond_idxs[i].shape(0));
+               std::fill(bond_system_idxs.end() - bond_idxs[i].shape(0),
+                         bond_system_idxs.end(), i);
+             }
+             return new LogFlatBottomBond<RealType>(num_systems, num_atoms,
+                                                    combined_bond_vec,
+                                                    bond_system_idxs, beta);
+           }),
+           py::arg("num_atoms"), py::arg("bond_idxs"), py::arg("beta"))
       .def("get_num_bonds", &Class::num_bonds);
 }
 
@@ -2087,12 +2588,45 @@ void declare_nonbonded_precomputed(py::module &m, const char *typestr) {
       std::string("NonbondedPairListPrecomputed_") + typestr;
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const py::array_t<int, py::array::c_style> &pair_idxs,
-                       double beta, double cutoff) {
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &pair_idxs,
+                       const double beta, const double cutoff) {
+             verify_bond_idxs(pair_idxs, 2);
+             std::vector<int> system_idxs(pair_idxs.shape(0), 0);
+             const int num_systems = 1;
              return new NonbondedPairListPrecomputed<RealType>(
-                 py_array_to_vector(pair_idxs), beta, cutoff);
+                 num_systems, num_atoms, py_array_to_vector(pair_idxs),
+                 system_idxs, beta, cutoff);
            }),
-           py::arg("pair_idxs"), py::arg("beta"), py::arg("cutoff"));
+           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("beta"),
+           py::arg("cutoff"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &pair_idxs,
+                       const double beta, const double cutoff) {
+             const int num_systems = pair_idxs.size();
+             std::vector<int> combined_pair_idxs;
+             std::vector<int> system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_systems; i++) {
+               verify_bond_idxs(pair_idxs[i], 2);
+               const unsigned long bond_arr_size = pair_idxs[i].size();
+               combined_pair_idxs.resize(combined_pair_idxs.size() +
+                                         bond_arr_size);
+               std::memcpy(combined_pair_idxs.data() + offset,
+                           pair_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               system_idxs.resize(system_idxs.size() + pair_idxs[i].shape(0));
+               std::fill(system_idxs.end() - pair_idxs[i].shape(0),
+                         system_idxs.end(), i);
+             }
+             return new NonbondedPairListPrecomputed<RealType>(
+                 num_systems, num_atoms, combined_pair_idxs, system_idxs, beta,
+                 cutoff);
+           }),
+           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("beta"),
+           py::arg("cutoff"));
 }
 
 template <typename RealType>
@@ -2103,11 +2637,44 @@ void declare_chiral_atom_restraint(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(
-          py::init([](const py::array_t<int, py::array::c_style> &idxs) {
-            return new ChiralAtomRestraint<RealType>(py_array_to_vector(idxs));
+          py::init([](const int num_atoms,
+                      const py::array_t<int, py::array::c_style> &idxs) {
+            verify_bond_idxs(idxs, 4);
+            std::vector<int> system_idxs(idxs.shape(0), 0);
+            return new ChiralAtomRestraint<RealType>(
+                1, num_atoms, py_array_to_vector(idxs), system_idxs);
           }),
-          py::arg("idxs"),
-          R"pbdoc(Please refer to tmd.potentials.chiral_restraints for documentation on arguments)pbdoc");
+          py::arg("num_atoms"), py::arg("idxs"),
+          R"pbdoc(Please refer to tmd.potentials.chiral_restraints for documentation on arguments)pbdoc")
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &restraint_idxs) {
+             const int num_systems = restraint_idxs.size();
+             std::vector<int> combined_restraint_vec;
+             std::vector<int> restraint_system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_systems; i++) {
+               verify_bond_idxs(restraint_idxs[i], 4);
+               const unsigned long restraint_arr_size =
+                   restraint_idxs[i].size();
+               combined_restraint_vec.resize(combined_restraint_vec.size() +
+                                             restraint_arr_size);
+               std::memcpy(combined_restraint_vec.data() + offset,
+                           restraint_idxs[i].data(),
+                           restraint_arr_size * sizeof(int));
+               offset += restraint_arr_size;
+
+               restraint_system_idxs.resize(restraint_system_idxs.size() +
+                                            restraint_idxs[i].shape(0));
+               std::fill(restraint_system_idxs.end() -
+                             restraint_idxs[i].shape(0),
+                         restraint_system_idxs.end(), i);
+             }
+             return new ChiralAtomRestraint<RealType>(num_systems, num_atoms,
+                                                      combined_restraint_vec,
+                                                      restraint_system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("idxs"));
 }
 
 template <typename RealType>
@@ -2118,13 +2685,57 @@ void declare_chiral_bond_restraint(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(
-          py::init([](const py::array_t<int, py::array::c_style> &idxs,
+          py::init([](const int num_atoms,
+                      const py::array_t<int, py::array::c_style> &idxs,
                       const py::array_t<int, py::array::c_style> &signs) {
-            return new ChiralBondRestraint<RealType>(py_array_to_vector(idxs),
-                                                     py_array_to_vector(signs));
+            verify_bond_idxs(idxs, 4);
+            std::vector<int> system_idxs(idxs.shape(0), 0);
+            return new ChiralBondRestraint<RealType>(
+                1, num_atoms, py_array_to_vector(idxs),
+                py_array_to_vector(signs), system_idxs);
           }),
-          py::arg("idxs"), py::arg("signs"),
-          R"pbdoc(Please refer to tmd.potentials.chiral_restraints for documentation on arguments)pbdoc");
+          py::arg("num_atoms"), py::arg("idxs"), py::arg("signs"),
+          R"pbdoc(Please refer to tmd.potentials.chiral_restraints for documentation on arguments)pbdoc")
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &restraint_idxs,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &signs) {
+             const int num_systems = restraint_idxs.size();
+             std::vector<int> combined_restraint_vec;
+             std::vector<int> combined_signs_vec;
+             std::vector<int> restraint_system_idxs;
+             int offset = 0;
+             int sign_offset = 0;
+             for (int i = 0; i < num_systems; i++) {
+               verify_bond_idxs(restraint_idxs[i], 4);
+               const unsigned long restraint_arr_size =
+                   restraint_idxs[i].size();
+               const unsigned long sign_arr_size = signs[i].size();
+               combined_restraint_vec.resize(combined_restraint_vec.size() +
+                                             restraint_arr_size);
+               std::memcpy(combined_restraint_vec.data() + offset,
+                           restraint_idxs[i].data(),
+                           restraint_arr_size * sizeof(int));
+
+               combined_signs_vec.resize(combined_signs_vec.size() +
+                                         sign_arr_size);
+               std::memcpy(combined_signs_vec.data() + sign_offset,
+                           signs[i].data(), sign_arr_size * sizeof(int));
+               offset += restraint_arr_size;
+               sign_offset += sign_arr_size;
+
+               restraint_system_idxs.resize(restraint_system_idxs.size() +
+                                            restraint_idxs[i].shape(0));
+               std::fill(restraint_system_idxs.end() -
+                             restraint_idxs[i].shape(0),
+                         restraint_system_idxs.end(), i);
+             }
+             return new ChiralBondRestraint<RealType>(
+                 num_systems, num_atoms, combined_restraint_vec,
+                 combined_signs_vec, restraint_system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("idxs"), py::arg("signs"));
 }
 
 template <typename RealType>
@@ -2134,11 +2745,40 @@ void declare_harmonic_angle(py::module &m, const char *typestr) {
   std::string pyclass_name = std::string("HarmonicAngle_") + typestr;
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
-      .def(py::init([](const py::array_t<int, py::array::c_style> &angle_idxs) {
+      .def(py::init([](const int num_atoms,
+                       const py::array_t<int, py::array::c_style> &angle_idxs) {
+             verify_bond_idxs(angle_idxs, 3);
+             std::vector<int> system_idxs(angle_idxs.shape(0), 0);
              std::vector<int> vec_angle_idxs = py_array_to_vector(angle_idxs);
-             return new HarmonicAngle<RealType>(vec_angle_idxs);
+             return new HarmonicAngle<RealType>(1, num_atoms, vec_angle_idxs,
+                                                system_idxs);
            }),
-           py::arg("angle_idxs"))
+           py::arg("num_atoms"), py::arg("angle_idxs"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &angle_idxs) {
+             const int num_systems = angle_idxs.size();
+             std::vector<int> combined_angle_vec;
+             std::vector<int> angle_system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_systems; i++) {
+               verify_bond_idxs(angle_idxs[i], 3);
+               const unsigned long bond_arr_size = angle_idxs[i].size();
+               combined_angle_vec.resize(combined_angle_vec.size() +
+                                         bond_arr_size);
+               std::memcpy(combined_angle_vec.data() + offset,
+                           angle_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               angle_system_idxs.resize(angle_system_idxs.size() +
+                                        angle_idxs[i].shape(0));
+               std::fill(angle_system_idxs.end() - angle_idxs[i].shape(0),
+                         angle_system_idxs.end(), i);
+             }
+             return new HarmonicAngle<RealType>(
+                 num_systems, num_atoms, combined_angle_vec, angle_system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("angle_idxs"))
       .def("get_idxs", [](Class &pot) -> py::array_t<int, py::array::c_style> {
         std::vector<int> output_idxs = pot.get_idxs_host();
         py::array_t<int, py::array::c_style> out_idx_buffer(
@@ -2156,7 +2796,7 @@ void declare_centroid_restraint(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const py::array_t<int, py::array::c_style> &group_a_idxs,
                        const py::array_t<int, py::array::c_style> &group_b_idxs,
-                       double kb, double b0) {
+                       const double kb, const double b0) {
              std::vector<int> vec_group_a_idxs =
                  py_array_to_vector(group_a_idxs);
              std::vector<int> vec_group_b_idxs =
@@ -2177,12 +2817,44 @@ void declare_periodic_torsion(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init(
-               [](const py::array_t<int, py::array::c_style> &torsion_idxs) {
+               [](const int num_atoms,
+                  const py::array_t<int, py::array::c_style> &torsion_idxs) {
+                 verify_bond_idxs(torsion_idxs, 4);
+                 // Create a vector with all zeros
+                 std::vector<int> system_idxs(torsion_idxs.shape(0), 0);
                  std::vector<int> vec_torsion_idxs =
                      py_array_to_vector(torsion_idxs);
-                 return new PeriodicTorsion<RealType>(vec_torsion_idxs);
+
+                 const int num_systems = 1;
+                 return new PeriodicTorsion<RealType>(
+                     num_systems, num_atoms, vec_torsion_idxs, system_idxs);
                }),
-           py::arg("torsion_idxs"))
+           py::arg("num_atoms"), py::arg("torsion_idxs"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &torsion_idxs) {
+             const int num_systems = torsion_idxs.size();
+             std::vector<int> combined_torsion_vec;
+             std::vector<int> system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_systems; i++) {
+               verify_bond_idxs(torsion_idxs[i], 4);
+               const unsigned long bond_arr_size = torsion_idxs[i].size();
+               combined_torsion_vec.resize(combined_torsion_vec.size() +
+                                           bond_arr_size);
+               std::memcpy(combined_torsion_vec.data() + offset,
+                           torsion_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               system_idxs.resize(system_idxs.size() +
+                                  torsion_idxs[i].shape(0));
+               std::fill(system_idxs.end() - torsion_idxs[i].shape(0),
+                         system_idxs.end(), i);
+             }
+             return new PeriodicTorsion<RealType>(
+                 num_systems, num_atoms, combined_torsion_vec, system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("torsion_idxs"))
       .def("get_idxs", [](Class &pot) -> py::array_t<int, py::array::c_style> {
         std::vector<int> output_idxs = pot.get_idxs_host();
         py::array_t<int, py::array::c_style> out_idx_buffer(
@@ -2222,11 +2894,13 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                 }
 
                 return new NonbondedInteractionGroup<RealType>(
-                    N, row_atom_idxs, col_atom_idxs, beta, cutoff,
-                    disable_hilbert_sort, nblist_padding);
+                    1, N, std::vector<std::vector<int>>(1, row_atom_idxs),
+                    std::vector<std::vector<int>>(1, col_atom_idxs), beta,
+                    cutoff, disable_hilbert_sort, nblist_padding);
               }),
-          py::arg("num_atoms"), py::arg("row_atom_idxs_i"), py::arg("beta"),
-          py::arg("cutoff"), py::arg("col_atom_idxs_i") = py::none(),
+          py::arg("num_atoms"), py::arg("row_atom_idxs_i").noconvert(),
+          py::arg("beta"), py::arg("cutoff"),
+          py::arg("col_atom_idxs_i").noconvert() = py::none(),
           py::arg("disable_hilbert_sort") = false,
           py::arg("nblist_padding") = 0.1,
           R"pbdoc(
@@ -2256,6 +2930,101 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                         Margin for the neighborlist.
 
             )pbdoc")
+      .def(py::init([](const int N,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &row_atom_idxs_i,
+                       const double beta, const double cutoff,
+                       std::optional<
+                           std::vector<py::array_t<int, py::array::c_style>>>
+                           &col_atom_idxs_i,
+                       const bool disable_hilbert_sort,
+                       const double nblist_padding) {
+             const int num_systems = row_atom_idxs_i.size();
+             if (num_systems == 0) {
+               throw std::runtime_error(
+                   "provide at least one batch of row atom indices");
+             }
+             if (col_atom_idxs_i) {
+               if (num_systems != static_cast<int>(col_atom_idxs_i->size())) {
+                 throw std::runtime_error("batches of column atom indices must "
+                                          "match row atom indices batches");
+               }
+             }
+             std::vector<std::vector<int>> combined_row_atoms;
+             std::vector<std::vector<int>> combined_col_atoms;
+             for (int i = 0; i < num_systems; i++) {
+               if (row_atom_idxs_i[i].ndim() != 1) {
+                 throw std::runtime_error(
+                     "each batch of row indices must be one dimensional");
+               }
+               combined_row_atoms.push_back(
+                   py_array_to_vector<int>(row_atom_idxs_i[i]));
+
+               std::vector<int> col_atom_idxs;
+               if (col_atom_idxs_i) {
+                 if (col_atom_idxs_i->at(i).ndim() != 1) {
+                   throw std::runtime_error(
+                       "each batch of column indices must be one dimensional");
+                 }
+                 size_t offset = col_atom_idxs.size();
+                 col_atom_idxs.resize(offset + col_atom_idxs_i->at(i).size());
+                 std::memcpy(col_atom_idxs.data() + offset,
+                             col_atom_idxs_i->at(i).data(),
+                             col_atom_idxs_i->at(i).size() * sizeof(int));
+               } else {
+                 std::set<int> unique_row_atom_idxs =
+                     unique_idxs(combined_row_atoms[i]);
+                 col_atom_idxs =
+                     get_indices_difference(N, unique_row_atom_idxs);
+               }
+               combined_col_atoms.push_back(col_atom_idxs);
+             }
+             return new NonbondedInteractionGroup<RealType>(
+                 num_systems, N, combined_row_atoms, combined_col_atoms, beta,
+                 cutoff, disable_hilbert_sort, nblist_padding);
+           }),
+           py::arg("num_atoms"), py::arg("row_atom_idxs_i").noconvert(),
+           py::arg("beta"), py::arg("cutoff"),
+           py::arg("col_atom_idxs_i").noconvert() = py::none(),
+           py::arg("disable_hilbert_sort") = false,
+           py::arg("nblist_padding") = 0.1,
+           R"pbdoc(
+                    Set up batched NonbondedInteractionGroup.
+
+                    Parameters
+                    ----------
+                    num_atoms: int
+                        Number of atoms.
+
+                    row_atom_idxs: NDArray
+                        Batches of group of atoms in the interaction.
+
+                    beta: float
+
+                    cutoff: float
+                        Ignore all interactions beyond this distance in nm.
+
+                    col_atom_idxs: Optional[NDArray]
+                        Batches of group of atoms in the interaction. If not specified,
+                        use all of the atoms not in the `row_atom_idxs`.
+
+                    disable_hilbert_sort: bool
+                        Set to True to disable the Hilbert sort.
+
+                    nblist_padding: float
+                        Margin for the neighborlist.
+
+            )pbdoc")
+      .def(
+          "set_atom_idxs",
+          [](Class &pot, const py::array_t<int, py::array::c_style> &row_idxs_i,
+             const py::array_t<int, py::array::c_style> &col_idxs_i) {
+            pot.set_atom_idxs(std::vector<std::vector<int>>(
+                                  1, py_array_to_vector(row_idxs_i)),
+                              std::vector<std::vector<int>>(
+                                  1, py_array_to_vector(col_idxs_i)));
+          },
+          py::arg("row_atom_idxs"), py::arg("col_atom_idxs"))
       .def("set_atom_idxs", &Class::set_atom_idxs, py::arg("row_atom_idxs"),
            py::arg("col_atom_idxs"),
            R"pbdoc(
@@ -2294,18 +3063,60 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(
-          py::init([](const py::array_t<int, py::array::c_style> &pair_idxs_i,
+          py::init([](const int num_atoms,
+                      const py::array_t<int, py::array::c_style> &pair_idxs_i,
                       const py::array_t<RealType, py::array::c_style> &scales_i,
                       const RealType beta, const RealType cutoff) {
+            verify_bond_idxs(pair_idxs_i, 2);
             std::vector<int> pair_idxs = py_array_to_vector(pair_idxs_i);
 
             std::vector<RealType> scales = py_array_to_vector(scales_i);
-
-            return new NonbondedPairList<RealType, Negated>(pair_idxs, scales,
-                                                            beta, cutoff);
+            std::vector<int> system_idxs(pair_idxs_i.shape(0), 0);
+            const int num_systems = 1;
+            return new NonbondedPairList<RealType, Negated>(
+                num_systems, num_atoms, pair_idxs, scales, system_idxs, beta,
+                cutoff);
           }),
-          py::arg("pair_idxs_i"), py::arg("scales_i"), py::arg("beta"),
-          py::arg("cutoff"))
+          py::arg("num_atoms"), py::arg("pair_idxs_i"),
+          py::arg("scales_i").noconvert(), py::arg("beta"), py::arg("cutoff"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &pair_idxs,
+                       const std::vector<
+                           py::array_t<RealType, py::array::c_style>> &scales,
+                       const RealType beta, const RealType cutoff) {
+             const int num_systems = pair_idxs.size();
+             std::vector<int> combined_pair_idxs;
+             std::vector<RealType> combined_scales;
+             std::vector<int> system_idxs;
+             int offset = 0;
+             int scale_offset = 0;
+             for (int i = 0; i < num_systems; i++) {
+               verify_bond_idxs(pair_idxs[i], 2);
+               const unsigned long pair_idxs_arr_size = pair_idxs[i].size();
+               const unsigned long sign_arr_size = scales[i].size();
+               combined_pair_idxs.resize(combined_pair_idxs.size() +
+                                         pair_idxs_arr_size);
+               std::memcpy(combined_pair_idxs.data() + offset,
+                           pair_idxs[i].data(),
+                           pair_idxs_arr_size * sizeof(int));
+
+               combined_scales.resize(combined_scales.size() + sign_arr_size);
+               std::memcpy(combined_scales.data() + scale_offset,
+                           scales[i].data(), sign_arr_size * sizeof(RealType));
+               offset += pair_idxs_arr_size;
+               scale_offset += sign_arr_size;
+
+               system_idxs.resize(system_idxs.size() + pair_idxs[i].shape(0));
+               std::fill(system_idxs.end() - pair_idxs[i].shape(0),
+                         system_idxs.end(), i);
+             }
+             return new NonbondedPairList<RealType, Negated>(
+                 num_systems, num_atoms, combined_pair_idxs, combined_scales,
+                 system_idxs, beta, cutoff);
+           }),
+           py::arg("num_atoms"), py::arg("pair_idxs_i").noconvert(),
+           py::arg("scales_i").noconvert(), py::arg("beta"), py::arg("cutoff"))
       .def("get_idxs",
            [](Class &pot) -> py::array_t<int, py::array::c_style> {
              std::vector<int> output_idxs = pot.get_idxs_host();
@@ -2332,6 +3143,7 @@ void declare_mover(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def("set_interval", &Class::set_interval, py::arg("interval"))
       .def("get_interval", &Class::get_interval)
+      .def("num_systems", &Class::num_systems)
       .def("set_step", &Class::set_step, py::arg("step"))
       .def(
           "move",
@@ -2507,16 +3319,26 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
                        const RealType cutoff, const int seed,
                        const int num_proposals_per_move, const int interval,
                        const int batch_size) {
-             size_t params_dim = params.ndim();
+             const size_t params_dim = params.ndim();
              if (num_proposals_per_move <= 0) {
                throw std::runtime_error(
                    "proposals per move must be greater than 0");
              }
-             if (params_dim != 2) {
-               throw std::runtime_error("parameters dimensions must be 2");
-             }
-             if (params.shape(0) != N) {
-               throw std::runtime_error("Number of parameters must match N");
+             int num_systems = 1;
+             if (params_dim == 3) {
+               if (params.shape(1) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+               num_systems = params.shape(0);
+
+             } else if (params_dim == 2) {
+               if (params.shape(0) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+             } else {
+               throw std::runtime_error(
+                   "parameters dimensions must be 2 or 3, got " +
+                   std::to_string(params_dim));
              }
              if (target_mols.size() == 0) {
                throw std::runtime_error("must provide at least one molecule");
@@ -2533,9 +3355,9 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
                                         "greater than batch size");
              }
              std::vector<RealType> v_params = py_array_to_vector(params);
-             return new Class(N, target_mols, v_params, temperature, nb_beta,
-                              cutoff, seed, num_proposals_per_move, interval,
-                              batch_size);
+             return new Class(num_systems, N, target_mols, v_params,
+                              temperature, nb_beta, cutoff, seed,
+                              num_proposals_per_move, interval, batch_size);
            }),
            py::arg("N"), py::arg("target_mols"), py::arg("params"),
            py::arg("temperature"), py::arg("nb_beta"), py::arg("cutoff"),
@@ -2629,10 +3451,15 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
       .def("get_params",
            [](Class &mover) -> py::array_t<RealType, py::array::c_style> {
              std::vector<RealType> flat_params = mover.get_params();
+             const int num_systems = mover.num_systems();
              const int D = PARAMS_PER_ATOM;
-             const int N = flat_params.size() / D;
+             const int N = flat_params.size() / D * num_systems;
+             std::vector<int> params_shape = {N, D};
+             if (num_systems > 1) {
+               params_shape.insert(params_shape.begin(), num_systems);
+             }
              py::array_t<RealType, py::array::c_style> out_params(
-                 {N, D}, flat_params.data());
+                 params_shape, flat_params.data());
              return out_params;
            })
       .def(
@@ -2646,7 +3473,7 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
            R"pbdoc(
         Returns the last log probability.
 
-        Only meaningful/valid when batch_size == 1 and num_proposals_per_move == 1 else
+        Only meaningful/valid when num_systems == 1 and num_proposals_per_move == 1 else
         the value is simply the first value in the buffer which in the case of a batch size greater than
         1 is the first proposal in the batch and in the case of num_proposals_per_move greater than 1
         the probability of the last move, which may or may not have been accepted.
@@ -2657,7 +3484,7 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
       .def("acceptance_fraction", &Class::acceptance_fraction)
       .def("get_before_log_weights", &Class::get_before_log_weights)
       .def("get_after_log_weights", &Class::get_after_log_weights)
-      .def("batch_size", &Class::batch_size);
+      .def("num_systems", &Class::num_systems);
 }
 
 template <typename RealType>
@@ -2681,11 +3508,21 @@ void declare_targeted_insertion_biased_deletion_exchange_move(
                throw std::runtime_error(
                    "proposals per move must be greater than 0");
              }
-             if (params_dim != 2) {
-               throw std::runtime_error("parameters dimensions must be 2");
-             }
-             if (params.shape(0) != N) {
-               throw std::runtime_error("Number of parameters must match N");
+             int num_systems = 1;
+             if (params_dim == 3) {
+               if (params.shape(1) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+               num_systems = params.shape(0);
+
+             } else if (params_dim == 2) {
+               if (params.shape(0) != N) {
+                 throw std::runtime_error("Number of parameters must match N");
+               }
+             } else {
+               throw std::runtime_error(
+                   "parameters dimensions must be 2 or 3, got " +
+                   std::to_string(params_dim));
              }
              if (ligand_idxs.size() == 0) {
                throw std::runtime_error(
@@ -2706,9 +3543,10 @@ void declare_targeted_insertion_biased_deletion_exchange_move(
                                         "greater than batch size");
              }
              std::vector<RealType> v_params = py_array_to_vector(params);
-             return new Class(N, ligand_idxs, target_mols, v_params,
-                              temperature, nb_beta, cutoff, radius, seed,
-                              num_proposals_per_move, interval, batch_size);
+             return new Class(num_systems, N, ligand_idxs, target_mols,
+                              v_params, temperature, nb_beta, cutoff, radius,
+                              seed, num_proposals_per_move, interval,
+                              batch_size);
            }),
            py::arg("N"), py::arg("ligand_idxs"), py::arg("target_mols"),
            py::arg("params"), py::arg("temperature"), py::arg("nb_beta"),
@@ -2856,13 +3694,13 @@ py::array_t<RealType, py::array::c_style> py_rotate_and_translate_mol(
   std::vector<RealType> v_translations =
       py_array_to_vector_with_cast<RealType, RealType>(translations);
 
-  const int batch_size = quaternions.shape(0);
+  const int num_systems = quaternions.shape(0);
 
   const int N = coords.shape(0);
   py::array_t<RealType, py::array::c_style> py_rotated_coords(
-      {batch_size, N, 3});
+      {num_systems, N, 3});
   rotate_coordinates_and_translate_mol_host<RealType>(
-      N, batch_size, coords.data(), box.data(), &v_quaternions[0],
+      N, num_systems, coords.data(), box.data(), &v_quaternions[0],
       &v_translations[0], py_rotated_coords.mutable_data());
   return py_rotated_coords;
 }
@@ -2944,6 +3782,9 @@ PYBIND11_MODULE(custom_ops, m) {
 
   declare_flat_bottom_bond<double>(m, "f64");
   declare_flat_bottom_bond<float>(m, "f32");
+
+  declare_flat_bottom_restraint<double>(m, "f64");
+  declare_flat_bottom_restraint<float>(m, "f32");
 
   declare_log_flat_bottom_bond<double>(m, "f64");
   declare_log_flat_bottom_bond<float>(m, "f32");
