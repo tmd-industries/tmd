@@ -32,6 +32,8 @@ from .bond import CanonicalBond, CanonicalProper, mkbond, mkproper
 from .interpolation import InterpolationFxn, InterpolationFxnName, Symmetric, get_interpolation_fxn
 from .queries import get_aliphatic_ring_bonds, get_rotatable_bonds
 
+REST_REGION_ATOM_FLAG = "TMDRESTAtom"
+
 
 def get_temperature_scale_interpolation_fxn(
     max_temperature_scale: float, interpolation: InterpolationFxnName
@@ -58,6 +60,19 @@ class SingleTopologyREST(SingleTopology):
     - f(0) = f(1) = 1 (identity at end states)
     - f(0.5) = max_temperature_scale
     - f(x) = f(1 - x) (symmetric)
+
+    The steps for determining the REST Region Setup are as follows:
+
+    1. All Alchemical atoms are selected
+    2. Select complete Rings that include an Alchemical atom
+    3. Select any atoms that are terminal and connected to REST atoms
+    4. Evaluate RDKit molecules for Boolean Atom Property 'TMDRESTAtom'
+      * If the property is not set, atom is determined solely based on previous steps
+      * If the property is set to True, atom is included in the REST region
+      * If the property is set to False, atom is excluded in the REST region if previously added.
+
+    Proper torsions force constants are weakened when a torsion includes a REST region atom, but the atoms within the torsion only have the ligand-environment electrostatics LJ
+    energies scaled when the atoms are witin the REST region..
     """
 
     def __init__(
@@ -130,7 +145,19 @@ class SingleTopologyREST(SingleTopology):
                     outer_rest_idxs.add(atom.GetIdx())
                     outer_rest_idxs.add(nb_nb.GetIdx())
 
-        return inner_rest_idxs.union(outer_rest_idxs)
+        # Handle user specified REST atoms
+        # If the user doesn't provide the flag then the atom is left as is
+        # If the user marks the flag as True, include the atoms as part of the REST region
+        # If the user marks the flag as False, exclude the atom from the REST region.
+        excluded_atom_idxs = set()
+        for atom in mol.GetAtoms():
+            if atom.HasProp(REST_REGION_ATOM_FLAG):
+                if atom.GetBoolProp(REST_REGION_ATOM_FLAG):
+                    inner_rest_idxs.add(atom.GetIdx())
+                else:
+                    excluded_atom_idxs.add(atom.GetIdx())
+
+        return inner_rest_idxs.union(outer_rest_idxs).difference(excluded_atom_idxs)
 
     def split_combined_idxs(self, combined_idxs):
         mol_a_idxs = []

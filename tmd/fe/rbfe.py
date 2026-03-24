@@ -51,6 +51,7 @@ from tmd.fe.plots import (
     plot_hrex_transition_matrix,
 )
 from tmd.fe.rest.single_topology import SingleTopologyREST
+from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
 from tmd.fe.single_topology import AtomMapFlags, SingleTopology, assert_default_system_constraints
 from tmd.fe.utils import bytes_to_id, get_mol_name, get_romol_conf
 from tmd.ff import Forcefield
@@ -1146,6 +1147,10 @@ def estimate_relative_free_energy_bisection_hrex(
     if temperature != DEFAULT_TEMP:
         warnings.warn(f"Using non Standard temperature ({DEFAULT_TEMP:.1f}) of {temperature:.1f}")
 
+    if hrex_params.rest_params is not None and hrex_params.rest_params.rest_region_smarts is not None:
+        for patt in hrex_params.rest_params.rest_region_smarts:
+            assign_rest_atoms_from_smarts(mol_a, patt)
+            assign_rest_atoms_from_smarts(mol_b, patt)
     single_topology = (
         SingleTopologyREST(
             mol_a,
@@ -1155,7 +1160,7 @@ def estimate_relative_free_energy_bisection_hrex(
             max_temperature_scale=hrex_params.rest_params.max_temperature_scale,
             temperature_scale_interpolation=hrex_params.rest_params.temperature_scale_interpolation,
         )
-        if hrex_params.rest_params
+        if hrex_params.rest_params is not None
         else SingleTopology(mol_a, mol_b, core, ff)
     )
 

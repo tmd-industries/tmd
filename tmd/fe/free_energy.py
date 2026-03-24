@@ -76,8 +76,24 @@ BAROSTAT_MOVERS = (
 
 @dataclass(frozen=True)
 class RESTParams:
+    """
+    Parameters
+    ----------
+
+    max_temperature_scale: float
+        The maximum temperature scale to apply at lambda 0.5. If set to 1.0, REST is effectively turned off.
+
+    temperature_scale_interpolation: str
+        The temperature scaling interpolation function name.
+
+    rest_region_smarts: list[str] or None
+        A list of SMARTS patterns that define regions within ligands that should be added to the default REST region. SMARTS patterns are not
+        required to match atoms within the molecule.
+    """
+
     max_temperature_scale: float
     temperature_scale_interpolation: InterpolationFxnName
+    rest_region_smarts: list[str] | None = None
 
 
 @dataclass(frozen=True)
