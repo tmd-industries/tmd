@@ -13,7 +13,7 @@ By default, the REST region is determined as follows:
   2. Complete rings containing alchemical atoms
   3. Terminal atoms connected to REST atoms
 
-In addition to the REST region, the force constant of proper torsions that have atoms in the REST region and are part of a rotatable bond or an aliphatic ring are weakened. It may be desirable to expand the REST region to cover torsions if the sampling is slow.  
+In addition to the REST region, the force constant of proper torsions that have atoms in the REST region and are part of a rotatable bond or an aliphatic ring are weakened. It may be desirable to expand the REST region to cover torsions if the sampling is slow.
 
 ## Custom REST Region Methods
 
@@ -64,7 +64,7 @@ mol.GetAtomWithIdx(atom_idx_to_exclude).SetBoolProp(REST_REGION_ATOM_FLAG, False
 
 # Create SingleTopologyREST - atoms with flags will be respected
 st = SingleTopologyREST(
-    mol_a, mol_b, core, forcefield, 
+    mol_a, mol_b, core, forcefield,
     max_temperature_scale=3.0,
     temperature_scale_interpolation="exponential"
 )
