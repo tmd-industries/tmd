@@ -176,7 +176,7 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
         idxs = np.array([i0], dtype=np.int32)
         params = np.array([[fc, r0]], dtype=np.float32)
 
-        return HarmonicBond(idxs), params
+        return HarmonicBond(self.cpx_coords.shape[0], idxs), params
 
     def get_angle_geometry(self):
         """Get atom1, atom2, atom3, angle."""
@@ -196,7 +196,7 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
 
         idxs = np.array([i0, i1], dtype=np.int32)
         params = np.array([[fc, t0, 0], [fc, t1, 0]], dtype=np.float32)
-        return HarmonicAngle(idxs), params
+        return HarmonicAngle(self.cpx_coords.shape[0], idxs), params
 
     def get_dihedral_geometry(self):
         """Get atom1, atom2, atom3, atom4, angle."""
@@ -230,7 +230,7 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
 
         idxs = np.array(idxs_, dtype=np.int32)
         params = np.array(params_, dtype=np.float32)
-        return PeriodicTorsion(idxs), params
+        return PeriodicTorsion(self.cpx_coords.shape[0], idxs), params
 
     def get_restraint_correction(self, temperature: float) -> float:
         """Compute correction to FE from restraint.
