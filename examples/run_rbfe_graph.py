@@ -70,6 +70,12 @@ def main():
         help="Functional form to use for temperature scale interpolation in REST",
     )
     parser.add_argument(
+        "--rest_smarts_patterns",
+        nargs="+",
+        default=None,
+        help="One or more SMARTS patterns to determine what atoms are in the REST region. If rest_max_temperature_scale is <= 1, this is unused",
+    )
+    parser.add_argument(
         "--output_dir", default=None, help="Directory to output results, else generates a directory based on the time"
     )
     parser.add_argument("--local_md_k", default=10_000.0, type=float, help="Local MD k parameter")
@@ -99,12 +105,6 @@ def main():
         default="kcal/mol",
         choices=["kcal/mol", "kJ/mol", "uM", "nM"],
         help="Units of the experimental label.",
-    )
-    parser.add_argument(
-        "--rest_smarts_patterns",
-        nargs="+",
-        default=None,
-        help="One or more SMARTS patterns to determine what atoms are in the REST region. If rest_max_temperature_scale is <= 1, this is unused",
     )
     args = parser.parse_args()
 

@@ -313,6 +313,15 @@ def test_single_topology_custom_rest_atoms(seed):
     assert len(st.rest_region_atom_idxs) == st.get_num_atoms() - len(random_rest_atoms) * 2
     assert len(st.rest_region_atom_idxs.intersection(random_rest_atoms)) == 0
 
+    # Verify that mixing selected and deselected rest region atoms functions correctly
+    include_atoms = rng.choice(random_rest_atoms, len(random_rest_atoms) - 1, replace=False)
+    for atom_idx in include_atoms:
+        benzene.GetAtomWithIdx(int(atom_idx)).SetBoolProp(REST_REGION_ATOM_FLAG, True)
+
+    st = SingleTopologyREST(benzene, benzene, core, forcefield, 2.0)
+    assert st.rest_region_atom_idxs.issuperset(include_atoms)
+    assert not st.rest_region_atom_idxs.issuperset(random_rest_atoms)
+
     # Remove the flags, should now include everything
     for atom_idx in random_rest_atoms:
         benzene.GetAtomWithIdx(int(atom_idx)).ClearProp(REST_REGION_ATOM_FLAG)
