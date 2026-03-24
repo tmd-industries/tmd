@@ -35,6 +35,7 @@ from tmd.md.builders import (
     build_membrane_system,
     build_protein_system,
     build_water_system,
+    compute_solvent_box_size,
     construct_default_omm_system,
     count_water_atoms,
     get_box_from_coords,
@@ -640,3 +641,24 @@ def test_adjusting_water_order_doesnt_change_positions():
     updated_other_idxs = np.delete(all_idxs, new_water_indices)
 
     np.testing.assert_equal(updated_positions[updated_other_idxs], ref_positions[reference_other_idxs])
+
+
+@pytest.mark.nogpu
+def test_compute_solvent_box_size():
+    # Load large macrocycles that should have boxes that are larger than the default 4.0nm water box
+    mols = read_sdf("tests/data/saturated_vancomycin_pair.sdf")
+
+    with pytest.raises(ValueError, match="Padding must be at least 0.0"):
+        compute_solvent_box_size(mols, padding=-1.0)
+
+    padding = 1.0
+    box_size = compute_solvent_box_size(mols, padding=padding)
+    assert box_size > 4.0
+
+    max_mol_dimension = compute_solvent_box_size(mols, padding=0.0)
+
+    # If padding is zero, should be different by 2x padding
+    assert max_mol_dimension == box_size - (2 * padding)
+
+    water_system = build_water_system(box_size, DEFAULT_WATER_FF, mols=mols, box_margin=0.0)
+    np.testing.assert_allclose(np.diag(water_system.box), box_size, atol=0.45)
