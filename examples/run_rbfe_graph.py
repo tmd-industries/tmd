@@ -171,7 +171,7 @@ def main():
                 rest_params=RESTParams(
                     args.rest_max_temperature_scale,
                     args.rest_temperature_scale_interpolation,
-                    smarts=args.rest_smarts_patterns,
+                    args.rest_smarts_patterns,
                 ),
             ),
             local_md_params=LocalMDParams(
