@@ -38,7 +38,7 @@ from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, 
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
-from tmd.md.builders import verify_pdb_structure
+from tmd.md.builders import compute_solvent_box_size, verify_pdb_structure
 from tmd.md.exchange.utils import get_radius_of_mol_pair
 from tmd.parallel.client import CUDAPoolClient, FileClient, SerialClient
 from tmd.parallel.utils import get_gpu_count
@@ -112,6 +112,9 @@ def main():
         choices=["kcal/mol", "kJ/mol", "uM", "nM"],
         help="Units of the experimental label.",
     )
+    parser.add_argument(
+        "--solvent_padding", default=1.0, type=float, help="Padding to add to solvent boxes, defaults to 1.0 nanometer."
+    )
     args = parser.parse_args()
 
     if "complex" in args.legs:
@@ -122,6 +125,10 @@ def main():
 
     mol_a = mols_by_name[args.mol_a]
     mol_b = mols_by_name[args.mol_b]
+
+    water_box_size = 4.0
+    if "solvent" in args.legs:
+        water_box_size = compute_solvent_box_size([mol_a, mol_b], padding=args.solvent_padding)
 
     output_dir = args.output_dir
     if output_dir is None:
@@ -186,6 +193,7 @@ def main():
             args.min_overlap,
             True,  # Always write out the trajectories
             args.force_overwrite,
+            water_box_size=water_box_size,
         )
         futures.append(fut)
     leg_results = defaultdict(dict)
