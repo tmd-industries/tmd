@@ -111,7 +111,7 @@ def main():
     )
     args = parser.parse_args()
 
-    if "complex" in args.legs:
+    if COMPLEX_LEG in args.legs:
         assert args.pdb_path is not None, "Must provide PDB to run complex leg"
 
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
@@ -151,7 +151,7 @@ def main():
         num_gpus = get_gpu_count()
 
     water_box_size = 4.0
-    if "solvent" in args.legs:
+    if SOLVENT_LEG in args.legs:
         water_box_size = compute_solvent_box_size(list(mols_by_name.values()), padding=args.solvent_padding)
 
     # Set max_tasks_per_child=1 to reduce potential for accumulating memory

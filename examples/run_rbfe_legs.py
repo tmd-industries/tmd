@@ -123,7 +123,7 @@ def main():
     )
     args = parser.parse_args()
 
-    if "complex" in args.legs:
+    if COMPLEX_LEG in args.legs:
         assert args.pdb_path is not None, "Must provide PDB to run complex leg"
 
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
@@ -133,7 +133,7 @@ def main():
     mol_b = mols_by_name[args.mol_b]
 
     water_box_size = 4.0
-    if "solvent" in args.legs:
+    if SOLVENT_LEG in args.legs:
         water_box_size = compute_solvent_box_size([mol_a, mol_b], padding=args.solvent_padding)
 
     output_dir = args.output_dir
