@@ -61,6 +61,7 @@ from tmd.md.builders import HostConfig
 from tmd.md.thermostat.utils import sample_velocities
 from tmd.optimize.protocol import greedily_optimize_protocol, make_fast_approx_overlap_distance_fxn
 from tmd.potentials import BoundPotential, jax_utils
+from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
 
 BATCH_MODE_ENV_VAR = "TMD_BATCH_MODE"
 BISECTION_BATCH_SIZE_ENV_VAR = "TMD_BISECTION_BATCH_SIZE"
@@ -1146,6 +1147,10 @@ def estimate_relative_free_energy_bisection_hrex(
     if temperature != DEFAULT_TEMP:
         warnings.warn(f"Using non Standard temperature ({DEFAULT_TEMP:.1f}) of {temperature:.1f}")
 
+    if hrex_params.rest_params is not None and hrex_params.rest_params.rest_region_smarts is not None:
+        for patt in hrex_params.rest_params.rest_region_smarts:
+            assign_rest_atoms_from_smarts(mol_a, patt)
+            assign_rest_atoms_from_smarts(mol_b, patt)
     single_topology = (
         SingleTopologyREST(
             mol_a,

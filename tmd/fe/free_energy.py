@@ -86,14 +86,14 @@ class RESTParams:
     temperature_scale_interpolation: str
         The temperature scaling interpolation function name.
 
-    smarts: list[str] or None
-        A list of SMARTS that define regions within ligands that should be included in the REST region. SMARTS are not
+    rest_region_smarts: list[str] or None
+        A list of SMARTS patterns that define regions within ligands that should be added to the default REST region. SMARTS patterns are not
         required to match atoms within the molecule.
     """
 
     max_temperature_scale: float
     temperature_scale_interpolation: InterpolationFxnName
-    smarts: list[str] | None = None
+    rest_region_smarts: list[str] | None = None
 
 
 @dataclass(frozen=True)

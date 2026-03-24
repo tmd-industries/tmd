@@ -230,8 +230,9 @@ def run_rbfe_leg(
         and md_params.hrex_params.rest_params.max_temperature_scale > 1.0
     ):
         rest_params = md_params.hrex_params.rest_params
-        if rest_params.smarts is not None:
-            for patt in rest_params.smarts:
+        # Assign REST region redundantly to ensure the flags are written to mols.sdf
+        if rest_params.rest_region_smarts is not None:
+            for patt in rest_params.rest_region_smarts:
                 assign_rest_atoms_from_smarts(mol_a, patt)
                 assign_rest_atoms_from_smarts(mol_b, patt)
 
