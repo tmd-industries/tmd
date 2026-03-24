@@ -51,6 +51,7 @@ from tmd.fe.plots import (
     plot_hrex_transition_matrix,
 )
 from tmd.fe.rest.single_topology import SingleTopologyREST
+from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
 from tmd.fe.single_topology import AtomMapFlags, SingleTopology, assert_default_system_constraints
 from tmd.fe.utils import bytes_to_id, get_mol_name, get_romol_conf
 from tmd.ff import Forcefield
@@ -61,7 +62,6 @@ from tmd.md.builders import HostConfig
 from tmd.md.thermostat.utils import sample_velocities
 from tmd.optimize.protocol import greedily_optimize_protocol, make_fast_approx_overlap_distance_fxn
 from tmd.potentials import BoundPotential, jax_utils
-from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
 
 BATCH_MODE_ENV_VAR = "TMD_BATCH_MODE"
 BISECTION_BATCH_SIZE_ENV_VAR = "TMD_BISECTION_BATCH_SIZE"
