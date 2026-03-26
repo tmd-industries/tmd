@@ -5,11 +5,11 @@ from numpy.typing import NDArray
 from openmm import app
 
 from tmd.fe.cif_writer import build_openmm_topology, convert_single_topology_mols
-from tmd.fe.single_topology import SingleTopology
+from tmd.fe.single_topology import AtomMapMixin
 from tmd.fe.topology import BaseTopology, MultiTopology
 from tmd.md.builders import HostConfig
 
-TMDTopologyType = BaseTopology | SingleTopology
+TMDTopologyType = BaseTopology | AtomMapMixin
 
 
 def get_openmm_topology(tmd_topology: TMDTopologyType, host_config: HostConfig | None) -> app.Topology:
@@ -22,7 +22,7 @@ def get_openmm_topology(tmd_topology: TMDTopologyType, host_config: HostConfig |
     ----------
     tmd_topology : TMDTopologyType
         The topology object containing the molecular information. Can be a BaseTopology,
-        MultiTopology, or SingleTopology. All molecules will be included in the topology.
+        MultiTopology, or AtomMapMixin. All molecules will be included in the topology.
     host_config : HostConfig or None
         The host configuration object, which may contain additional topology information.
         If provided, the host topology is added to the output topology first.
@@ -45,7 +45,7 @@ def get_openmm_topology(tmd_topology: TMDTopologyType, host_config: HostConfig |
             topo_objs.extend(tmd_topology.mols)
         else:
             topo_objs.append(tmd_topology.mol)
-    elif isinstance(tmd_topology, SingleTopology):
+    elif isinstance(tmd_topology, AtomMapMixin):
         topo_objs.append(tmd_topology.mol_a)
         topo_objs.append(tmd_topology.mol_b)
     else:
@@ -94,7 +94,7 @@ def frames_to_mdtraj_trajectory(
 
     Notes
     -----
-    If the topology object is a SingleTopology object, be aware of the lambda value that was
+    If the topology object is a AtomMapMixin object, be aware of the lambda value that was
     used to generate the frames. Endstates will contain alchemical coordinates for one of the
     molecules.
     """
@@ -107,7 +107,7 @@ def frames_to_mdtraj_trajectory(
     md_top = md.Topology.from_openmm(openmm_top)
 
     host_atoms = host_config.conf.shape[0] if host_config is not None else 0
-    single_top_conversion = isinstance(tmd_topology, SingleTopology)
+    single_top_conversion = isinstance(tmd_topology, AtomMapMixin)
 
     def convert_frame(x):
         if not single_top_conversion:

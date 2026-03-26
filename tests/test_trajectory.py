@@ -4,7 +4,7 @@ import pytest
 from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS
 from tmd.fe import atom_mapping
 from tmd.fe.rest.single_topology import SingleTopologyREST
-from tmd.fe.single_topology import SingleTopology
+from tmd.fe.single_topology import AtomMapMixin, SingleTopology
 from tmd.fe.topology import BaseTopology, MultiTopology
 from tmd.fe.utils import get_romol_conf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
@@ -14,14 +14,6 @@ from tmd.utils import path_to_internal_file
 
 with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as ligands_path:
     hif2a_ligands = read_sdf_mols_by_name(ligands_path)
-
-hif2a_ligand_pairs = [
-    (mol_a, mol_b)
-    for mol_a_name, mol_a in hif2a_ligands.items()
-    for mol_b_name, mol_b in hif2a_ligands.items()
-    if mol_a_name < mol_b_name
-]
-
 
 forcefield = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
@@ -33,6 +25,11 @@ forcefield = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     [
         BaseTopology(hif2a_ligands["23"], forcefield),
         MultiTopology(list(hif2a_ligands.values()), forcefield),
+        AtomMapMixin(
+            hif2a_ligands["23"],
+            hif2a_ligands["338"],
+            atom_mapping.get_cores(hif2a_ligands["23"], hif2a_ligands["338"], **DEFAULT_ATOM_MAPPING_KWARGS)[0],
+        ),
         SingleTopology(
             hif2a_ligands["23"],
             hif2a_ligands["338"],
@@ -65,11 +62,11 @@ def test_frames_to_mdtraj(leg, topology):
     if leg == "vacuum":
         assert host_config is None
     elif leg == "solvent":
-        host_config = builders.build_water_system(3.0, topology.ff.water_ff, mols=mols)
+        host_config = builders.build_water_system(3.0, forcefield.water_ff, mols=mols)
     elif leg == "complex":
         with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_solv_equil.pdb") as pdb_path:
             host_config = builders.build_protein_system(
-                str(pdb_path), topology.ff.protein_ff, topology.ff.water_ff, mols=mols
+                str(pdb_path), forcefield.protein_ff, forcefield.water_ff, mols=mols
             )
 
     box = np.eye(3) * 100.0
