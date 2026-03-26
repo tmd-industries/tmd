@@ -129,6 +129,7 @@ setup(
             "py3Dmol==2.0.3",
         ],
         "viz": ["py3Dmol"],
+        "mdtraj": ["mdtraj"],
     },
     package_data={
         "tmd": [
