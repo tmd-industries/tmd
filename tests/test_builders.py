@@ -35,6 +35,7 @@ from tmd.md.builders import (
     build_membrane_system,
     build_protein_system,
     build_water_system,
+    compute_solvent_box_size,
     construct_default_omm_system,
     count_water_atoms,
     get_box_from_coords,
@@ -89,7 +90,7 @@ def test_build_water_system():
         check_force_norm(-du_dx)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @pytest.mark.parametrize("water_ff", ["amber14/tip4pfb", "tip5p", "swm4ndp"])
 def test_build_water_system_raises_on_water_ff_with_virtual_sites(water_ff):
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
@@ -97,7 +98,7 @@ def test_build_water_system_raises_on_water_ff_with_virtual_sites(water_ff):
         build_water_system(4.0, water_ff, mols=[mol_a, mol_b], box_margin=0.1)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @pytest.mark.parametrize("water_ff", ["tip3p", "spce", "opc3", "amber14/tip3p", "amber14/spce", "amber14/opc3"])
 def test_build_water_system_different_water_ffs(water_ff):
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
@@ -109,7 +110,7 @@ def test_build_water_system_different_water_ffs(water_ff):
         assert np.isfinite(bp(host_config.conf, host_config.box))
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_build_protein_system_returns_correct_water_count():
     with path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf") as sdf_path:
         mols = read_sdf(sdf_path)
@@ -130,7 +131,7 @@ def test_build_protein_system_returns_correct_water_count():
             last_num_waters = host_config.num_water_atoms
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_build_protein_system_with_membrane():
     with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "ligands.sdf") as sdf_path:
         mols = read_sdf(sdf_path)
@@ -186,7 +187,7 @@ def validate_host_config_ions_and_charge(
         assert num_ions == 0
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @pytest.mark.parametrize("ionic_concentration", [0.0, 0.15])
 @pytest.mark.parametrize("neutralize", [False, True])
 def test_water_system_ion_concentration_and_neutralization(ionic_concentration, neutralize):
@@ -233,7 +234,7 @@ def test_water_system_ion_concentration_and_neutralization(ionic_concentration, 
         validate_host_config_ions_and_charge(host_config, mol, ionic_concentration, expected_charge, neutralize)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_build_systems_large_batch_of_ligands():
     with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = str(pdb_path)
@@ -258,7 +259,7 @@ def test_build_systems_large_batch_of_ligands():
     verify_no_nearby_waters(host_config, batched_mols)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @pytest.mark.parametrize("ionic_concentration", [0.0, 0.15])
 @pytest.mark.parametrize("neutralize", [False, True])
 def test_protein_system_ion_concentration_and_neutralization(ionic_concentration, neutralize):
@@ -348,7 +349,7 @@ def test_protein_system_ion_concentration_and_neutralization(ionic_concentration
         )
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_deserialize_protein_system_1_4_exclusions():
     with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
         host_pdbfile = str(pdb_path)
@@ -378,7 +379,7 @@ def test_deserialize_protein_system_1_4_exclusions():
     np.testing.assert_almost_equal(kvs[(3, 4)][1], 1.0, decimal=4)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_build_protein_system_waters_before_protein():
     num_waters = 100
     # Construct a PDB file with the waters before the protein, to verify that the code correctly handles it.
@@ -402,7 +403,7 @@ def test_build_protein_system_waters_before_protein():
         build_protein_system(temp.name, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_verify_pdb_structure():
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
@@ -479,7 +480,7 @@ def test_build_protein_system():
     assert compute_box_volume(host_config.box) < compute_box_volume(moved_host_config.box)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_build_host_config_from_omm():
     """Verify that it is possible to setup a system that is not handled by the default build_protein_system
 
@@ -552,7 +553,7 @@ def test_build_host_config_from_omm():
     assert called
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_build_protein_system_removal_of_clashy_waters_in_pdb():
     with path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "ligands.sdf") as sdf_path:
         mols_by_name = read_sdf_mols_by_name(sdf_path)
@@ -586,7 +587,7 @@ def test_build_protein_system_removal_of_clashy_waters_in_pdb():
     assert len(clashy_idxs) == 0
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_build_protein_wat_residue_names():
     """Test to verify that if waters are specified with the WAT residue name, that they are correctly identified with the WATER_RESIDUE_NAME.
     If this isn't the case our handling of waters is invalid
@@ -605,7 +606,7 @@ def test_build_protein_wat_residue_names():
         assert len(water_res_names_match) > 0 and all(water_res_names_match)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_adjusting_water_order_doesnt_change_positions():
     """Verify that adjusting the location of waters does not change the positions"""
     cdk8_system = Path(__file__).parent / "data" / "cdk8_incorrectly_ordered_waters.pdb"
@@ -640,3 +641,24 @@ def test_adjusting_water_order_doesnt_change_positions():
     updated_other_idxs = np.delete(all_idxs, new_water_indices)
 
     np.testing.assert_equal(updated_positions[updated_other_idxs], ref_positions[reference_other_idxs])
+
+
+@pytest.mark.nogpu
+def test_compute_solvent_box_size():
+    # Load large macrocycles that should have boxes that are larger than the default 4.0nm water box
+    mols = read_sdf("tests/data/saturated_vancomycin_pair.sdf")
+
+    with pytest.raises(ValueError, match="Padding must be at least 0.0"):
+        compute_solvent_box_size(mols, padding=-1.0)
+
+    padding = 1.0
+    box_size = compute_solvent_box_size(mols, padding=padding)
+    assert box_size > 4.0
+
+    max_mol_dimension = compute_solvent_box_size(mols, padding=0.0)
+
+    # If padding is zero, should be different by 2x padding
+    assert max_mol_dimension == box_size - (2 * padding)
+
+    water_system = build_water_system(box_size, DEFAULT_WATER_FF, mols=mols, box_margin=0.0)
+    np.testing.assert_allclose(np.diag(water_system.box), box_size, atol=0.45)

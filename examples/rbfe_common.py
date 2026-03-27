@@ -151,6 +151,7 @@ def run_rbfe_leg(
     min_overlap: float,
     write_trajectories: bool,
     force_overwrite: bool,
+    water_box_size: float = 4.0,
 ) -> dict[str, Any]:
     """Run an RBFE leg (vacuum, solvent, or complex).
 
@@ -197,6 +198,10 @@ def run_rbfe_leg(
         Whether or not to write trajectories
     force_overwrite: bool
         If results already exist, overwrite the results
+    water_box_size: float
+        The size of the water box. Should be large enough to avoid molecules interacting with
+        copies of themselves across PBCs. Use `tmd.md.builders.compute_solvent_box_size` to
+        setup appropriate sizes.
 
     Returns
     -------
@@ -276,6 +281,7 @@ def run_rbfe_leg(
             md_params,
             n_windows=n_windows,
             min_overlap=min_overlap,
+            box_width=water_box_size,
         )
     elif leg_name == COMPLEX_LEG:
         assert pdb_path is not None, "No pdb data provided"
