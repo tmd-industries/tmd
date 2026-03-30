@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,13 +18,14 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
 from enum import IntEnum
 from functools import cache, cached_property, partial
-from typing import Any, Optional
+from typing import Optional
 
 import jax
 import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 from numpy.typing import NDArray
+from openmm.app import topology as OpenMMTopology
 from rdkit import Chem
 
 from tmd.constants import (
@@ -56,8 +57,6 @@ from tmd.potentials import (
     NonbondedPairListPrecomputed,
     PeriodicTorsion,
 )
-
-OpenMMTopology = Any
 
 
 # Master Schedule
@@ -151,7 +150,7 @@ DUMMY_A_NONBONDED_Q_MIN_MAX = [1 / 3, 2 / 3]
 DUMMY_B_NONBONDED_Q_MIN_MAX = _flip_min_max(DUMMY_A_NONBONDED_Q_MIN_MAX)
 
 # charge balancing
-CORE_NONBONDED_QLJ_MIN_MAX = [1 / 3, 2 / 3]
+CORE_NONBONDED_QLJ_MIN_MAX = [1 / 8, 7 / 8]
 
 
 class ChiralVolumeDisabledWarning(UserWarning):
@@ -963,6 +962,81 @@ def interpolate_w_coord(w0: float | jax.Array, w1: float | jax.Array, lamb: floa
         interpolate.linear_interpolation(w0, w1, jnp.interp(lamb, x, lambdas)),
         interpolate.linear_interpolation(w1, w0, jnp.interp(1.0 - lamb, x, lambdas)),
     )
+
+
+from typing import Optional
+
+import numpy as np
+from numpy.typing import NDArray
+
+from tmd import potentials
+from tmd.fe.system import GuestSystem
+from tmd.fe.topology import _BETA, _CUTOFF, _SCALE_12, _SCALE_13, _SCALE_14_LJ, _SCALE_14_Q
+from tmd.ff import Forcefield
+from tmd.ff.handlers import nonbonded
+from tmd.potentials.nonbonded import combining_rule_epsilon, combining_rule_sigma
+
+
+def build_nblist_pairlist(mol, ff):
+    exclusion_idxs, scale_factors = nonbonded.generate_exclusion_idxs(
+        mol, scale12=_SCALE_12, scale13=_SCALE_13, scale14_q=_SCALE_14_Q, scale14_lj=_SCALE_14_LJ
+    )
+
+    # note: use same scale factor for electrostatics and vdw
+    # typically in protein ffs, gaff, the 1-4 ixns use different scale factors between vdw and electrostatics
+    exclusions_kv = dict()
+    for (i, j), sf_qlj in zip(exclusion_idxs, scale_factors):
+        assert i < j
+        exclusions_kv[(i, j)] = sf_qlj
+
+    # loop over all pairs
+    inclusion_idxs, rescale_mask = [], []
+    for i in range(mol.GetNumAtoms()):
+        for j in range(i + 1, mol.GetNumAtoms()):
+            scale_factor = exclusions_kv.get((i, j), np.zeros(2, dtype=np.float64))  # how much to remove
+            rescale_factor = 1 - np.asarray(scale_factor, dtype=np.float64)  # how much to keep
+            # keep this ixn if either lj or coulombic interaction is present
+            if np.any(rescale_factor) > 0:
+                rescale_mask.append(rescale_factor)
+                inclusion_idxs.append([i, j])
+
+    inclusion_idxs = np.array(inclusion_idxs, dtype=np.int32).reshape(-1, 2)
+
+    q_params = ff.q_handle_intra.partial_parameterize(ff.q_handle_intra.params, mol)
+    lj_params = ff.lj_handle_intra.partial_parameterize(ff.lj_handle_intra.params, mol)
+
+    N = len(q_params)
+
+    rescale_mask = np.asarray(rescale_mask).reshape(-1, 2)
+
+    params = np.empty((len(q_params), 4), dtype=q_params.dtype)
+    params[:, NBParamIdx.Q_IDX] = q_params
+    params[:, NBParamIdx.LJ_SIG_IDX] = lj_params[:, 0]
+    params[:, NBParamIdx.LJ_EPS_IDX] = lj_params[:, 1]
+    params[:, NBParamIdx.W_IDX] = 0.0
+
+    beta = _BETA
+    cutoff = _CUTOFF  # solve for this analytically later
+
+    return params, potentials.NonbondedPairList(N, inclusion_idxs, rescale_mask, beta, cutoff)
+
+
+def setup_endstate_nonbonded_st(
+    ff: Forcefield,
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    core: NDArray,
+    a_to_c: NDArray,
+    b_to_c: NDArray,
+):
+    params, nb_comp = build_nblist_pairlist(mol_a, ff)
+    padded_params = np.zeros((max(max(a_to_c), max(b_to_c)) + 1, 4), dtype=params.dtype)
+    padded_params[a_to_c] = params
+    mol_a_nbpl_idxs = a_to_c[nb_comp.idxs]
+    mol_c_nbpl_idxs_canon = np.array([canonicalize_bond(idxs) for idxs in mol_a_nbpl_idxs], dtype=np.int32)
+    nb_comp.idxs = mol_c_nbpl_idxs_canon
+    nonbonded_potential = nb_comp.bind(np.asarray(padded_params, dtype=np.float64))
+    return nonbonded_potential
 
 
 batch_interpolate_harmonic_bond_params = jax.jit(
@@ -1833,7 +1907,90 @@ class SingleTopology(AtomMapMixin):
         proper = self.aligned_proper.interpolate(lamb)
         improper = self.aligned_improper.interpolate(lamb)
         chiral_atom = self.aligned_chiral_atom.interpolate(lamb)
-        nonbonded = self.aligned_nonbonded_pair_list.interpolate(lamb)
+        # nonbonded = self.aligned_nonbonded_pair_list.interpolate(lamb)
+
+        pairlist_src = setup_endstate_nonbonded_st(self.ff, self.mol_a, self.mol_b, self.core, self.a_to_c, self.b_to_c)
+        pairlist_dst = setup_endstate_nonbonded_st(
+            self.ff, self.mol_b, self.mol_a, self.core[:, ::-1], self.b_to_c, self.a_to_c
+        )
+
+        def interpolate_pairlist(lamb):
+            assert 0.0 <= lamb <= 1.0
+            # These are fixed, so just interpolate
+            params = batch_interpolate_nonbonded_pair_list_params(
+                pairlist_src.potential.cutoff, pairlist_src.params, pairlist_dst.params, lamb
+            )
+
+            aligned_tuples = interpolate.align_idxs_and_params(
+                pairlist_src.potential.idxs,
+                pairlist_src.potential.rescale_mask,
+                pairlist_dst.potential.idxs,
+                pairlist_dst.potential.rescale_mask,
+                make_default=lambda x: (0.0, 0.0),
+            )
+            # print(aligned_tuples)
+            # print([x[2] for x in aligned_tuples])
+            aligned_idxs = np.array([x[0] for x in aligned_tuples], dtype=np.int32)
+            aligned_src_rescale = jnp.array([x[1] for x in aligned_tuples], dtype=np.float64)
+            aligned_dst_rescale = jnp.array([x[2] for x in aligned_tuples], dtype=np.float64)
+            # aligned_mins, aligned_maxes = self._assign_nonbonded_idxs_min_max(aligned_tuples)
+
+            l_idxs = aligned_idxs[:, 0]
+            r_idxs = aligned_idxs[:, 1]
+
+            q_ij = params[l_idxs, NBParamIdx.Q_IDX] * params[r_idxs, NBParamIdx.Q_IDX]
+            sig_ij = combining_rule_sigma(params[l_idxs, NBParamIdx.LJ_SIG_IDX], params[r_idxs, NBParamIdx.LJ_SIG_IDX])
+            eps_ij = combining_rule_epsilon(
+                params[l_idxs, NBParamIdx.LJ_EPS_IDX], params[r_idxs, NBParamIdx.LJ_EPS_IDX]
+            )
+
+            is_dummy_b = jnp.all(aligned_src_rescale == 0.0, axis=1, keepdims=True)
+            is_dummy_a = jnp.all(aligned_src_rescale == 0.0, axis=1, keepdims=True)
+            # print(np.arange(len(aligned_src_rescale))[is_dummy_b.reshape(-1)], np.arange(len(aligned_src_rescale))[is_dummy_a.reshape(-1)])
+
+            rescale_mask = jnp.where(
+                is_dummy_a,
+                interpolate.pad(
+                    interpolate.linear_interpolation,
+                    aligned_src_rescale,
+                    aligned_dst_rescale,
+                    lamb,
+                    *DUMMY_A_NONBONDED_EPS_MIN_MAX,
+                ),
+                jnp.where(
+                    is_dummy_b,
+                    interpolate.pad(
+                        interpolate.linear_interpolation,
+                        aligned_src_rescale,
+                        aligned_dst_rescale,
+                        lamb,
+                        *DUMMY_B_NONBONDED_EPS_MIN_MAX,
+                    ),
+                    interpolate.pad(
+                        interpolate.linear_interpolation,
+                        aligned_src_rescale,
+                        aligned_dst_rescale,
+                        lamb,
+                        *CORE_NONBONDED_QLJ_MIN_MAX,
+                    ),
+                ),
+            )
+
+            precomputed_params = np.empty((len(q_ij), 4), dtype=q_ij.dtype)
+            precomputed_params[:, NBParamIdx.Q_IDX] = q_ij * rescale_mask[:, 0]
+            precomputed_params[:, NBParamIdx.LJ_SIG_IDX] = sig_ij
+            precomputed_params[:, NBParamIdx.LJ_EPS_IDX] = eps_ij * rescale_mask[:, 1]
+            precomputed_params[:, NBParamIdx.W_IDX] = (
+                params[NBParamIdx.W_IDX, l_idxs] * params[NBParamIdx.W_IDX, r_idxs]
+            )
+
+            beta = _BETA
+            cutoff = _CUTOFF  # solve for this analytically later
+
+            return potentials.NonbondedPairListPrecomputed(self.get_num_atoms(), aligned_idxs, beta, cutoff).bind(
+                precomputed_params
+            )
+            # return potentials.NonbondedPairList(pairlist_src.potential.num_atoms, aligned_idxs, np.array(rescale_mask.astype(np.float32)), pairlist_src.potential.beta, pairlist_src.potential.cutoff).bind(params)
 
         assert src_system.chiral_bond
         assert dst_system.chiral_bond
@@ -1847,7 +2004,7 @@ class SingleTopology(AtomMapMixin):
             angle=angle,
             proper=proper,
             improper=improper,
-            nonbonded_pair_list=nonbonded,
+            nonbonded_pair_list=interpolate_pairlist(lamb),
             chiral_atom=chiral_atom,
             chiral_bond=chiral_bond,
         )
