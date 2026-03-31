@@ -113,7 +113,7 @@ def get_abfe_endstate_trajectory(topology, mol, snapshots: Snapshot):
 
 @dataclass(frozen=True)
 class RestraintParams:
-    kb: float = 5000  # bond restraint strength
+    kb: float = 500  # bond restraint strength
     ka: float = 200  # angle restraint
     kd: float = 10  # dihedral restraint
     on: float = 0.0625  # where in lambda schedule the restraints go to full strength
