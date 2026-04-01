@@ -1945,7 +1945,7 @@ class SingleTopology(AtomMapMixin):
             )
 
             is_dummy_b = jnp.all(aligned_src_rescale == 0.0, axis=1, keepdims=True)
-            is_dummy_a = jnp.all(aligned_src_rescale == 0.0, axis=1, keepdims=True)
+            is_dummy_a = jnp.all(aligned_dst_rescale == 0.0, axis=1, keepdims=True)
             # print(np.arange(len(aligned_src_rescale))[is_dummy_b.reshape(-1)], np.arange(len(aligned_src_rescale))[is_dummy_a.reshape(-1)])
 
             rescale_mask = jnp.where(
