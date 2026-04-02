@@ -150,7 +150,7 @@ DUMMY_A_NONBONDED_Q_MIN_MAX = [1 / 3, 2 / 3]
 DUMMY_B_NONBONDED_Q_MIN_MAX = _flip_min_max(DUMMY_A_NONBONDED_Q_MIN_MAX)
 
 # charge balancing
-CORE_NONBONDED_QLJ_MIN_MAX = [1 / 8, 7 / 8]
+CORE_NONBONDED_QLJ_MIN_MAX = [1 / 3, 2 / 3]
 
 
 class ChiralVolumeDisabledWarning(UserWarning):
@@ -1951,7 +1951,7 @@ class SingleTopology(AtomMapMixin):
             rescale_mask = jnp.where(
                 is_dummy_a,
                 interpolate.pad(
-                    interpolate.linear_interpolation,
+                    partial(interpolate.log_linear_interpolation, min_value=0.01),
                     aligned_src_rescale,
                     aligned_dst_rescale,
                     lamb,
@@ -1960,14 +1960,14 @@ class SingleTopology(AtomMapMixin):
                 jnp.where(
                     is_dummy_b,
                     interpolate.pad(
-                        interpolate.linear_interpolation,
+                        partial(interpolate.log_linear_interpolation, min_value=0.01),
                         aligned_src_rescale,
                         aligned_dst_rescale,
                         lamb,
                         *DUMMY_B_NONBONDED_EPS_MIN_MAX,
                     ),
                     interpolate.pad(
-                        interpolate.linear_interpolation,
+                        partial(interpolate.log_linear_interpolation, min_value=0.01),
                         aligned_src_rescale,
                         aligned_dst_rescale,
                         lamb,
