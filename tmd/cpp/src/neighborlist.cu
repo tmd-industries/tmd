@@ -674,7 +674,7 @@ int Neighborlist<RealType>::total_row_idxs() const {
 // interactions. Note that d_ixn_count_ is only the number of tile-tile
 // interactions, and differs by a factor of TILE_SIZE
 template <typename RealType>
-unsigned long long Neighborlist<RealType>::max_ixn_count() const {
+size_t Neighborlist<RealType>::max_ixn_count() const {
   // The maximum number of tile-atom interactions, equal to # tile-tile
   // interactions multiplied by TILE_SIZE (typically 32).
 
@@ -682,10 +682,10 @@ unsigned long long Neighborlist<RealType>::max_ixn_count() const {
   // of N to compute the size of the upper triangular matrix to support any set
   // of row indices.
   // If computing the dense matrix, need the full NxN buffer
-  const unsigned long long n_blocks = ceil_divide(max_system_size_, TILE_SIZE);
-  unsigned long long max_tile_tile_interactions =
-      this->compute_upper_triangular() ? (n_blocks * (n_blocks + 1)) / 2
-                                       : n_blocks * n_blocks;
+  const size_t n_blocks = ceil_divide(max_system_size_, TILE_SIZE);
+  size_t max_tile_tile_interactions = this->compute_upper_triangular()
+                                          ? (n_blocks * (n_blocks + 1)) / 2
+                                          : n_blocks * n_blocks;
   // Each tile-tile interaction can have TILE_SIZE tile-atom interactions
   return max_tile_tile_interactions * TILE_SIZE;
 }

@@ -122,7 +122,7 @@ public:
   int get_num_systems() const { return num_systems_; };
 
   // get max number of interactions
-  unsigned long long max_ixn_count() const;
+  size_t max_ixn_count() const;
 
 private:
   // Sum of all row idx sizes

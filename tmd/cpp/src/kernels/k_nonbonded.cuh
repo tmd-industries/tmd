@@ -408,7 +408,7 @@ void __global__ k_nonbonded_unified(
     const int max_idx, // Largest index that neighborlist will return, also
                        // implies the size of the neighborlist
     const int u_buffer_stride, // Stride for the u buffer
-    const unsigned long long ixn_atoms_stride,
+    const size_t ixn_atoms_stride,
     const unsigned int *__restrict__ row_indice_counts, // Number of row indices
     const unsigned int *__restrict__ ixn_count,         // [num_systems]
     const unsigned int

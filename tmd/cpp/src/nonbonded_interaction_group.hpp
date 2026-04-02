@@ -34,7 +34,7 @@ class NonbondedInteractionGroup : public Potential<RealType> {
 
   typedef void (*k_nonbonded_fn)(
       const int num_systems, const int N, const int max_index,
-      const int u_buffer_stride, const unsigned long long ixn_atoms_stride,
+      const int u_buffer_stride, const size_t ixn_atoms_stride,
       const unsigned int *row_indice_counts,
       const unsigned int *__restrict__ ixn_count,
       const unsigned int *__restrict__ d_atom_idxs,
