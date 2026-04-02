@@ -169,8 +169,8 @@ Neighborlist<RealType>::get_nblist_host(const int num_systems, const int N,
   const int max_blocks = ceil_divide(N_, TILE_SIZE);
 
   const int MAX_TILE_BUFFER = num_systems_ * max_blocks * max_blocks;
-  const int long max_ixns_per_system = this->max_ixn_count();
-  const int MAX_ATOM_BUFFER = num_systems_ * max_ixns_per_system;
+  const unsigned long long max_ixns_per_system = this->max_ixn_count();
+  const unsigned long long MAX_ATOM_BUFFER = num_systems_ * max_ixns_per_system;
 
   std::vector<unsigned int> h_ixn_count(num_systems_);
   gpuErrchk(cudaMemcpy(&h_ixn_count[0], d_ixn_count_,
@@ -463,7 +463,7 @@ void Neighborlist<RealType>::reset_row_idxs_device(const cudaStream_t stream) {
       num_systems_ * this->max_ixn_count();
 
   k_initialize_array<unsigned int>
-      <<<ceil_divide(MAX_ATOM_BUFFER, DEFAULT_THREADS_PER_BLOCK),
+      <<<ceil_divide(N_ * num_systems_, DEFAULT_THREADS_PER_BLOCK),
          DEFAULT_THREADS_PER_BLOCK, 0, stream>>>(MAX_ATOM_BUFFER, d_ixn_atoms_,
                                                  static_cast<int>(N_));
   gpuErrchk(cudaPeekAtLastError());
@@ -555,7 +555,7 @@ void Neighborlist<RealType>::set_idxs_device(const int NR, const int NC,
       num_systems_ * this->max_ixn_count();
 
   k_initialize_array<unsigned int>
-      <<<ceil_divide(MAX_ATOM_BUFFER, DEFAULT_THREADS_PER_BLOCK),
+      <<<ceil_divide(N_ * num_systems_, DEFAULT_THREADS_PER_BLOCK),
          DEFAULT_THREADS_PER_BLOCK, 0, stream>>>(MAX_ATOM_BUFFER, d_ixn_atoms_,
                                                  static_cast<int>(N_));
   gpuErrchk(cudaPeekAtLastError());
@@ -630,7 +630,7 @@ void Neighborlist<RealType>::set_idxs_device(
       num_systems_ * this->max_ixn_count();
 
   k_initialize_array<unsigned int>
-      <<<ceil_divide(MAX_ATOM_BUFFER, DEFAULT_THREADS_PER_BLOCK),
+      <<<ceil_divide(N_ * num_systems_, DEFAULT_THREADS_PER_BLOCK),
          DEFAULT_THREADS_PER_BLOCK, 0, stream>>>(MAX_ATOM_BUFFER, d_ixn_atoms_,
                                                  static_cast<int>(N_));
   gpuErrchk(cudaPeekAtLastError());
@@ -673,7 +673,8 @@ int Neighborlist<RealType>::total_row_idxs() const {
 // tile that interacts with another it can have TILE_SIZE tile-atom
 // interactions. Note that d_ixn_count_ is only the number of tile-tile
 // interactions, and differs by a factor of TILE_SIZE
-template <typename RealType> int Neighborlist<RealType>::max_ixn_count() const {
+template <typename RealType>
+unsigned long long Neighborlist<RealType>::max_ixn_count() const {
   // The maximum number of tile-atom interactions, equal to # tile-tile
   // interactions multiplied by TILE_SIZE (typically 32).
 
@@ -681,9 +682,9 @@ template <typename RealType> int Neighborlist<RealType>::max_ixn_count() const {
   // of N to compute the size of the upper triangular matrix to support any set
   // of row indices.
   // If computing the dense matrix, need the full NxN buffer
-  const int n_blocks = ceil_divide(max_system_size_, TILE_SIZE);
-  int max_tile_tile_interactions = this->compute_upper_triangular()
-                                       ? (n_blocks * (n_blocks + 1)) / 2
+  const unsigned long long n_blocks = ceil_divide(max_system_size_, TILE_SIZE);
+  unsigned long long max_tile_tile_interactions =
+      this->compute_upper_triangular() ? (n_blocks * (n_blocks + 1)) / 2
                                        : n_blocks * n_blocks;
   // Each tile-tile interaction can have TILE_SIZE tile-atom interactions
   return max_tile_tile_interactions * TILE_SIZE;

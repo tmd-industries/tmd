@@ -174,8 +174,8 @@ void __global__ k_find_block_bounds(
 }
 
 void __global__ k_compact_trim_atoms(
-    const int num_systems, const int N, const int atom_buffer_size_per_system,
-    const int Y,
+    const int num_systems, const int N,
+    const unsigned long long atom_buffer_size_per_system, const int Y,
     const unsigned int
         *system_row_counts, // [num_systems] Number of rows idxs for each system
     const unsigned int *__restrict__ trim_atoms,
@@ -286,9 +286,10 @@ against each col block atom.
 // and column_idxs to be identical and be the values of np.arange(0, N).
 template <typename RealType, bool UPPER_TRIAG>
 void __global__ k_find_blocks_with_ixns(
-    const int num_systems,                    // Number of systems
-    const int N,                              // Total number of atoms
-    const int atom_buffer_size_per_system,    // Number of interactions in each
+    const int num_systems, // Number of systems
+    const int N,           // Total number of atoms
+    const unsigned long long
+        atom_buffer_size_per_system,          // Number of interactions in each
                                               // atom buffer for each system
     const unsigned int *system_column_counts, // [num_systems] Number of columns
                                               // idxs for each system
