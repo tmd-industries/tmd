@@ -17,6 +17,7 @@ import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Callable
+from warnings import warn
 
 import numpy as np
 from numpy.typing import NDArray
@@ -28,7 +29,7 @@ from tmd.fe.system import HostSystem
 from tmd.fe.utils import get_romol_conf
 from tmd.ff import Forcefield, get_water_ff_model
 from tmd.ff.handlers import openmm_deserializer
-from tmd.potentials.jax_utils import idxs_within_cutoff
+from tmd.potentials.jax_utils import idxs_within_cutoff, pairwise_distances
 from tmd.utils import path_to_internal_file
 
 WATER_RESIDUE_NAME = "HOH"
@@ -55,6 +56,45 @@ class HostConfig:
         object.__setattr__(self, "masses", np.asarray(self.masses, dtype=np.float32))
         object.__setattr__(self, "conf", np.asarray(self.conf, dtype=np.float32))
         object.__setattr__(self, "box", np.asarray(self.box, dtype=np.float32))
+
+
+def compute_solvent_box_size(mols: list[Chem.Mol], padding: float = 1.0, min_box_size: float = 3.0) -> float:
+    """Given a set of molecules computes the box dimension of a cube that should be used to construct a solvent box.
+    Important to note that with a barostat enabled, a water box will shrink by up to 20% of its initial size so the padding
+    should be selected carefully.
+
+    It is important to use a consistent box size across different edges for forcefield fitting, but in practice the most
+    efficient manner of running solvent legs would be to compute the box for pairs of ligands.
+
+    Parameters
+    ----------
+    mols: list[Chem.Mol]
+        list of RDKit Molecules
+    padding: float
+        Padding to add on top of the largest diameter of the input molecules. Units in nanometer.
+    min_box_size: float
+        Minimum size of the box that will be returned. Important that the box size is large enough
+        that the box is at least 2x the nonbonded cutoff. Defaults to 3 nanometer.
+
+    Returns
+    -------
+        Cube dimension
+            The length of a cube, in nanometers, that should be passed to build_water_system
+    """
+    if padding < 0.0:
+        raise ValueError(f"Padding must be at least 0.0, got {padding}")
+    max_dimension = 0.0
+    for mol in mols:
+        max_dist = pairwise_distances(get_romol_conf(mol))
+        max_dimension = max(max_dist.max(), max_dimension)
+    # Add twice the padding
+    box_size = max_dimension + (2 * padding)
+    if box_size < min_box_size:
+        warn(
+            "Box size estimated to be {box_size:.1f}, below minimum size of {min_box_size:.1f}. Setting to minimum size"
+        )
+        box_size = min_box_size
+    return box_size
 
 
 def verify_pdb_structure(pdb_file: app.PDBFile | str, ff: Forcefield, distance_threshold: float = 0.01):
