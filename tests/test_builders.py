@@ -16,6 +16,7 @@
 from copy import deepcopy
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from warnings import catch_warnings
 
 import jax
 import numpy as np
@@ -662,3 +663,17 @@ def test_compute_solvent_box_size():
 
     water_system = build_water_system(box_size, DEFAULT_WATER_FF, mols=mols, box_margin=0.0)
     np.testing.assert_allclose(np.diag(water_system.box), box_size, atol=0.45)
+
+
+@pytest.mark.nogpu
+def test_compute_solvent_box_size_methane():
+    # Load a very small molecule and make sure that the box size returned is reasonable.
+    methane = ligand_from_smiles("C")
+
+    with catch_warnings(record=True) as w:
+        box_size = compute_solvent_box_size([methane])
+    assert len(w) == 1
+    assert any("Box size estimated to be " in str(warn.message) for warn in w)
+
+    water_system = build_water_system(box_size, DEFAULT_WATER_FF, mols=[methane], box_margin=0.0)
+    assert box_size > 2 * water_system.host_system.nonbonded_all_pairs.potential.cutoff

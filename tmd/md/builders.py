@@ -17,6 +17,7 @@ import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Callable
+from warnings import warn
 
 import numpy as np
 from numpy.typing import NDArray
@@ -57,7 +58,7 @@ class HostConfig:
         object.__setattr__(self, "box", np.asarray(self.box, dtype=np.float32))
 
 
-def compute_solvent_box_size(mols: list[Chem.Mol], padding: float = 1.0) -> float:
+def compute_solvent_box_size(mols: list[Chem.Mol], padding: float = 1.0, min_box_size: float = 3.0) -> float:
     """Given a set of molecules computes the box dimension of a cube that should be used to construct a solvent box.
     Important to note that with a barostat enabled, a water box will shrink by up to 20% of its initial size so the padding
     should be selected carefully.
@@ -71,6 +72,9 @@ def compute_solvent_box_size(mols: list[Chem.Mol], padding: float = 1.0) -> floa
         list of RDKit Molecules
     padding: float
         Padding to add on top of the largest diameter of the input molecules. Units in nanometer.
+    min_box_size: float
+        Minimum size of the box that will be returned. Important that the box size is large enough
+        that the box is at least 2x the nonbonded cutoff. Defaults to 3 nanometer.
 
     Returns
     -------
@@ -84,7 +88,13 @@ def compute_solvent_box_size(mols: list[Chem.Mol], padding: float = 1.0) -> floa
         max_dist = pairwise_distances(get_romol_conf(mol))
         max_dimension = max(max_dist.max(), max_dimension)
     # Add twice the padding
-    return max_dimension + (2 * padding)
+    box_size = max_dimension + (2 * padding)
+    if box_size < min_box_size:
+        warn(
+            "Box size estimated to be {box_size:.1f}, below minimum size of {min_box_size:.1f}. Setting to minimum size"
+        )
+        box_size = min_box_size
+    return box_size
 
 
 def verify_pdb_structure(pdb_file: app.PDBFile | str, ff: Forcefield, distance_threshold: float = 0.01):
