@@ -656,7 +656,7 @@ def test_compute_solvent_box_size():
     box_size = compute_solvent_box_size(mols, padding=padding)
     assert box_size > 4.0
 
-    max_mol_dimension = compute_solvent_box_size(mols, padding=0.0)
+    max_mol_dimension = compute_solvent_box_size(mols, padding=0.0, min_box_size=0.0)
 
     # If padding is zero, should be different by 2x padding
     assert max_mol_dimension == box_size - (2 * padding)
