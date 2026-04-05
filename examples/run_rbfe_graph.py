@@ -36,7 +36,7 @@ def main():
     parser.add_argument("--pdb_path", help="Path to pdb file containing structure")
     parser.add_argument("--mps_workers", type=int, default=1, help="Number of MPS processes per GPU")
     parser.add_argument("--n_eq_steps", default=200_000, type=int, help="Number of steps to perform equilibration")
-    parser.add_argument("--n_frames", default=2000, type=int, help="Number of frames to generation")
+    parser.add_argument("--n_frames", default=2000, type=int, help="Number of frames to simulate")
     parser.add_argument("--steps_per_frame", default=400, type=int, help="Steps per frame")
     parser.add_argument(
         "--n_windows", default=DEFAULT_NUM_WINDOWS, type=int, help="Max number of windows from bisection"

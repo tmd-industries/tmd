@@ -2,7 +2,7 @@ import pickle
 import time
 from argparse import ArgumentParser
 from datetime import datetime
-from functools import cached_property, partial
+from functools import partial
 from pathlib import Path
 
 import jax
@@ -16,6 +16,8 @@ from rdkit import Chem
 
 # This is needed for pickled mols to preserve their properties
 Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
+
+from rbfe_common import COMPLEX_LEG, SOLVENT_LEG, VACUUM_LEG
 
 from tmd.constants import DEFAULT_FF, DEFAULT_TEMP
 from tmd.fe.free_energy import (
@@ -34,56 +36,38 @@ from tmd.fe.rbfe import (
     setup_initial_states,
     setup_optimized_host,
 )
-from tmd.fe.rest.single_topology import SingleTopologyREST
+from tmd.fe.rest.single_topology import REST_REGION_ATOM_FLAG, SingleTopologyREST
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
-from tmd.md.builders import HostConfig, build_water_system
+from tmd.md.builders import (
+    HostConfig,
+    build_protein_system,
+    build_water_system,
+    compute_solvent_box_size,
+    verify_pdb_structure,
+)
 from tmd.parallel.client import AbstractFileClient, CUDAMPSPoolClient, FileClient, iterate_completed_futures
 from tmd.parallel.utils import get_gpu_count
 
 
-class IdentitySTRest(SingleTopologyREST):
-    # Overriden to make all atoms part of the REST region (probably too aggressive)
-    @cached_property
-    def base_rest_region_atom_idxs(self) -> set[int]:
-        """Returns the set of indices of atoms in the combined ligand that are in the REST region.
-
-        Here the REST region is defined to include combined ligand atoms involved in bond, angle, or improper torsion
-        interactions that differ in the end states. Note that proper torsions are omitted from this heuristic as this
-        tends to result in larger REST regions than seem desirable.
-        """
-
-        aligned_potentials = [
-            self.aligned_bond,
-            self.aligned_angle,
-            self.aligned_improper,
-        ]
-
-        idxs = {
-            int(idx)
-            for aligned in aligned_potentials
-            for idxs in aligned.idxs
-            for idx in idxs  # type: ignore[attr-defined]
-        }
-
-        # Ensure all dummy atoms are included in the REST region
-        idxs |= self.get_dummy_atoms_a()
-        idxs |= self.get_dummy_atoms_b()
-
-        return idxs
-
-
 def generate_rest_hrex_result(
-    st: IdentitySTRest, md_params: MDParams, host_config: HostConfig | None, n_windows: int, min_overlap: float
+    st: SingleTopologyREST, md_params: MDParams, host_config: HostConfig | None, n_windows: int, min_overlap: float
 ) -> HREXSimulationResult:
     # You could also do 0.0 -> 1.0 to get twice the endstates
-    lambda_interval = (0.0, 0.5)
-    lambda_min, lambda_max = lambda_interval[0], lambda_interval[1]
+    lambda_min = 0.0
+    lambda_max = 0.5
+    lambda_interval = (lambda_min, lambda_max)
     temperature = DEFAULT_TEMP
 
     lambda_grid = bisection_lambda_schedule(n_windows, lambda_interval=lambda_interval)
     initial_states = setup_initial_states(
-        st, host_config, temperature, lambda_grid, md_params.seed, False, min_cutoff=0.7
+        st,
+        host_config,
+        temperature,
+        lambda_grid,
+        md_params.seed,
+        False,
+        min_cutoff=0.7 if host_config is not None else None,
     )
 
     make_initial_state_fn = partial(
@@ -124,51 +108,47 @@ def simulate_rest(
     n_windows: int,
     min_overlap: float,
     leg: str,
+    pdb_path: str | None,
 ):
     Path(file_client.full_path(output_path)).mkdir(parents=True, exist_ok=True)
     np.random.seed(md_params.seed)
     n_ligand_atoms = mol.GetNumAtoms()
-    core = np.tile(np.arange(n_ligand_atoms)[:, None], (1, 2))
+
+    # Ensure all atoms are part of the REST region
+    for atom in mol.GetAtoms():
+        atom.SetBoolProp(REST_REGION_ATOM_FLAG, True)
+
+    identity_core = np.tile(np.arange(n_ligand_atoms)[:, None], (1, 2))
     assert md_params.hrex_params is not None and md_params.hrex_params.rest_params is not None
-    st = IdentitySTRest(
+    st = SingleTopologyREST(
         mol,
         mol,
-        core,
+        identity_core,
         ff,
         md_params.hrex_params.rest_params.max_temperature_scale,
         temperature_scale_interpolation=md_params.hrex_params.rest_params.temperature_scale_interpolation,
     )
 
     host_config = None
-    if leg == "solvent":
-        host_config = build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
+    if leg == SOLVENT_LEG:
+        host_config = build_water_system(compute_solvent_box_size([mol]), ff.water_ff, mols=[mol], box_margin=0.1)
         host_config = setup_optimized_host(host_config, [mol], ff)
+    elif leg == COMPLEX_LEG:
+        host_config = build_protein_system(pdb_path, ff.protein_ff, ff.water_ff, mols=[mol], box_margin=0.1)
+        host_config = setup_optimized_host(host_config, [mol], ff)
+    else:
+        assert leg == VACUUM_LEG
     start = time.perf_counter()
     res = generate_rest_hrex_result(st, md_params, host_config, n_windows, min_overlap)
     took = time.perf_counter() - start
 
-    pred_dg = float(np.sum(res.final_result.dGs))
-    pred_dg_err = float(np.linalg.norm(res.final_result.dG_errs))
-    print(
-        " | ".join(
-            [
-                f"{get_mol_name(mol)} (kJ/mol)",
-                f"{pred_dg:.2f} +- {pred_dg_err:.2f}",
-                f"{took:.0f} Seconds",
-            ]
-        ),
-    )
-
     summary_data = {
         "time": took,
-        "pred_dg": pred_dg,
-        "pred_dg_err": pred_dg_err,
         "overlaps": res.final_result.overlaps,
         "n_windows": len(res.final_result.initial_states),
+        "bisected_windows": len(res.intermediate_results[-1].initial_states),
+        "normalized_kl_divergence": res.hrex_diagnostics.normalized_kl_divergence,
     }
-    if isinstance(res, HREXSimulationResult):
-        summary_data["bisected_windows"] = len(res.intermediate_results[-1].initial_states)
-        summary_data["normalized_kl_divergence"] = res.hrex_diagnostics.normalized_kl_divergence
 
     np.savez_compressed(Path(file_client.full_path(output_path / "summary.npz")), **summary_data)  # type:ignore
 
@@ -187,13 +167,14 @@ def simulate_rest(
 
 
 def main():
-    parser = ArgumentParser(description="Run REST on compounds in solvent")
+    parser = ArgumentParser(description="Generate enhanced sampling endstate trajectories for ligands using REST")
     parser.add_argument("--sdf_path", help="Path to sdf file containing mols", required=True)
+    parser.add_argument("--pdb_path", help="Path to pdb file containing structure")
     parser.add_argument("--mps_workers", type=int, default=1, help="Number of MPS processes per GPU")
     parser.add_argument("--n_eq_steps", default=200_000, type=int, help="Number of steps to perform equilibration")
-    parser.add_argument("--n_frames", default=2000, type=int, help="Number of frames to generation")
+    parser.add_argument("--n_frames", default=2000, type=int, help="Number of frames to simulate")
     parser.add_argument("--steps_per_frame", default=400, type=int, help="Steps per frame")
-    parser.add_argument("--leg", default="solvent", choices=["vacuum", "solvent"])
+    parser.add_argument("--leg", default=VACUUM_LEG, choices=[VACUUM_LEG, SOLVENT_LEG, COMPLEX_LEG])
     parser.add_argument(
         "--n_windows", default=DEFAULT_NUM_WINDOWS, type=int, help="Max number of windows from bisection"
     )
@@ -232,6 +213,13 @@ def main():
     )
     args = parser.parse_args()
 
+    ff = Forcefield.load_from_file(args.forcefield)
+
+    if COMPLEX_LEG == args.leg:
+        assert args.pdb_path is not None, "Must provide PDB to run complex leg"
+    if args.pdb_path is not None:
+        verify_pdb_structure(args.pdb_path, ff)
+
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
     np.random.seed(args.seed)
 
@@ -248,8 +236,6 @@ def main():
             writer.write(mol)
 
     file_client = FileClient(dest_dir)
-
-    ff = Forcefield.load_from_file(args.forcefield)
 
     with open(dest_dir / "ff.py", "w") as ofs:
         ofs.write(ff.serialize())
@@ -293,6 +279,7 @@ def main():
             args.n_windows,
             args.min_overlap,
             args.leg,
+            args.pdb_path,
         )
         futures.append(fut)
     for fut in iterate_completed_futures(futures):
