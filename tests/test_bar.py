@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,7 +39,7 @@ from tmd.fe.bar import (
     works_from_ukln,
 )
 
-pytestmark = [pytest.mark.nocuda]
+pytestmark = [pytest.mark.nogpu]
 
 
 def make_gaussian_ukln_example(

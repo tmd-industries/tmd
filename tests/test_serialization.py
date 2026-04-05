@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +20,7 @@ from tmd.ff.handlers import bonded, nonbonded
 from tmd.ff.handlers.deserialize import deserialize_handlers
 from tmd.ff.handlers.serialize import bin_to_str
 
-pytestmark = [pytest.mark.nocuda]
+pytestmark = [pytest.mark.nogpu]
 
 
 def test_harmonic_bond():
