@@ -51,6 +51,7 @@ from tmd.fe.plots import (
     plot_hrex_transition_matrix,
 )
 from tmd.fe.rest.single_topology import SingleTopologyREST
+from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
 from tmd.fe.single_topology import AtomMapFlags, SingleTopology, assert_default_system_constraints
 from tmd.fe.utils import bytes_to_id, get_mol_name, get_romol_conf
 from tmd.ff import Forcefield
@@ -938,7 +939,6 @@ def estimate_relative_free_energy_bisection_hrex_impl(
     if mode_flag is not None:
         # TBD: May want to disable batching if it is clear that it would trigger an OOM
         if mode_flag.lower() == "on":
-            warnings.warn("Turning on batch mode, but batch mode is already on")
             batch_simulations = True
         elif mode_flag.lower() == "off":
             warnings.warn("Turning off batch mode")
@@ -989,7 +989,10 @@ def estimate_relative_free_energy_bisection_hrex_impl(
         mean_final_barostat_volume_scale_factor = get_mean_final_barostat_volume_scale_factor(trajectories_by_state)
         assert (mean_final_barostat_volume_scale_factor is not None) == all(has_barostat_by_state)
 
+        summed_pot = None
+
         def get_initial_state(lamb: float) -> InitialState:
+            nonlocal summed_pot
             state_idx = get_nearest_state_idx(lamb, initial_states)
             nearest_state = initial_states[state_idx]
             traj = trajectories_by_state[state_idx]
@@ -999,9 +1002,19 @@ def estimate_relative_free_energy_bisection_hrex_impl(
                 # If the lambda value is different, reconstruct the initial state to the correct parameters
                 state = make_initial_state_fn(lamb)
 
+                # Setup a single summed pot for checking forces
+                if summed_pot is None:
+                    summed_pot = state.to_bound_impl().get_potential()
+
                 # Verify that the forces of the nearest lambda value's frames are stable, since frames were not generated
                 # with the same parameters
-                du_dx, _ = state.to_bound_impl().execute(traj.frames[-1], traj.boxes[-1], compute_u=False)
+                du_dx, _, _ = summed_pot.execute(
+                    traj.frames[-1],
+                    np.concatenate([np.asarray(bp.params).reshape(-1) for bp in state.potentials]),
+                    traj.boxes[-1],
+                    compute_u=False,
+                    compute_du_dp=False,
+                )
                 minimizer.check_force_norm(-du_dx)
             # Use equilibrated samples and the average of the final barostat volume scale factors from bisection phase to
             # initialize states for HREX
@@ -1033,6 +1046,9 @@ def estimate_relative_free_energy_bisection_hrex_impl(
             )
         else:
             initial_states_hrex = [get_initial_state(s.lamb) for s in initial_states]
+
+        # Delete the summed potential to reduce GPU memory usage
+        del summed_pot
 
         # Second phase: sample initial states determined by bisection using HREX
         pair_bar_result, trajectories_by_state, hrex_diagnostics, ws_diagnostics = run_sims_hrex(
@@ -1147,6 +1163,10 @@ def estimate_relative_free_energy_bisection_hrex(
     if temperature != DEFAULT_TEMP:
         warnings.warn(f"Using non Standard temperature ({DEFAULT_TEMP:.1f}) of {temperature:.1f}")
 
+    if hrex_params.rest_params is not None and hrex_params.rest_params.rest_region_smarts is not None:
+        for patt in hrex_params.rest_params.rest_region_smarts:
+            assign_rest_atoms_from_smarts(mol_a, patt)
+            assign_rest_atoms_from_smarts(mol_b, patt)
     single_topology = (
         SingleTopologyREST(
             mol_a,
@@ -1156,7 +1176,7 @@ def estimate_relative_free_energy_bisection_hrex(
             max_temperature_scale=hrex_params.rest_params.max_temperature_scale,
             temperature_scale_interpolation=hrex_params.rest_params.temperature_scale_interpolation,
         )
-        if hrex_params.rest_params
+        if hrex_params.rest_params is not None
         else SingleTopology(mol_a, mol_b, core, ff)
     )
 
@@ -1240,11 +1260,11 @@ def run_solvent(
     n_windows: Optional[int] = None,
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = None,
+    box_width: float = 4.0,
 ):
     if md_params is not None and md_params.water_sampling_params is not None:
         md_params = replace(md_params, water_sampling_params=None)
         warnings.warn("Solvent simulations don't benefit from water sampling, disabling")
-    box_width = 4.0
     solvent_host_config = builders.build_water_system(
         box_width, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
     )

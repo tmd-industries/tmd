@@ -14,19 +14,22 @@
 # limitations under the License.
 
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Callable
+from warnings import warn
 
 import numpy as np
 from numpy.typing import NDArray
 from openmm import app, openmm, unit
 from rdkit import Chem
+from scipy.spatial import KDTree
 
 from tmd.fe.system import HostSystem
 from tmd.fe.utils import get_romol_conf
-from tmd.ff import get_water_ff_model
+from tmd.ff import Forcefield, get_water_ff_model
 from tmd.ff.handlers import openmm_deserializer
-from tmd.potentials.jax_utils import idxs_within_cutoff
+from tmd.potentials.jax_utils import idxs_within_cutoff, pairwise_distances
 from tmd.utils import path_to_internal_file
 
 WATER_RESIDUE_NAME = "HOH"
@@ -55,6 +58,79 @@ class HostConfig:
         object.__setattr__(self, "box", np.asarray(self.box, dtype=np.float32))
 
 
+def compute_solvent_box_size(mols: list[Chem.Mol], padding: float = 1.0, min_box_size: float = 3.0) -> float:
+    """Given a set of molecules computes the box dimension of a cube that should be used to construct a solvent box.
+    Important to note that with a barostat enabled, a water box will shrink by up to 20% of its initial size so the padding
+    should be selected carefully.
+
+    It is important to use a consistent box size across different edges for forcefield fitting, but in practice the most
+    efficient manner of running solvent legs would be to compute the box for pairs of ligands.
+
+    Parameters
+    ----------
+    mols: list[Chem.Mol]
+        list of RDKit Molecules
+    padding: float
+        Padding to add on top of the largest diameter of the input molecules. Units in nanometer.
+    min_box_size: float
+        Minimum size of the box that will be returned. Important that the box size is large enough
+        that the box is at least 2x the nonbonded cutoff. Defaults to 3 nanometer.
+
+    Returns
+    -------
+        Cube dimension
+            The length of a cube, in nanometers, that should be passed to build_water_system
+    """
+    if padding < 0.0:
+        raise ValueError(f"Padding must be at least 0.0, got {padding}")
+    max_dimension = 0.0
+    for mol in mols:
+        max_dist = pairwise_distances(get_romol_conf(mol))
+        max_dimension = max(max_dist.max(), max_dimension)
+    # Add twice the padding
+    box_size = max_dimension + (2 * padding)
+    if box_size < min_box_size:
+        warn(
+            "Box size estimated to be {box_size:.1f}, below minimum size of {min_box_size:.1f}. Setting to minimum size"
+        )
+        box_size = min_box_size
+    return box_size
+
+
+def verify_pdb_structure(pdb_file: app.PDBFile | str, ff: Forcefield, distance_threshold: float = 0.01):
+    """Verify that a PDB file does not contain any clashes using Scipy.
+
+    TMD assumes that structures have been prepared upstream and are free of clashes. Default TMD minimization does
+    not attempt to minimize protein-protein clashes.
+
+    Parameters
+    ----------
+    pdb_file: app.PDBFile or string
+        PDBFile or path to the PDB
+    ff: Forcefield
+        Forcefield that will be used with the protein
+    distance_threshold: float
+        Distance between atoms that qualifies as a clash, units in nanometers. Defaults to 0.01
+
+    Raises
+    ------
+        RuntimeError:
+            Failed to prepare the system or the system has a clash.
+    """
+
+    try:
+        host_config = load_pdb_system(pdb_file, ff.protein_ff, ff.water_ff)
+    except Exception as e:
+        raise RuntimeError("Unable to load PDB system") from e
+
+    kd_tree = KDTree(host_config.conf)
+
+    clashy_atoms = kd_tree.query_pairs(distance_threshold)
+
+    if len(clashy_atoms) > 0:
+        raise RuntimeError(f"PDB structure contains clashing pairs of atoms: {clashy_atoms}")
+
+
 def strip_units(coords) -> NDArray[np.float64]:
     return np.array(coords.value_in_unit_system(unit.md_unit_system))
 
@@ -70,7 +146,9 @@ def get_ion_residue_templates(modeller) -> dict[app.Residue, str]:
     """
     residue_templates = {}
     for res_name in (SODIUM_ION_RESIDUE, CHLORINE_ION_RESIDUE, MAGNESIUM_ION_RESIDUE, DUMMY_ATOM_TEMPLATE):
-        residue_templates.update({res: res_name for res in modeller.getTopology().residues() if res.name == res_name})
+        residue_templates.update(
+            {res: res_name for res in modeller.getTopology().residues() if res.name.strip() == res_name}
+        )
     return residue_templates
 
 
@@ -188,6 +266,19 @@ def replace_clashy_waters(
     assert num_system_atoms == modeller.topology.getNumAtoms(), "replace_clashy_waters changed the number of atoms"
 
 
+def _iterate_water_residues(omm_topology: app.Topology) -> Iterator[app.Residue]:
+    """Iterator of water residues in the OpenMM topology"""
+    for residue in omm_topology.residues():
+        if residue.name == WATER_RESIDUE_NAME:
+            yield residue
+
+
+def count_water_atoms(omm_topology: app.Topology) -> int:
+    """Count the number of water atoms in an OpenMM Topology"""
+    water_res = _iterate_water_residues(omm_topology)
+    return sum([len(residue) for residue in water_res])
+
+
 def make_waters_contiguous(modeller):
     """Modifies the OpenMM modeller and topology such that waters are contiguous. Done to ensure that water
     sampling is possible in downstream code.
@@ -199,7 +290,7 @@ def make_waters_contiguous(modeller):
     modeller: app.Modeller
         Modeller to update in place
     """
-    water_residues = [residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]
+    water_residues = list(_iterate_water_residues(modeller.topology))
     water_indices = np.concatenate([[a.index for a in res.atoms()] for res in water_residues])
     if np.all(np.diff(water_indices) == 1):
         return
@@ -207,7 +298,7 @@ def make_waters_contiguous(modeller):
     num_system_atoms = modeller.topology.getNumAtoms()
 
     water_positions = strip_units(modeller.positions)[water_indices]
-    modeller.delete([atom for res in water_residues for atom in res.atoms()])
+    modeller.delete(water_residues)
     topology = app.Topology()
     water_chain = topology.addChain("W")
     for res in water_residues:
@@ -313,9 +404,7 @@ def solvate_modeller(
         bad_chains = [chain for chain in current_topo.chains() if chain.id == dummy_chain_id]
         modeller.delete(bad_chains)
     try:
-        water_res = next(
-            [atom for atom in res.atoms()] for res in modeller.topology.residues() if res.name == WATER_RESIDUE_NAME
-        )
+        water_res = next(_iterate_water_residues(modeller.topology))
         assert len(water_res) == 3, "Expect water residues to have three atoms"
     except StopIteration:
         pass
@@ -363,10 +452,9 @@ def load_pdb_system(
         raise TypeError("host_pdbfile must be a string or an openmm PDBFile object")
 
     modeller = app.Modeller(host_pdb.topology, host_pdb.positions)
-    host_coords = strip_units(host_pdb.positions)
+    host_coords = strip_units(modeller.positions)
 
-    water_residues_in_pdb = [residue for residue in host_pdb.topology.residues() if residue.name == WATER_RESIDUE_NAME]
-    num_water_atoms = sum([len(list(residue.atoms())) for residue in water_residues_in_pdb])
+    num_water_atoms = count_water_atoms(modeller.topology)
 
     ion_res_templates = get_ion_residue_templates(modeller)
 
@@ -386,9 +474,12 @@ def load_pdb_system(
 
     # Note that getPeriodicBoxVectors() can produce a significantly different box
     # to get_box_from_coords. Use getPeriodicBoxVectors() as it appears to produce smaller
-    # boxes when loading a PDB on its own
+    # boxes when loading a PDB on its own. In some cases OpenMM returns no box, in which case recompute.
     box = host_pdb.topology.getPeriodicBoxVectors()
-    box = strip_units(box)
+    if box is None:
+        box = get_box_from_coords(host_coords)
+    else:
+        box = strip_units(box)
     box += np.eye(3) * box_margin
 
     assert modeller.topology.getNumAtoms() == len(host_coords)
@@ -520,27 +611,23 @@ def build_host_config_from_omm(
         replace_clashy_waters(modeller, box, mols, host_ff, water_model)
     solvated_host_coords = strip_units(modeller.positions)
 
+    # Make sure to modify the modeller and its topology before constructing the system and setting up the ion res templates.
+    # Otherwise the system can become inconsistent with the topology.
+    make_waters_contiguous(modeller)
+
     ion_res_templates = get_ion_residue_templates(modeller)
 
     solvated_omm_host_system = construct_system_func(host_ff, modeller, ion_res_templates)
-
-    make_waters_contiguous(modeller)
 
     assert modeller.topology.getNumAtoms() == solvated_host_coords.shape[0], (
         "Modeller no longer matches number of atoms in the system"
     )
 
-    num_water_atoms = (
-        len([residue for residue in modeller.topology.residues() if residue.name == WATER_RESIDUE_NAME]) * 3
-    )
+    num_water_atoms = count_water_atoms(modeller.topology)
     num_membrane_atoms = 0
     if add_membrane:
         num_membrane_atoms = sum(
-            [
-                len(list(residue.atoms()))
-                for residue in modeller.topology.residues()
-                if residue.name == POPC_RESIDUE_NAME
-            ]
+            [len(residue) for residue in modeller.topology.residues() if residue.name == POPC_RESIDUE_NAME]
         )
 
     (bond, angle, proper, improper, nonbonded), masses = openmm_deserializer.deserialize_system(
@@ -802,7 +889,7 @@ def build_water_system(
 
     # Determine box from the system's coordinates
     box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
-    num_water_atoms = len(solvated_host_coords)
+    num_water_atoms = count_water_atoms(modeller.topology)
 
     return HostConfig(
         host_system=solvated_host_system,

@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, 
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
+from tmd.md.builders import compute_solvent_box_size, verify_pdb_structure
 from tmd.md.exchange.utils import get_radius_of_mol_pair
 from tmd.parallel.client import CUDAPoolClient, FileClient, SerialClient
 from tmd.parallel.utils import get_gpu_count
@@ -84,6 +85,12 @@ def main():
         help="Functional form to use for temperature scale interpolation in REST",
     )
     parser.add_argument(
+        "--rest_smarts_patterns",
+        nargs="+",
+        default=None,
+        help="One or more SMARTS patterns to determine what atoms are in the REST region. If rest_max_temperature_scale is <= 1, this is unused",
+    )
+    parser.add_argument(
         "--output_dir", default=None, help="Directory to output results, else generates a directory based on the time"
     )
     parser.add_argument("--local_md_k", default=10_000.0, type=float, help="Local MD k parameter")
@@ -111,9 +118,12 @@ def main():
         choices=["kcal/mol", "kJ/mol", "uM", "nM"],
         help="Units of the experimental label.",
     )
+    parser.add_argument(
+        "--solvent_padding", default=1.0, type=float, help="Padding to add to solvent boxes, defaults to 1.0 nanometer."
+    )
     args = parser.parse_args()
 
-    if "complex" in args.legs:
+    if COMPLEX_LEG in args.legs:
         assert args.pdb_path is not None, "Must provide PDB to run complex leg"
 
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
@@ -121,6 +131,10 @@ def main():
 
     mol_a = mols_by_name[args.mol_a]
     mol_b = mols_by_name[args.mol_b]
+
+    water_box_size = 4.0
+    if SOLVENT_LEG in args.legs:
+        water_box_size = compute_solvent_box_size([mol_a, mol_b], padding=args.solvent_padding)
 
     output_dir = args.output_dir
     if output_dir is None:
@@ -134,6 +148,9 @@ def main():
 
     ff = Forcefield.load_from_file(args.forcefield)
 
+    if args.pdb_path is not None:
+        verify_pdb_structure(args.pdb_path, ff)
+
     mol_radius = get_radius_of_mol_pair(mol_a, mol_b)
 
     md_params = MDParams(
@@ -143,7 +160,9 @@ def main():
         seed=args.seed,
         hrex_params=HREXParams(
             optimize_target_overlap=args.target_overlap,
-            rest_params=RESTParams(args.rest_max_temperature_scale, args.rest_temperature_scale_interpolation),
+            rest_params=RESTParams(
+                args.rest_max_temperature_scale, args.rest_temperature_scale_interpolation, args.rest_smarts_patterns
+            ),
         ),
         local_md_params=LocalMDParams(
             args.local_md_steps, k=args.local_md_k, min_radius=args.local_md_radius, max_radius=args.local_md_radius
@@ -182,6 +201,7 @@ def main():
             args.min_overlap,
             True,  # Always write out the trajectories
             args.force_overwrite,
+            water_box_size=water_box_size,
         )
         futures.append(fut)
     leg_results = defaultdict(dict)

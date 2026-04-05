@@ -20,6 +20,9 @@ from tmd.fe.rbfe import (
     run_solvent,
     run_vacuum,
 )
+from tmd.fe.rest.plots import plot_rest_region
+from tmd.fe.rest.single_topology import SingleTopologyREST
+from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
 from tmd.fe.utils import get_mol_experimental_value, get_mol_name, plot_atom_mapping_grid
 from tmd.ff import Forcefield
 from tmd.parallel.client import AbstractFileClient
@@ -148,6 +151,7 @@ def run_rbfe_leg(
     min_overlap: float,
     write_trajectories: bool,
     force_overwrite: bool,
+    water_box_size: float = 4.0,
 ) -> dict[str, Any]:
     """Run an RBFE leg (vacuum, solvent, or complex).
 
@@ -194,6 +198,10 @@ def run_rbfe_leg(
         Whether or not to write trajectories
     force_overwrite: bool
         If results already exist, overwrite the results
+    water_box_size: float
+        The size of the water box. Should be large enough to avoid molecules interacting with
+        copies of themselves across PBCs. Use `tmd.md.builders.compute_solvent_box_size` to
+        setup appropriate sizes.
 
     Returns
     -------
@@ -220,6 +228,31 @@ def run_rbfe_leg(
         pickle.dump(core, ofs)
     with open(file_client.full_path(edge_path / "ff.py"), "w") as ofs:
         ofs.write(ff.serialize())
+
+    if (
+        md_params.hrex_params is not None
+        and md_params.hrex_params.rest_params is not None
+        and md_params.hrex_params.rest_params.max_temperature_scale > 1.0
+    ):
+        rest_params = md_params.hrex_params.rest_params
+        # Assign REST region redundantly to ensure the flags are written to mols.sdf
+        if rest_params.rest_region_smarts is not None:
+            for patt in rest_params.rest_region_smarts:
+                assign_rest_atoms_from_smarts(mol_a, patt)
+                assign_rest_atoms_from_smarts(mol_b, patt)
+
+        single_topology = SingleTopologyREST(
+            mol_a,
+            mol_b,
+            core,
+            ff,
+            max_temperature_scale=rest_params.max_temperature_scale,
+            temperature_scale_interpolation=rest_params.temperature_scale_interpolation,
+        )
+        file_client.store(
+            edge_path / "rest_region.svg",
+            plot_rest_region(single_topology).encode("utf-8"),
+        )
     with Chem.SDWriter(file_client.full_path(edge_path / "mols.sdf")) as writer:
         writer.write(mol_a)
         writer.write(mol_b)
@@ -248,6 +281,7 @@ def run_rbfe_leg(
             md_params,
             n_windows=n_windows,
             min_overlap=min_overlap,
+            box_width=water_box_size,
         )
     elif leg_name == COMPLEX_LEG:
         assert pdb_path is not None, "No pdb data provided"

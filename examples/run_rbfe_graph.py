@@ -23,6 +23,7 @@ from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, 
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
+from tmd.md.builders import compute_solvent_box_size, verify_pdb_structure
 from tmd.md.exchange.utils import get_radius_of_mol_pair
 from tmd.parallel.client import CUDAMPSPoolClient, FileClient, iterate_completed_futures
 from tmd.parallel.utils import get_gpu_count
@@ -69,6 +70,12 @@ def main():
         help="Functional form to use for temperature scale interpolation in REST",
     )
     parser.add_argument(
+        "--rest_smarts_patterns",
+        nargs="+",
+        default=None,
+        help="One or more SMARTS patterns to determine what atoms are in the REST region. If rest_max_temperature_scale is <= 1, this is unused",
+    )
+    parser.add_argument(
         "--output_dir", default=None, help="Directory to output results, else generates a directory based on the time"
     )
     parser.add_argument("--local_md_k", default=10_000.0, type=float, help="Local MD k parameter")
@@ -99,9 +106,12 @@ def main():
         choices=["kcal/mol", "kJ/mol", "uM", "nM"],
         help="Units of the experimental label.",
     )
+    parser.add_argument(
+        "--solvent_padding", default=1.0, type=float, help="Padding to add to solvent boxes, defaults to 1.0 nanometer."
+    )
     args = parser.parse_args()
 
-    if "complex" in args.legs:
+    if COMPLEX_LEG in args.legs:
         assert args.pdb_path is not None, "Must provide PDB to run complex leg"
 
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
@@ -130,12 +140,19 @@ def main():
 
     ff = Forcefield.load_from_file(args.forcefield)
 
+    if args.pdb_path is not None:
+        verify_pdb_structure(args.pdb_path, ff)
+
     with open(dest_dir / "ff.py", "w") as ofs:
         ofs.write(ff.serialize())
 
     num_gpus = args.n_gpus
     if num_gpus is None:
         num_gpus = get_gpu_count()
+
+    water_box_size = 4.0
+    if SOLVENT_LEG in args.legs:
+        water_box_size = compute_solvent_box_size(list(mols_by_name.values()), padding=args.solvent_padding)
 
     # Set max_tasks_per_child=1 to reduce potential for accumulating memory
     pool = CUDAMPSPoolClient(num_gpus, workers_per_gpu=args.mps_workers, max_tasks_per_child=1)
@@ -158,7 +175,11 @@ def main():
             seed=args.seed,
             hrex_params=HREXParams(
                 optimize_target_overlap=args.target_overlap,
-                rest_params=RESTParams(args.rest_max_temperature_scale, args.rest_temperature_scale_interpolation),
+                rest_params=RESTParams(
+                    args.rest_max_temperature_scale,
+                    args.rest_temperature_scale_interpolation,
+                    args.rest_smarts_patterns,
+                ),
             ),
             local_md_params=LocalMDParams(
                 args.local_md_steps,
@@ -189,6 +210,7 @@ def main():
                 args.min_overlap,
                 args.store_trajectories,
                 args.force_overwrite,
+                water_box_size=water_box_size,
             )
             future_id_to_leg[fut.id] = (edge["mol_a"], edge["mol_b"], leg_name)
             futures.append(fut)
