@@ -322,13 +322,14 @@ class CUDAMPSPoolClient(ProcessPoolClient):
             "Fewer available GPUs than GPUs requested, check CUDA_VISIBLE_DEVICES"
         )
         assert len(self._gpu_list) <= gpus, "More GPUs requested than the machine has, check CUDA_VISIBLE_DEVICES"
-        try:
-            # Timeout necessary, since sometimes cuda MPS will hang
-            output = check_output(["nvidia-cuda-mps-control"], input=b"get_server_list", timeout=10.0)
-        except (FileNotFoundError, CalledProcessError):
-            output = ""
-        if len(output.strip()) == 0:
-            warnings.warn("Cuda MPS doesn't appear to be running, GPU performance may be slower than expected")
+        if self.workers_per_gpu > 1:
+            try:
+                # Timeout necessary, since sometimes cuda MPS will hang
+                output = check_output(["nvidia-cuda-mps-control"], input=b"get_server_list", timeout=10.0)
+            except (FileNotFoundError, CalledProcessError):
+                output = ""
+            if len(output.strip()) == 0:
+                warnings.warn("Cuda MPS doesn't appear to be running, GPU performance may be slower than expected")
 
 
 class BinaryFutureWrapper:
