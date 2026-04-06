@@ -4,8 +4,8 @@ from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.ff import Forcefield
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 
-# Plotting code should not depend on CUDA
-pytestmark = [pytest.mark.nocuda]
+# Plotting code should not depend on having a GPU
+pytestmark = [pytest.mark.nogpu]
 
 
 from tmd.fe.rest.plots import plot_rest_region
