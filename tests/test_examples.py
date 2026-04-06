@@ -864,7 +864,7 @@ def test_run_rbfe_legs_local(
 
 @pytest.mark.nightly
 @pytest.mark.parametrize("system", ["dhfr", "hif2a-rbfe"])
-def test_dhfr_mps_benchmark(system):
+def test_dhfr_benchmark(system):
     with temporary_working_dir() as temp_dir:
-        proc = run_example("mps_benchmark.py", ["--processes", "1", "--local_md", "--system", system], cwd=temp_dir)
+        proc = run_example("benchmark.py", ["--processes", "1", "2", "--local_md", "--system", system], cwd=temp_dir)
         assert proc.returncode == 0
