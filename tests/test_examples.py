@@ -671,28 +671,28 @@ def test_rest_ligand_flexibility(
 ):
     leg_hashes = {
         (False, "vacuum"): (
-            "5812eb125a0ec707bb169536f506cef18f53fe4c92f59ed0c889ab669dbcde66",
-            "5812eb125a0ec707bb169536f506cef18f53fe4c92f59ed0c889ab669dbcde66",
+            "83ba5b557641ca5f82c0424cc71ea5b40067a9cdc128665b4e68e1b992b9599d",
+            "98f631766cead3e4f58cdd2e7e51764fb36b07aa3ab40aa6281780d5d041660b",
         ),
         (False, "solvent"): (
-            "f0d5a9472eb10fb3d8aaf127f7fc1b341e84e5e5c2030bdc1ba416ccedb66b59",
-            "f0d5a9472eb10fb3d8aaf127f7fc1b341e84e5e5c2030bdc1ba416ccedb66b59",
+            "c5106f93a51d4965391ee35de5625a12fcc4a806a8d1dcd9c4aa5e78f19795c1",
+            "c9c3447cd13d809c1da3d03ccbb82fa53dd43c46e1a0bbcea3c824069a4580e5",
         ),
         (False, "complex"): (
-            "428f5b97fd2208589e2dc82d85cfa50ca0b97ed33e25bbe1d303981aa25ccd7f",
-            "428f5b97fd2208589e2dc82d85cfa50ca0b97ed33e25bbe1d303981aa25ccd7f",
+            "373dc0f5d65af1a8f21083ccc4909762da8da28475120c7f4f8f37847c4a0b3c",
+            "15b1696749e85b4a5051be0d412a66764ccc10a5604828611465c3b9bace13ac",
         ),
         (True, "vacuum"): (
-            "b6c75d5d37939196c3271e7db56299b07e8e9b856ace03e4d9b42f11cf30c220",
-            "b6c75d5d37939196c3271e7db56299b07e8e9b856ace03e4d9b42f11cf30c220",
+            "2be4b9aaa6dd2a1dc32db091270094c72bd48dfafc12091ca133940e41aed252",
+            "b1b2526fdcddd4ee761e6c3abd1d254da4a1f4ff40d45cc5b687a18e2a5a89af",
         ),
         (True, "solvent"): (
-            "85f80b452dddb81c3ae5264b6637a8a28af1cd9f7506da86a9c96cd6142a4622",
-            "85f80b452dddb81c3ae5264b6637a8a28af1cd9f7506da86a9c96cd6142a4622",
+            "c419be1a61d73efebc283962d093dba7de3a8b3bf90fc9428d736d93acf1af91",
+            "f82daa487792f6d4714e5a5a470260de90ae93ea02cb490116ed3bfdafc4f30c",
         ),
         (True, "complex"): (
-            "9a8c2ad004f8dbe2183b389401f0bc0f8faf03f25bc4acb88de9e3c6010ef2a2",
-            "9a8c2ad004f8dbe2183b389401f0bc0f8faf03f25bc4acb88de9e3c6010ef2a2",
+            "dd35ccb527ccced95f863d977bdf288eca4226a04b05a29c02c34e0c194d3805",
+            "b065dd150637262e105e85f06455cb76b441a0b026ac82e54c9e1dc279d29dfa",
         ),
     }
 
