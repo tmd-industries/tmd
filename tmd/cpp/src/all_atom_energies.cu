@@ -30,7 +30,6 @@ std::vector<RealType> compute_atom_by_atom_energies(
   const DeviceBuffer<RealType> d_params(params);
   const DeviceBuffer<RealType> d_box(box);
   DeviceBuffer<RealType> d_energy_output(N * target_atoms.size());
-  RealType cutoff_squared = cutoff * cutoff;
 
   cudaStream_t stream = static_cast<cudaStream_t>(0);
 
@@ -40,7 +39,7 @@ std::vector<RealType> compute_atom_by_atom_energies(
   k_atom_by_atom_energies<RealType><<<dimGrid, tpb, 0, stream>>>(
       N, static_cast<int>(d_target_atoms.length), d_target_atoms.data,
       nullptr, // Use the provided coords to compute the energies
-      d_coords.data, d_params.data, d_box.data, nb_beta, cutoff_squared,
+      d_coords.data, d_params.data, d_box.data, nb_beta, cutoff,
       d_energy_output.data);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaStreamSynchronize(stream));

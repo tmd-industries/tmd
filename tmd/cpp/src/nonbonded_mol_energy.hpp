@@ -28,7 +28,7 @@ private:
   const int N_;
   const int num_target_mols_;
   const RealType beta_;
-  const RealType cutoff_squared_;
+  const RealType cutoff_;
 
   DeviceBuffer<int> d_target_atom_idxs_;
   DeviceBuffer<int> d_target_mol_idxs_;

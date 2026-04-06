@@ -103,19 +103,17 @@ void __global__ k_nonbonded_precomputed(
 
       if (q_ij != 0) {
 
-        RealType damping_factor;
-        RealType es_factor = real_es_factor(beta, d_ij, inv_dij,
-                                            inv_dij * inv_dij, damping_factor);
+        // bare Coulomb: V = q_ij / r, dV/dr = -q_ij / r^2
+        RealType inv_d2ij = inv_dij * inv_dij;
 
         if (COMPUTE_U) {
           // energies
-          RealType coulomb = q_ij * inv_dij;
-          RealType nrg = damping_factor * coulomb;
+          RealType nrg = q_ij * inv_dij;
           energy += FLOAT_TO_FIXED_ENERGY<RealType>(nrg);
         }
 
         if (COMPUTE_DU_DX || COMPUTE_DU_DP) {
-          RealType du_dr = q_ij * es_factor;
+          RealType du_dr = -q_ij * inv_d2ij;
 
           RealType force_prefactor = du_dr * inv_dij;
           if (du_dx) {
@@ -131,7 +129,7 @@ void __global__ k_nonbonded_precomputed(
 
           if (du_dp) {
             // du/dp
-            g_q_ij = damping_factor * inv_dij;
+            g_q_ij = inv_dij;
             g_dw_ij += delta_w * force_prefactor;
           }
         }
