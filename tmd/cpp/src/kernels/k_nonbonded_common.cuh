@@ -91,23 +91,20 @@ double __device__ __forceinline__ d_erfc_beta_r_dr(double beta, double dij) {
   return -static_cast<double>(TWO_OVER_SQRT_PI) * beta * exp_beta_dij_2;
 }
 
-double __device__ __forceinline__ real_es_factor(double real_beta, double dij,
+// Reaction field electrostatics:
+//   V(r) = q_ij * (1/r + r^2/(2*rc^3) - 3/(2*rc))
+// damping_factor = r * V(r) / q_ij = 1 + r^3/(2*rc^3) - 3*r/(2*rc)
+// returns dV/dr / q_ij = -1/r^2 + r/rc^3
+double __device__ __forceinline__ real_es_factor(double cutoff, double dij,
                                                  double inv_dij,
                                                  double inv_d2ij,
                                                  double &damping_factor) {
-  double beta_dij = real_beta * dij;
-  double erfc_beta_dij = erfc(beta_dij);
-  double sr = switch_fn(dij);
-
-  // write erfc(beta * dij) * switch_fn(dij) into damping_factor
-  damping_factor = erfc_beta_dij * sr;
-
-  // chain rule
-  double dsdr = d_switch_fn_dr(dij);
-  double debd = d_erfc_beta_r_dr(real_beta, dij);
-  double damping_factor_prime = (erfc_beta_dij * dsdr) + (debd * sr);
-  double d_es_dr = damping_factor_prime * inv_dij - damping_factor * inv_d2ij;
-  return d_es_dr;
+  double rc3 = cutoff * cutoff * cutoff;
+  double inv_rc3 = 1.0 / rc3;
+  double inv_rc = 1.0 / cutoff;
+  double dij3 = dij * dij * dij;
+  damping_factor = 1.0 + 0.5 * dij3 * inv_rc3 - 1.5 * dij * inv_rc;
+  return -inv_d2ij + dij * inv_rc3;
 }
 
 // f32 code path merges (1) switch_fn and its deriv into switch_fn_and_deriv
@@ -182,26 +179,15 @@ float __device__ __forceinline__ fast_erfc_and_deriv(float x, float &dedx) {
   return erfc_x;
 }
 
-float __device__ __forceinline__ real_es_factor(float real_beta, float dij,
+float __device__ __forceinline__ real_es_factor(float cutoff, float dij,
                                                 float inv_dij, float inv_d2ij,
                                                 float &damping_factor) {
-  float beta_dij = real_beta * dij;
-
-  // f(dij) = erfc(beta * dij)
-  // ebd = f(dij), debd = f'(dij)
-  float debd;
-  float ebd = fast_erfc_and_deriv(beta_dij, debd);
-  debd = real_beta * debd;
-
-  // g(dij) = switch_fn(dij)
-  // sr = g(dij), dsdr = g'(dij)
-  float dsdr;
-  float sr = switch_fn_and_deriv(dij, dsdr);
-
-  damping_factor = ebd * sr;
-  float damping_factor_prime = (ebd * dsdr) + (debd * sr);
-  float d_es_dr = damping_factor_prime * inv_dij - damping_factor * inv_d2ij;
-  return d_es_dr;
+  float rc3 = cutoff * cutoff * cutoff;
+  float inv_rc3 = 1.0f / rc3;
+  float inv_rc = 1.0f / cutoff;
+  float dij3 = dij * dij * dij;
+  damping_factor = 1.0f + 0.5f * dij3 * inv_rc3 - 1.5f * dij * inv_rc;
+  return -inv_d2ij + dij * inv_rc3;
 }
 
 // Compute the terms associated with electrostatics.
@@ -211,9 +197,9 @@ float __device__ __forceinline__ real_es_factor(float real_beta, float dij,
 template <typename RealType, bool COMPUTE_U>
 void __device__ __forceinline__ compute_electrostatics(
     const RealType charge_scale, const RealType qi, const RealType qj,
-    const RealType d2ij, const RealType beta, RealType &dij, RealType &inv_dij,
-    RealType &inv_d2ij, RealType &damping_factor, RealType &es_prefactor,
-    RealType &u) {
+    const RealType d2ij, const RealType cutoff, RealType &dij,
+    RealType &inv_dij, RealType &inv_d2ij, RealType &damping_factor,
+    RealType &es_prefactor, RealType &u) {
   inv_dij = rsqrt(d2ij);
 
   dij = d2ij * inv_dij;
@@ -221,7 +207,7 @@ void __device__ __forceinline__ compute_electrostatics(
 
   RealType qij = qi * qj;
   es_prefactor = charge_scale * qij * inv_dij *
-                 real_es_factor(beta, dij, inv_dij, inv_d2ij, damping_factor);
+                 real_es_factor(cutoff, dij, inv_dij, inv_d2ij, damping_factor);
 
   if (COMPUTE_U) {
     u = charge_scale * qij * inv_dij * damping_factor;

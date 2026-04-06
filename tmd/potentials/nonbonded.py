@@ -157,7 +157,7 @@ def nonbonded_block_unsummed(
 
     qij = jnp.multiply(qi, qj)
 
-    es = switched_direct_space_pme(dij, qij, beta, cutoff)
+    es = qij * (1 / dij + dij**2 / (2 * cutoff**3) - 3 / (2 * cutoff))
     lj = lennard_jones(dij, sig_ij, eps_ij)
 
     nrgs = jnp.where(dij < cutoff, es + lj, 0)
@@ -344,8 +344,8 @@ def nonbonded(
     qij = jnp.where(keep_mask, qij, 0)
     dij = jnp.where(keep_mask, dij, 0)
 
-    # funny enough lim_{x->0} erfc(x)/x = 0
-    eij_charge = jnp.where(keep_mask, switched_direct_space_pme(dij, qij, beta, cutoff), 0)  # zero out diagonals
+    # reaction field electrostatics: V = q_ij * (1/r + r^2/(2*rc^3) - 3/(2*rc))
+    eij_charge = jnp.where(keep_mask, qij * (1 / dij + dij**2 / (2 * cutoff**3) - 3 / (2 * cutoff)), 0)  # zero out diagonals
     if cutoff is not None:
         eij_charge = jnp.where(dij < cutoff, eij_charge, 0)
 
@@ -398,9 +398,9 @@ def nonbonded_on_specific_pairs(
 
     vdW = jnp.where(eps_ij != 0, lennard_jones(dij, sig_ij, eps_ij), 0)
 
-    # Electrostatics by direct-space part of PME
+    # Electrostatics by reaction field
     qij = apply_cutoff(charges[inds_l] * charges[inds_r])
-    electrostatics = switched_direct_space_pme(dij, qij, beta, cutoff)
+    electrostatics = qij * (1 / dij + dij**2 / (2 * cutoff**3) - 3 / (2 * cutoff))
 
     if rescale_mask is not None:
         assert rescale_mask.shape == (len(pairs), 2)
@@ -456,7 +456,8 @@ def nonbonded_on_precomputed_pairs(
     eps_ij = apply_cutoff(eps_ij)
 
     vdW = jnp.where(eps_ij != 0, lennard_jones(dij, sig_ij, eps_ij), 0)
-    electrostatics = jnp.where(q_ij != 0, switched_direct_space_pme(dij, q_ij, beta, cutoff), 0)
+    # bare Coulomb for precomputed pairs: V = q_ij / r
+    electrostatics = jnp.where(q_ij != 0, q_ij / dij, 0)
 
     return vdW, electrostatics
 
