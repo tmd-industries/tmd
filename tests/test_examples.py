@@ -655,6 +655,96 @@ def test_run_rbfe_legs(
 @pytest.mark.fixed_output
 @pytest.mark.parametrize("enable_batching", [False, True])
 @pytest.mark.parametrize(
+    "leg, n_windows, n_frames, n_eq_steps",
+    [("vacuum", 24, 50, 1000), ("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
+)
+@pytest.mark.parametrize("mol", ["15"])
+@pytest.mark.parametrize("seed", [2026])
+def test_rest_ligand_flexibility(
+    enable_batching,
+    leg,
+    n_windows,
+    n_frames,
+    n_eq_steps,
+    mol,
+    seed,
+):
+    leg_hashes = {
+        (False, "vacuum"): (
+            "83ba5b557641ca5f82c0424cc71ea5b40067a9cdc128665b4e68e1b992b9599d",
+            "98f631766cead3e4f58cdd2e7e51764fb36b07aa3ab40aa6281780d5d041660b",
+        ),
+        (False, "solvent"): (
+            "c5106f93a51d4965391ee35de5625a12fcc4a806a8d1dcd9c4aa5e78f19795c1",
+            "c9c3447cd13d809c1da3d03ccbb82fa53dd43c46e1a0bbcea3c824069a4580e5",
+        ),
+        (False, "complex"): (
+            "373dc0f5d65af1a8f21083ccc4909762da8da28475120c7f4f8f37847c4a0b3c",
+            "15b1696749e85b4a5051be0d412a66764ccc10a5604828611465c3b9bace13ac",
+        ),
+        (True, "vacuum"): (
+            "2be4b9aaa6dd2a1dc32db091270094c72bd48dfafc12091ca133940e41aed252",
+            "b1b2526fdcddd4ee761e6c3abd1d254da4a1f4ff40d45cc5b687a18e2a5a89af",
+        ),
+        (True, "solvent"): (
+            "c419be1a61d73efebc283962d093dba7de3a8b3bf90fc9428d736d93acf1af91",
+            "f82daa487792f6d4714e5a5a470260de90ae93ea02cb490116ed3bfdafc4f30c",
+        ),
+        (True, "complex"): (
+            "dd35ccb527ccced95f863d977bdf288eca4226a04b05a29c02c34e0c194d3805",
+            "b065dd150637262e105e85f06455cb76b441a0b026ac82e54c9e1dc279d29dfa",
+        ),
+    }
+
+    def verify_endstate_hashes(leg_dir: Path, expected_hash: str):
+        summary_path = leg_dir / "summary.npz"
+        assert summary_path.is_file()
+        summary_data = dict(np.load(summary_path))
+        with NamedTemporaryFile(suffix=".npz") as temp:
+            # The time changes, so need to remove prior to hashing
+            summary_data.pop("time")
+            np.savez(temp.name, **summary_data)
+            summary_hash = hash_file(temp.name)
+        endstate_hash = hash_file(leg_dir / "endstate_traj.npz")
+        # Load the summary, so we can see what changed
+        assert (summary_hash, endstate_hash) == expected_hash, summary_data
+
+    with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
+        mols = read_sdf_mols_by_name(hif2a_dir / "ligands.sdf")
+        with NamedTemporaryFile(suffix=".sdf") as temp:
+            with Chem.SDWriter(temp.name) as writer:
+                writer.write(mols[mol])
+            config = dict(
+                sdf_path=temp.name,
+                pdb_path=hif2a_dir / "5tbm_prepared.pdb",
+                seed=seed,
+                leg=leg,
+                n_eq_steps=n_eq_steps,
+                n_frames=n_frames,
+                n_windows=n_windows,
+                forcefield=DEFAULT_FF,
+                output_dir=f"{ARTIFACT_DIR_NAME}/rest_endstate_{mol}_{leg}_{seed}_{enable_batching}",
+            )
+
+            env = {"TMD_BATCH_MODE": "on" if enable_batching else "off"}
+
+            config_a = config.copy()
+            config_a["output_dir"] = config["output_dir"] + "_a"
+            proc = run_example("rest_ligand_flexibility.py", get_cli_args(config_a), env=env)
+            assert proc.returncode == 0
+            verify_endstate_hashes(Path(config_a["output_dir"]) / mol, leg_hashes[(enable_batching, leg)])
+
+            config_b = config.copy()
+            config_b["output_dir"] = config["output_dir"] + "_b"
+            assert config_b["output_dir"] != config_a["output_dir"], "Runs are writing to the same output directory"
+            proc = run_example("rest_ligand_flexibility.py", get_cli_args(config_b), env=env)
+            assert proc.returncode == 0
+            verify_endstate_hashes(Path(config_b["output_dir"]) / mol, leg_hashes[(enable_batching, leg)])
+
+
+@pytest.mark.fixed_output
+@pytest.mark.parametrize("enable_batching", [False, True])
+@pytest.mark.parametrize(
     "leg, n_windows, n_frames, n_eq_steps, local_steps",
     [
         ("solvent", 5, 50, 1000, 400),
