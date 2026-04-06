@@ -19,6 +19,8 @@ from tmd.fe.free_energy import (
     InitialState,
     LocalMDParams,
     MDParams,
+    get_batched_context,
+    get_context,
     run_sims_hrex,
     sample_with_context_iter,
 )
@@ -54,21 +56,22 @@ class MDSystemData:
     hrex_states: int
 
 
-def run_steps(system_data):
-    bps = []
-
+def run_mps_steps(system_data):
+    """Runs Simulations in parallel through Nvidia's MPS"""
     if not system_data.hrex:
-        for potential in system_data.pots:
-            bps.append(potential.to_gpu(precision=np.float32).bound_impl)  # get the bound implementation
-        movers = [system_data.baro.impl(bps)]
-        ctxt = Context(
+        state = InitialState(
+            system_data.pots,
+            system_data.intg,
+            system_data.baro,
             system_data.x0,
             np.zeros_like(system_data.x0),
             system_data.box0,
-            system_data.intg.impl(),
-            bps,
-            movers=movers,
+            0.0,
+            system_data.ligand_idxs,
+            protein_idxs=np.empty(0, dtype=np.int32),
+            interacting_atoms=system_data.ligand_idxs,
         )
+        ctxt = get_context(state, system_data.params)
         start = time.perf_counter()
         for _ in sample_with_context_iter(
             ctxt, system_data.params, system_data.intg.temperature, system_data.ligand_idxs, 1
@@ -92,7 +95,57 @@ def run_steps(system_data):
         ]
         assert len(states) == system_data.hrex_states
         start = time.perf_counter()
-        run_sims_hrex(states, system_data.params, print_diagnostics_interval=None)
+        run_sims_hrex(states, system_data.params, print_diagnostics_interval=None, batch_simulations=False)
+
+    return time.perf_counter() - start
+
+
+def run_batched_steps(system_data):
+    """Runs the simulations in the batch mode, which removes the need for MPS to improve throughput"""
+    if not system_data.hrex:
+        states = [
+            InitialState(
+                system_data.pots,
+                system_data.intg,
+                system_data.baro,
+                coords,
+                np.zeros_like(coords),
+                box,
+                0.0,
+                system_data.ligand_idxs,
+                protein_idxs=np.empty(0, dtype=np.int32),
+                interacting_atoms=system_data.ligand_idxs,
+            )
+            for coords, box in zip(system_data.x0, system_data.box0)
+        ]
+        if len(states) > 1:
+            ctxt = get_batched_context(states, system_data.params)
+        else:
+            ctxt = get_context(states[0], system_data.params)
+        start = time.perf_counter()
+        for _ in sample_with_context_iter(
+            ctxt, system_data.params, system_data.intg.temperature, system_data.ligand_idxs, 1
+        ):
+            pass
+    else:
+        n_systems = system_data.x0.shape[0]
+        states = [
+            InitialState(
+                system_data.pots,
+                system_data.intg,
+                system_data.baro,
+                coords,
+                np.zeros_like(coords),
+                box,
+                lamb,
+                system_data.ligand_idxs,
+                protein_idxs=np.empty(0, dtype=np.int32),
+                interacting_atoms=system_data.ligand_idxs,
+            )
+            for lamb, coords, box in zip(np.linspace(0.0, 1.0, n_systems), system_data.x0, system_data.box0)
+        ]
+        start = time.perf_counter()
+        run_sims_hrex(states, system_data.params, print_diagnostics_interval=None, batch_simulations=True)
 
     return time.perf_counter() - start
 
@@ -105,8 +158,14 @@ def main():
     parser.add_argument("--local_md_rad", default=1.2, type=float)
     parser.add_argument("--local_md_steps", default=400, type=int)
     parser.add_argument("--local_md_free_reference", action="store_true", default=False)
+    parser.add_argument(
+        "--batch_mode",
+        action="store_true",
+        help="Enable Batching instead of MPS, will batch simulations together instead of across processes",
+    )
     parser.add_argument("--steps", default=400, type=int)
     parser.add_argument("--frames", default=100, type=int)
+    parser.add_argument("--seed", default=2026, type=int)
     parser.add_argument("--output_suffix", default=None)
     parser.add_argument(
         "--active_thread_percentage",
@@ -115,7 +174,12 @@ def main():
         help="Specify CUDA_MPS_ACTIVE_THREAD_PERCENTAGE for each MPS worker",
     )
     parser.add_argument("--hrex", action="store_true", help="Run HREX on N states")
-    parser.add_argument("--hrex_states", type=int, default=8, help="Number of HREX states")
+    parser.add_argument(
+        "--hrex_states",
+        type=int,
+        default=8,
+        help="Number of HREX states. Only applies to MPS, for batched the number of HREX states is the number of replicas",
+    )
     parser.add_argument("--system", default="dhfr", choices=["dhfr", "hif2a-rbfe", "hif2a", "pfkfb3-rbfe"])
     args = parser.parse_args()
 
@@ -125,7 +189,7 @@ def main():
         date_str = date.strftime("%Y_%b_%d_%H_%M")
         output_suffix = f"_{date_str}"
 
-    seed = 1234
+    seed = args.seed
     temperature = constants.DEFAULT_TEMP
     pressure = constants.DEFAULT_PRESSURE
     ff = Forcefield.load_default()
@@ -255,32 +319,58 @@ def main():
         x0, box0, np.array(hmr_masses), host_fns, intg, baro, md_params, ligand_idxs, args.hrex, args.hrex_states
     )
 
+    skip_single_proc = args.hrex and args.batch_mode and 1 in args.processes
     ns_per_day_results = []
     for proc in args.processes:
+        if proc == 1 and skip_single_proc:
+            print("Skipping single process for batch mode with HREX, must have at least 2 simulations")
+            continue
         pool = CUDAMPSPoolClient(1, workers_per_gpu=proc, active_thread_usage_per_worker=args.active_thread_percentage)
         subset_xs = xs[:proc]
         subset_boxes = boxes[:proc]
-        futures = [
-            pool.submit(run_steps, replace(state, x0=x, box0=box, params=replace(md_params, seed=md_params.seed + i)))
-            for i, (x, box) in enumerate(zip(subset_xs, subset_boxes))
-        ]
+        if not args.batch_mode:
+            futures = [
+                pool.submit(
+                    run_mps_steps, replace(state, x0=x, box0=box, params=replace(md_params, seed=md_params.seed + i))
+                )
+                for i, (x, box) in enumerate(zip(subset_xs, subset_boxes))
+            ]
+        else:
+            # Combine all steps into a single state
+            futures = [
+                pool.submit(
+                    run_batched_steps,
+                    replace(
+                        state, x0=xs[:proc], box0=boxes[:proc], params=replace(md_params, seed=md_params.seed + proc)
+                    ),
+                )
+            ]
         results = [fut.result() for fut in futures]
         frames_run = md_params.steps_per_frame * md_params.n_frames
-        if args.hrex:
+        if args.batch_mode:
+            frames_run *= proc
+        elif args.hrex:
             frames_run *= args.hrex_states
         steps_per_second = frames_run / np.array(results)
         total_steps_per_second = np.sum(steps_per_second)
         ns_per_day = total_steps_per_second * SECONDS_PER_DAY * dt * 1e-3
         print(f"{proc} Process: {ns_per_day} Ns per day")
         ns_per_day_results.append(ns_per_day)
+    if skip_single_proc:
+        # Remove the 1 process example, else the results are skewed
+        idx = args.processes.index(1)
+        args.processes.pop(idx)
 
     plt.plot(args.processes, ns_per_day_results)
     plt.ylabel("ns per day")
-    plt.xlabel("Processes")
+    if args.batch_mode:
+        plt.xlabel("Batched Replicas")
+    else:
+        plt.xlabel("MPS Replicas")
     plt.title(
-        f"{args.system} MPS\nPeak {max(ns_per_day_results):.1f}ns/day"
+        f"{args.system}\nPeak {max(ns_per_day_results):.1f}ns/day"
         + (f"\nLocal MD Rad {args.local_md_rad}" if args.local_md else "")
-        + (f"\n{args.hrex_states} HREX Windows" if args.hrex else "")
+        + (f"\n{args.hrex_states} HREX Windows" if args.hrex and not args.batch_mode else "")
     )
     plt.tight_layout()
     plt.savefig(f"{args.system}_ns_per_day{output_suffix}.png", dpi=150)
@@ -290,9 +380,9 @@ def main():
     plt.ylabel("Factor improvement")
     plt.xlabel("Processes")
     plt.title(
-        f"{args.system} MPS"
+        f"{args.system}"
         + (f"\nLocal MD Rad {args.local_md_rad}" if args.local_md else "")
-        + (f"\n{args.hrex_states} HREX Windows" if args.hrex else "")
+        + (f"\n{args.hrex_states} HREX Windows" if args.hrex and not args.batch_mode else "")
     )
     plt.tight_layout()
     plt.savefig(f"{args.system}_factor_improvement{output_suffix}.png", dpi=150)
