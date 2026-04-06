@@ -37,7 +37,7 @@ from tmd.md import builders
 from tmd.potentials.potentials import PeriodicTorsion
 from tmd.utils import path_to_internal_file
 
-pytestmark = [pytest.mark.nogpu]
+pytestmark = [pytest.mark.nocuda]
 
 
 def test_empty_ff():
