@@ -73,7 +73,7 @@ def _get_hif2a_mol_pairs(shuffle: bool = False, seed: int = 2029) -> list[Chem.M
     return pairs
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_setup_chiral_dummy_atoms():
     """
     Test that we setup the correct geometries for each of the 8 types specified in single topology
@@ -188,7 +188,7 @@ def assert_bond_sets_equal(bonds_a, bonds_b):
     return f(bonds_a) == f(bonds_b)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_phenol():
     """
     Test that dummy interactions are setup correctly for a phenol. We want to check that bonds and angles
@@ -256,7 +256,7 @@ def test_phenol():
         )
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_methyl_chiral_atom_idxs():
     """
     Check that we're leaving the chiral restraints on correctly for a methyl, when only a single hydrogen is a core atom.
@@ -287,7 +287,7 @@ def test_methyl_chiral_atom_idxs():
     assert_bond_sets_equal(chiral_atom_idxs, expected_chiral_atom_idxs)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_find_dummy_groups_and_anchors():
     """
     Test that we can find the anchors and dummy groups when there's a single core anchor atom. When core bond
@@ -312,7 +312,7 @@ def test_find_dummy_groups_and_anchors():
         assert dgs == {2: (None, {3})}
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_find_dummy_groups_and_anchors_multiple_angles():
     """
     Test that when multiple angle groups are possible we can find one deterministically
@@ -339,7 +339,7 @@ def test_find_dummy_groups_and_anchors_multiple_angles():
         assert dgs == dgs_zero
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_find_dummy_groups_and_multiple_anchors():
     """
     Test that we can find anchors and dummy groups with multiple anchors, we expect to find only a single
@@ -381,7 +381,7 @@ def test_find_dummy_groups_and_multiple_anchors():
         assert dgs == {1: (2, {0})}
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_ethane_cyclobutadiene():
     """Test case where a naive heuristic for identifying dummy groups results in disconnected components"""
 
@@ -400,7 +400,7 @@ def test_ethane_cyclobutadiene():
     assert len(list(nx.connected_components(g))) == 1
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_charge_perturbation_is_invalid():
     mol_a = ligand_from_smiles("Cc1cc[nH]c1", seed=2022)
     mol_b = ligand_from_smiles("C[n+]1cc[nH]c1", seed=2022)
@@ -525,7 +525,7 @@ def test_canonicalize_chiral_atom_idxs(chiral_atom_idxs):
     assert chiral_atom_idxs_are_canonical(canonicalized_idxs)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_canonicalize_improper_idxs():
     # these are in the cw rotation set
     improper_idxs = [(0, 5, 1, 3), (1, 5, 3, 0), (3, 5, 0, 1)]
@@ -540,7 +540,7 @@ def test_canonicalize_improper_idxs():
     assert canonicalize_improper_idxs((0, 5, 3, 1)) == (0, 5, 1, 3)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_combine_masses():
     C_mass = Chem.MolFromSmiles("C").GetAtomWithIdx(0).GetMass()
     Br_mass = Chem.MolFromSmiles("Br").GetAtomWithIdx(0).GetMass()
@@ -563,7 +563,7 @@ def test_combine_masses():
     np.testing.assert_almost_equal(test_masses, ref_masses)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_combine_masses_hmr():
     C_mass = Chem.MolFromSmiles("C").GetAtomWithIdx(0).GetMass()
     Cl_mass = Chem.MolFromSmiles("Cl").GetAtomWithIdx(0).GetMass()
@@ -647,7 +647,7 @@ def arbitrary_transformation():
     return st, conf
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_jax_transform_intermediate_potential(arbitrary_transformation):
     st, conf = arbitrary_transformation
 
@@ -662,7 +662,7 @@ def test_jax_transform_intermediate_potential(arbitrary_transformation):
     _ = jax.jit(jax.vmap(U))(confs, lambdas)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_setup_intermediate_state_not_unreasonably_slow(arbitrary_transformation):
     st, _ = arbitrary_transformation
     n_states = 10
@@ -676,7 +676,7 @@ def test_setup_intermediate_state_not_unreasonably_slow(arbitrary_transformation
     assert elapsed_time / n_states <= 1.0
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_combine_achiral_ligand_with_host():
     """Verifies that combine_with_host correctly sets up all of the U functions"""
     mol_a = ligand_from_smiles("BrC1=CC=CC=C1", seed=2022)
@@ -706,7 +706,7 @@ def test_combine_achiral_ligand_with_host():
     )
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_combine_chiral_ligand_with_host():
     """Verifies that combine_with_host correctly sets up all of the U functions"""
     mol_a = ligand_from_smiles("BrC1CCCCC1", seed=2022)
@@ -743,7 +743,7 @@ def _get_core_by_mcs(mol_a, mol_b):
     return core
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_no_chiral_atom_restraints():
     mol_a = ligand_from_smiles("c1ccccc1")
     mol_b = ligand_from_smiles("c1(I)ccccc1")
@@ -759,7 +759,7 @@ def test_no_chiral_atom_restraints():
     _ = U(init_conf)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_no_chiral_bond_restraints():
     mol_a = ligand_from_smiles("C")
     mol_b = ligand_from_smiles("CI")
@@ -791,7 +791,7 @@ nonzero_force_constants = finite_floats(1e-9, 1e9)
 lambdas = finite_floats(0.0, 1.0)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_cyclic_difference():
     assert cyclic_difference(0, 0, 1) == 0
     assert cyclic_difference(0, 1, 2) == 1  # arbitrary, positive by convention
@@ -823,7 +823,7 @@ periods = st.integers(1, int(1e9))
 bounded_ints = st.integers(-int(1e9), int(1e9))
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @given(bounded_ints, bounded_ints, periods)
 @seed(2022)
 def test_cyclic_difference_inverse(a, b, period):
@@ -832,14 +832,14 @@ def test_cyclic_difference_inverse(a, b, period):
     assert_equal_cyclic(a + x, b, period)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @given(bounded_ints, bounded_ints, periods)
 @seed(2022)
 def test_cyclic_difference_antisymmetric(a, b, period):
     assert cyclic_difference(a, b, period) + cyclic_difference(b, a, period) == 0
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @given(bounded_ints, bounded_ints, bounded_ints, bounded_ints, periods)
 @seed(2022)
 def test_cyclic_difference_shift_by_n_periods(a, b, m, n, period):
@@ -850,7 +850,7 @@ def test_cyclic_difference_shift_by_n_periods(a, b, m, n, period):
     )
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @given(bounded_ints, bounded_ints, bounded_ints, periods)
 @seed(2022)
 def test_cyclic_difference_translation_invariant(a, b, t, period):
@@ -865,7 +865,7 @@ def pairs(elem, unique=False):
     return st.lists(elem, min_size=2, max_size=2, unique=unique).map(tuple)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @given(pairs(finite_floats()))
 @seed(2022)
 def test_interpolate_w_coord_valid_at_end_states(end_states):
@@ -875,7 +875,7 @@ def test_interpolate_w_coord_valid_at_end_states(end_states):
     assert f(1.0) == b
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_interpolate_w_coord_monotonic():
     lambdas = np.linspace(0.0, 1.0, 100)
     ws = interpolate_w_coord(0.0, 1.0, lambdas)
@@ -883,7 +883,7 @@ def test_interpolate_w_coord_monotonic():
 
 
 @pytest.mark.nightly(reason="Test setting up hif2a pairs for single topology.")
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @pytest.mark.parametrize("mol_a, mol_b", _get_hif2a_mol_pairs())
 def test_hif2a_pairs_setup_st(mol_a, mol_b):
     """
@@ -895,7 +895,7 @@ def test_hif2a_pairs_setup_st(mol_a, mol_b):
     SingleTopology(mol_a, mol_b, core, ff)  # Test that this doesn't not throw assertion
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_chiral_methyl_to_nitrile():
     # test that we do not turn off chiral atom restraints even if some of
     # the angle terms are planar
@@ -957,7 +957,7 @@ $$$$""",
     assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 4
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_chiral_methyl_to_nitrogen():
     # test that we maintain all 4 chiral idxs when morphing N#N into CH3
     #
@@ -1022,7 +1022,7 @@ $$$$""",
     np.testing.assert_array_equal(chiral_idxs_0, chiral_idxs_1)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_chiral_methyl_to_water():
     mol_a = Chem.MolFromMolBlock(
         """
@@ -1077,7 +1077,7 @@ $$$$""",
     assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 4
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_chiral_methyl_to_ammonia():
     mol_a = Chem.MolFromMolBlock(
         """
@@ -1135,7 +1135,7 @@ $$$$""",
     assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 3
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_chiral_core_ring_opening():
     # test that chiral restraints are maintained for dummy atoms when we open/close a ring,
     # at lambda=0, all 7 chiral restraints are turned on, but at lambda=1
@@ -1367,7 +1367,7 @@ def assert_symmetric_interpolation(mol_a, mol_b, core):
         )
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 def test_hif2a_end_state_symmetry_unit_test():
     with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
         mols = read_sdf(path_to_ligand)
@@ -1378,7 +1378,7 @@ def test_hif2a_end_state_symmetry_unit_test():
     assert_symmetric_interpolation(mol_a, mol_b, core)
 
 
-@pytest.mark.nocuda
+@pytest.mark.nogpu
 @pytest.mark.nightly(reason="slow")
 @pytest.mark.parametrize("mol_a, mol_b", _get_hif2a_mol_pairs(shuffle=True, seed=2029)[:25])
 def test_hif2a_end_state_symmetry_nightly_test(mol_a, mol_b):
