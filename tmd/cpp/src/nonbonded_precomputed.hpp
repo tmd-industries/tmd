@@ -28,7 +28,6 @@ class NonbondedPairListPrecomputed : public Potential<RealType> {
       const int num_atoms, const int B, const RealType *__restrict__ coords,
       const RealType *__restrict__ params, const RealType *__restrict__ box,
       const int *__restrict__ pair_idxs, const int *__restrict__ system_idxs,
-      const RealType beta, const RealType cutoff_squared,
       unsigned long long *__restrict__ du_dx,
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
@@ -36,9 +35,6 @@ private:
   const int num_systems_;
   const int num_atoms_;
   const int B_;
-
-  const RealType beta_;
-  const RealType cutoff_;
 
   int *d_idxs_;        // [B, 2]
   int *d_system_idxs_; // [B]
@@ -51,8 +47,8 @@ private:
 public:
   NonbondedPairListPrecomputed(const int num_systems, const int num_atoms,
                                const std::vector<int> &pair_idxs,   // [B, 2]
-                               const std::vector<int> &system_idxs, // [B]
-                               const RealType beta, const RealType cutoff);
+                               const std::vector<int> &system_idxs  // [B]
+  );
 
   ~NonbondedPairListPrecomputed();
 

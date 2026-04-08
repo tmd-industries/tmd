@@ -2589,21 +2589,18 @@ void declare_nonbonded_precomputed(py::module &m, const char *typestr) {
   py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const int num_atoms,
-                       const py::array_t<int, py::array::c_style> &pair_idxs,
-                       const double beta, const double cutoff) {
+                       const py::array_t<int, py::array::c_style> &pair_idxs) {
              verify_bond_idxs(pair_idxs, 2);
              std::vector<int> system_idxs(pair_idxs.shape(0), 0);
              const int num_systems = 1;
              return new NonbondedPairListPrecomputed<RealType>(
                  num_systems, num_atoms, py_array_to_vector(pair_idxs),
-                 system_idxs, beta, cutoff);
+                 system_idxs);
            }),
-           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("beta"),
-           py::arg("cutoff"))
+           py::arg("num_atoms"), py::arg("pair_idxs"))
       .def(py::init([](const int num_atoms,
                        const std::vector<py::array_t<int, py::array::c_style>>
-                           &pair_idxs,
-                       const double beta, const double cutoff) {
+                           &pair_idxs) {
              const int num_systems = pair_idxs.size();
              std::vector<int> combined_pair_idxs;
              std::vector<int> system_idxs;
@@ -2622,11 +2619,9 @@ void declare_nonbonded_precomputed(py::module &m, const char *typestr) {
                          system_idxs.end(), i);
              }
              return new NonbondedPairListPrecomputed<RealType>(
-                 num_systems, num_atoms, combined_pair_idxs, system_idxs, beta,
-                 cutoff);
+                 num_systems, num_atoms, combined_pair_idxs, system_idxs);
            }),
-           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("beta"),
-           py::arg("cutoff"));
+           py::arg("num_atoms"), py::arg("pair_idxs"));
 }
 
 template <typename RealType>

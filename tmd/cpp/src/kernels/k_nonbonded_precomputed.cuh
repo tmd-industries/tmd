@@ -33,7 +33,6 @@ void __global__ k_nonbonded_precomputed(
     const RealType *__restrict__ box,    // box vectors
     const int *__restrict__ pair_idxs,   // [M, 2] pair-list of atoms
     const int *__restrict__ system_idxs, // [M] Which system the pair is from
-    const RealType beta, const RealType cutoff_squared,
     unsigned long long *__restrict__ du_dx,
     unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer) {
 
@@ -95,123 +94,120 @@ void __global__ k_nonbonded_precomputed(
     RealType d2_ij = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z +
                      delta_w * delta_w;
 
-    if (d2_ij < cutoff_squared) {
+    RealType d_ij = sqrt(d2_ij);
 
-      RealType d_ij = sqrt(d2_ij);
+    RealType inv_dij = 1 / d_ij;
 
-      RealType inv_dij = 1 / d_ij;
+    if (q_ij != 0) {
 
-      if (q_ij != 0) {
+      // bare Coulomb: V = q_ij / r, dV/dr = -q_ij / r^2
+      RealType inv_d2ij = inv_dij * inv_dij;
 
-        // bare Coulomb: V = q_ij / r, dV/dr = -q_ij / r^2
-        RealType inv_d2ij = inv_dij * inv_dij;
+      if (COMPUTE_U) {
+        // energies
+        RealType nrg = q_ij * inv_dij;
+        energy += FLOAT_TO_FIXED_ENERGY<RealType>(nrg);
+      }
 
+      if (COMPUTE_DU_DX || COMPUTE_DU_DP) {
+        RealType du_dr = -q_ij * inv_d2ij;
+
+        RealType force_prefactor = du_dr * inv_dij;
+        if (du_dx) {
+          // forces
+          gi_x += delta_x * force_prefactor;
+          gi_y += delta_y * force_prefactor;
+          gi_z += delta_z * force_prefactor;
+
+          gj_x += -delta_x * force_prefactor;
+          gj_y += -delta_y * force_prefactor;
+          gj_z += -delta_z * force_prefactor;
+        }
+
+        if (du_dp) {
+          // du/dp
+          g_q_ij = inv_dij;
+          g_dw_ij += delta_w * force_prefactor;
+        }
+      }
+    }
+
+    if (eps_ij != 0 && sig_ij != 0) {
+      RealType d4_ij = d2_ij * d2_ij;
+      RealType d6_ij = d4_ij * d2_ij;
+
+      RealType sig2_ij = sig_ij * sig_ij;
+      RealType sig4_ij = sig2_ij * sig2_ij;
+      RealType sig6_ij = sig4_ij * sig2_ij;
+      RealType du_de;
+      if (COMPUTE_U || COMPUTE_DU_DP) {
+        RealType sig2_inv_d2ij = (sig_ij * inv_dij) * (sig_ij * inv_dij);
+        RealType sig4_inv_d4ij = sig2_inv_d2ij * sig2_inv_d2ij;
+        RealType sig6_inv_d6ij = sig4_inv_d4ij * sig2_inv_d2ij;
+        du_de =
+            static_cast<RealType>(4.0) * (sig6_inv_d6ij - 1) * sig6_inv_d6ij;
         if (COMPUTE_U) {
           // energies
-          RealType nrg = q_ij * inv_dij;
+          RealType nrg = eps_ij * du_de;
           energy += FLOAT_TO_FIXED_ENERGY<RealType>(nrg);
         }
-
-        if (COMPUTE_DU_DX || COMPUTE_DU_DP) {
-          RealType du_dr = -q_ij * inv_d2ij;
-
-          RealType force_prefactor = du_dr * inv_dij;
-          if (du_dx) {
-            // forces
-            gi_x += delta_x * force_prefactor;
-            gi_y += delta_y * force_prefactor;
-            gi_z += delta_z * force_prefactor;
-
-            gj_x += -delta_x * force_prefactor;
-            gj_y += -delta_y * force_prefactor;
-            gj_z += -delta_z * force_prefactor;
-          }
-
-          if (du_dp) {
-            // du/dp
-            g_q_ij = inv_dij;
-            g_dw_ij += delta_w * force_prefactor;
-          }
-        }
       }
 
-      if (eps_ij != 0 && sig_ij != 0) {
-        RealType d4_ij = d2_ij * d2_ij;
-        RealType d6_ij = d4_ij * d2_ij;
+      if (COMPUTE_DU_DX || COMPUTE_DU_DP) {
+        RealType d12_ij = d6_ij * d6_ij;
+        RealType du_dr = eps_ij * static_cast<RealType>(24.0) * sig6_ij *
+                         (d6_ij - static_cast<RealType>(2.0) * sig6_ij) /
+                         (d12_ij * d_ij);
 
-        RealType sig2_ij = sig_ij * sig_ij;
-        RealType sig4_ij = sig2_ij * sig2_ij;
-        RealType sig6_ij = sig4_ij * sig2_ij;
-        RealType du_de;
-        if (COMPUTE_U || COMPUTE_DU_DP) {
-          RealType sig2_inv_d2ij = (sig_ij * inv_dij) * (sig_ij * inv_dij);
-          RealType sig4_inv_d4ij = sig2_inv_d2ij * sig2_inv_d2ij;
-          RealType sig6_inv_d6ij = sig4_inv_d4ij * sig2_inv_d2ij;
-          du_de =
-              static_cast<RealType>(4.0) * (sig6_inv_d6ij - 1) * sig6_inv_d6ij;
-          if (COMPUTE_U) {
-            // energies
-            RealType nrg = eps_ij * du_de;
-            energy += FLOAT_TO_FIXED_ENERGY<RealType>(nrg);
-          }
+        RealType force_prefactor = du_dr * inv_dij;
+        if (COMPUTE_DU_DX) {
+          gi_x += delta_x * force_prefactor;
+          gi_y += delta_y * force_prefactor;
+          gi_z += delta_z * force_prefactor;
+
+          gj_x += -delta_x * force_prefactor;
+          gj_y += -delta_y * force_prefactor;
+          gj_z += -delta_z * force_prefactor;
         }
 
-        if (COMPUTE_DU_DX || COMPUTE_DU_DP) {
-          RealType d12_ij = d6_ij * d6_ij;
-          RealType du_dr = eps_ij * static_cast<RealType>(24.0) * sig6_ij *
-                           (d6_ij - static_cast<RealType>(2.0) * sig6_ij) /
-                           (d12_ij * d_ij);
-
-          RealType force_prefactor = du_dr * inv_dij;
-          if (COMPUTE_DU_DX) {
-            gi_x += delta_x * force_prefactor;
-            gi_y += delta_y * force_prefactor;
-            gi_z += delta_z * force_prefactor;
-
-            gj_x += -delta_x * force_prefactor;
-            gj_y += -delta_y * force_prefactor;
-            gj_z += -delta_z * force_prefactor;
-          }
-
-          if (du_dp) {
-            RealType du_ds =
-                static_cast<RealType>(-24.0) * eps_ij * (sig4_ij * sig_ij) *
-                (d6_ij - static_cast<RealType>(2.0) * sig6_ij) / d12_ij;
-            g_eps_ij = du_de;
-            g_sig_ij = du_ds;
-            g_dw_ij += delta_w * force_prefactor;
-          }
+        if (du_dp) {
+          RealType du_ds =
+              static_cast<RealType>(-24.0) * eps_ij * (sig4_ij * sig_ij) *
+              (d6_ij - static_cast<RealType>(2.0) * sig6_ij) / d12_ij;
+          g_eps_ij = du_de;
+          g_sig_ij = du_ds;
+          g_dw_ij += delta_w * force_prefactor;
         }
       }
+    }
 
-      if (COMPUTE_DU_DX) {
-        unsigned long long gx = FLOAT_TO_FIXED_NONBONDED(gi_x);
-        unsigned long long gy = FLOAT_TO_FIXED_NONBONDED(gi_y);
-        unsigned long long gz = FLOAT_TO_FIXED_NONBONDED(gi_z);
+    if (COMPUTE_DU_DX) {
+      unsigned long long gx = FLOAT_TO_FIXED_NONBONDED(gi_x);
+      unsigned long long gy = FLOAT_TO_FIXED_NONBONDED(gi_y);
+      unsigned long long gz = FLOAT_TO_FIXED_NONBONDED(gi_z);
 
-        atomicAdd(du_dx + atom_i_idx * 3 + 0, gx);
-        atomicAdd(du_dx + atom_i_idx * 3 + 1, gy);
-        atomicAdd(du_dx + atom_i_idx * 3 + 2, gz);
+      atomicAdd(du_dx + atom_i_idx * 3 + 0, gx);
+      atomicAdd(du_dx + atom_i_idx * 3 + 1, gy);
+      atomicAdd(du_dx + atom_i_idx * 3 + 2, gz);
 
-        atomicAdd(du_dx + atom_j_idx * 3 + 0, -gx);
-        atomicAdd(du_dx + atom_j_idx * 3 + 1, -gy);
-        atomicAdd(du_dx + atom_j_idx * 3 + 2, -gz);
-      }
+      atomicAdd(du_dx + atom_j_idx * 3 + 0, -gx);
+      atomicAdd(du_dx + atom_j_idx * 3 + 1, -gy);
+      atomicAdd(du_dx + atom_j_idx * 3 + 2, -gz);
+    }
 
-      if (COMPUTE_DU_DP) {
-        atomicAdd(
-            du_dp + params_ij_idx + PARAM_OFFSET_CHARGE,
-            FLOAT_TO_FIXED_DU_DP<RealType, FIXED_EXPONENT_DU_DCHARGE>(g_q_ij));
-        atomicAdd(
-            du_dp + params_ij_idx + PARAM_OFFSET_SIG,
-            FLOAT_TO_FIXED_DU_DP<RealType, FIXED_EXPONENT_DU_DSIG>(g_sig_ij));
-        atomicAdd(
-            du_dp + params_ij_idx + PARAM_OFFSET_EPS,
-            FLOAT_TO_FIXED_DU_DP<RealType, FIXED_EXPONENT_DU_DEPS>(g_eps_ij));
-        atomicAdd(
-            du_dp + params_ij_idx + PARAM_OFFSET_W,
-            FLOAT_TO_FIXED_DU_DP<RealType, FIXED_EXPONENT_DU_DW>(g_dw_ij));
-      }
+    if (COMPUTE_DU_DP) {
+      atomicAdd(
+          du_dp + params_ij_idx + PARAM_OFFSET_CHARGE,
+          FLOAT_TO_FIXED_DU_DP<RealType, FIXED_EXPONENT_DU_DCHARGE>(g_q_ij));
+      atomicAdd(
+          du_dp + params_ij_idx + PARAM_OFFSET_SIG,
+          FLOAT_TO_FIXED_DU_DP<RealType, FIXED_EXPONENT_DU_DSIG>(g_sig_ij));
+      atomicAdd(
+          du_dp + params_ij_idx + PARAM_OFFSET_EPS,
+          FLOAT_TO_FIXED_DU_DP<RealType, FIXED_EXPONENT_DU_DEPS>(g_eps_ij));
+      atomicAdd(
+          du_dp + params_ij_idx + PARAM_OFFSET_W,
+          FLOAT_TO_FIXED_DU_DP<RealType, FIXED_EXPONENT_DU_DW>(g_dw_ij));
     }
     // Always set the energy to avoid having to running memset on energy buffer
     if (COMPUTE_U) {

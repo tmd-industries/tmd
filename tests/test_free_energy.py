@@ -993,19 +993,19 @@ def test_assert_potentials_compatible(hif2a_ligand_pair_single_topology):
     bps1 = [modify_hb_idxs(bp) if isinstance(bp.potential, HarmonicBond) else bp for bp in bps]
     should_raise(bps, bps1, r"objects differ in field \$\.\[\d\]\.idxs: arrays not equal")
 
-    def modify_nb_cutoff(nb):
-        return replace(nb, potential=replace(nb.potential, cutoff=nb.potential.cutoff + 1.0))
+    def modify_nb_num_atoms(nb):
+        return replace(nb, potential=replace(nb.potential, num_atoms=nb.potential.num_atoms + 1))
 
     assert any(isinstance(bp.potential, NonbondedPairListPrecomputed) for bp in bps)
-    bps1 = [modify_nb_cutoff(bp) if isinstance(bp.potential, NonbondedPairListPrecomputed) else bp for bp in bps]
-    should_raise(bps, bps1, r"objects differ in field \$\.\[\d\]\.cutoff: left != right")
+    bps1 = [modify_nb_num_atoms(bp) if isinstance(bp.potential, NonbondedPairListPrecomputed) else bp for bp in bps]
+    should_raise(bps, bps1, r"objects differ in field \$\.\[\d\]\.num_atoms: left != right")
 
     # Check that we detect differences in summed potentials
     sp = make_summed_potential(bps)
     sp1 = make_summed_potential(
-        [modify_nb_cutoff(bp) if isinstance(bp.potential, NonbondedPairListPrecomputed) else bp for bp in bps]
+        [modify_nb_num_atoms(bp) if isinstance(bp.potential, NonbondedPairListPrecomputed) else bp for bp in bps]
     )
-    should_raise([sp], [sp1], r"objects differ in field \$\.\[\d\]\.potentials\.\[\d\]\.cutoff: left != right")
+    should_raise([sp], [sp1], r"objects differ in field \$\.\[\d\]\.potentials\.\[\d\]\.num_atoms: left != right")
 
     # Should raise if params_init differs in shape
     params_init_1 = list(sp.potential.params_init)

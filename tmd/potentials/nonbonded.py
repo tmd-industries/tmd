@@ -420,8 +420,6 @@ def nonbonded_on_precomputed_pairs(
     params,
     box,
     pairs,
-    beta: float,
-    cutoff: Optional[float] = None,
 ):
     """
     Similar to pairlist, except that we pre-compute parameters with:
@@ -440,20 +438,9 @@ def nonbonded_on_precomputed_pairs(
 
     inds_l, inds_r = pairs.T
 
-    # distances and cutoff
+    # distances
     q_ij, sig_ij, eps_ij, offsets = params.T
     dij = distance_on_pairs(conf[inds_l], conf[inds_r], box, offsets)
-    if cutoff is None:
-        cutoff = np.inf
-
-    keep_mask = dij < cutoff
-
-    def apply_cutoff(x):
-        return jnp.where(keep_mask, x, 0)
-
-    q_ij = apply_cutoff(q_ij)
-    sig_ij = apply_cutoff(sig_ij)
-    eps_ij = apply_cutoff(eps_ij)
 
     vdW = jnp.where(eps_ij != 0, lennard_jones(dij, sig_ij, eps_ij), 0)
     # bare Coulomb for precomputed pairs: V = q_ij / r

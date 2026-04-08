@@ -28,10 +28,9 @@ namespace tmd {
 template <typename RealType>
 NonbondedPairListPrecomputed<RealType>::NonbondedPairListPrecomputed(
     const int num_systems, const int num_atoms, const std::vector<int> &idxs,
-    const std::vector<int> &system_idxs, const RealType beta,
-    const RealType cutoff)
+    const std::vector<int> &system_idxs)
     : num_systems_(num_systems), num_atoms_(num_atoms), B_(idxs.size() / 2),
-      beta_(beta), cutoff_(cutoff), nrg_accum_(num_systems_, B_),
+      nrg_accum_(num_systems_, B_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -111,8 +110,8 @@ void NonbondedPairListPrecomputed<RealType>::execute_device(
     kernel_idx |= d_u ? 1 << 2 : 0;
 
     kernel_ptrs_[kernel_idx]<<<blocks, tpb, 0, stream>>>(
-        num_atoms_, B_, d_x, d_p, d_box, d_idxs_, d_system_idxs_, beta_,
-        cutoff_ * cutoff_, d_du_dx, d_du_dp,
+        num_atoms_, B_, d_x, d_p, d_box, d_idxs_, d_system_idxs_,
+        d_du_dx, d_du_dp,
         d_u == nullptr ? nullptr : d_u_buffer_);
     gpuErrchk(cudaPeekAtLastError());
 
