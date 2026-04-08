@@ -232,8 +232,6 @@ class HostGuestTopology:
             self.get_num_atoms(),
             # shift idxs to account for the host
             guest_intra_pot.idxs + self.num_host_atoms,
-            guest_intra_pot.beta,
-            guest_intra_pot.cutoff,
         )
         return guest_intra_params, combined_intra_pot
 
@@ -356,10 +354,7 @@ class BaseTopology:
         params[:, NBParamIdx.LJ_EPS_IDX] = eps_ij * rescale_mask[:, 1]
         params[:, NBParamIdx.W_IDX] = 0.0
 
-        beta = _BETA
-        cutoff = _CUTOFF  # solve for this analytically later
-
-        return params, potentials.NonbondedPairListPrecomputed(N, inclusion_idxs, beta, cutoff)
+        return params, potentials.NonbondedPairListPrecomputed(N, inclusion_idxs)
 
     def parameterize_harmonic_bond(self, ff_params):
         params, idxs = self.ff.hb_handle.partial_parameterize(ff_params, self.mol)
@@ -603,8 +598,6 @@ class MultiTopology(BaseTopology):
         offset = 0
         mol_parameters = []
         mol_idxs = []
-        beta = None
-        cutoff = None
         for mol in self.mols:
             params, pairlist = BaseTopology(mol, self.ff).parameterize_nonbonded_pairlist(
                 ff_q_params, ff_q_params_intra, ff_lj_params, ff_lj_params_intra, intramol_params=intramol_params
@@ -612,21 +605,12 @@ class MultiTopology(BaseTopology):
             mol_parameters.append(params)
             mol_idxs.append(pairlist.idxs + offset)
             offset += mol.GetNumAtoms()
-            if beta is None and cutoff is None:
-                beta = pairlist.beta
-                cutoff = pairlist.cutoff
-            else:
-                assert beta == pairlist.beta
-                assert cutoff == pairlist.cutoff
-
-        assert beta is not None
-        assert cutoff is not None
 
         params = np.concatenate(mol_parameters)
 
         inclusion_idxs = np.concatenate(mol_idxs)
 
-        return params, potentials.NonbondedPairListPrecomputed(offset, inclusion_idxs, beta, cutoff)
+        return params, potentials.NonbondedPairListPrecomputed(offset, inclusion_idxs)
 
     def _parameterize_bonded_term(self, ff_params, bonded_handle, potential):
         offset = 0

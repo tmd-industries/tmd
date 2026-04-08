@@ -392,13 +392,11 @@ class NonbondedPairListPrecomputed(Potential):
 
     num_atoms: int
     idxs: NDArray[np.int32] | list[NDArray[np.int32]]
-    beta: float
-    cutoff: float
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
         assert isinstance(params, (np.ndarray, Array))
         vdW, electrostatics = nonbonded.nonbonded_on_precomputed_pairs(
-            conf, params, box, self.idxs, self.beta, self.cutoff
+            conf, params, box, self.idxs
         )
         return jnp.sum(vdW) + jnp.sum(electrostatics)
 
@@ -407,15 +405,9 @@ class NonbondedPairListPrecomputed(Potential):
             raise TypeError("Other potential does not match type")
         if self.num_atoms != other_pot.num_atoms:
             raise ValueError(f"Potentials must have same number of atoms: {self.num_atoms} != {other_pot.num_atoms}")
-        if self.beta != other_pot.beta:
-            raise ValueError(f"NonbondedExclusions beta must match: {self.beta} != {other_pot.beta}")
-        if self.cutoff != other_pot.cutoff:
-            raise ValueError(f"NonbondedExclusions cutoff must match: {self.cutoff} != {other_pot.cutoff}")
         return self.__class__(
             self.num_atoms,
             combine_pot_params(self.idxs, other_pot.idxs),
-            self.beta,
-            self.cutoff,
         )
 
 
