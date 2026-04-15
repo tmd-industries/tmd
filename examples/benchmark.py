@@ -175,6 +175,12 @@ def main():
     )
     parser.add_argument("--hrex", action="store_true", help="Run HREX on N states")
     parser.add_argument(
+        "--n_eq_steps",
+        type=int,
+        default=50_000,
+        help="Number of global steps to run to equilibrate the system. Important to get reliable results from batch mode.",
+    )
+    parser.add_argument(
         "--hrex_states",
         type=int,
         default=8,
@@ -294,6 +300,7 @@ def main():
 
     num_samples = np.max(args.processes)
 
+    ctxt.multiple_steps(args.n_eq_steps)
     # Get a range of samples that don't have the same neighborlist to add some variation
     # in the runtime (IE Neighborlist, etc)
     xs, boxes = ctxt.multiple_steps(400 * num_samples, store_x_interval=num_samples)
@@ -325,7 +332,12 @@ def main():
         if proc == 1 and skip_single_proc:
             print("Skipping single process for batch mode with HREX, must have at least 2 simulations")
             continue
-        pool = CUDAMPSPoolClient(1, workers_per_gpu=proc, active_thread_usage_per_worker=args.active_thread_percentage)
+        mps_workers = proc
+        if args.batch_mode:
+            mps_workers = 1
+        pool = CUDAMPSPoolClient(
+            1, workers_per_gpu=mps_workers, active_thread_usage_per_worker=args.active_thread_percentage
+        )
         subset_xs = xs[:proc]
         subset_boxes = boxes[:proc]
         if not args.batch_mode:
