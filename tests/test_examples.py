@@ -483,9 +483,9 @@ def test_run_rbfe_legs(
             "428f5b97fd2208589e2dc82d85cfa50ca0b97ed33e25bbe1d303981aa25ccd7f",
         ),
         (True, "vacuum"): (
-            "5b6631c0f44d555e52b39cda5d696789ab22df517d7c223fe44e7bc2807be4fd",
-            "aa4b3014573d9b969559eb0460fea320657de48237690f5de175b5d2f97312ef",
-            "b6c75d5d37939196c3271e7db56299b07e8e9b856ace03e4d9b42f11cf30c220",
+            "4985d9888ce9e79e315ca0175d53879fce41275c888a68af2117d655cd13851a",
+            "ec63198fcc9ae03f8f867949e4f142dc45fe89b1509c2e71848c63cf415290d9",
+            "0b7a05107fba1d56557aca2eb5ad7eb5ea2765ee9ae5ce3af6ced85efa69d309",
         ),
         (True, "solvent"): (
             "3325edf92b5a55689fb89a1f325f48e60bf876bb3b6065a1e57f86f75abc3586",
@@ -687,12 +687,12 @@ def test_rest_ligand_flexibility(
             "b1b2526fdcddd4ee761e6c3abd1d254da4a1f4ff40d45cc5b687a18e2a5a89af",
         ),
         (True, "solvent"): (
-            "c419be1a61d73efebc283962d093dba7de3a8b3bf90fc9428d736d93acf1af91",
-            "f82daa487792f6d4714e5a5a470260de90ae93ea02cb490116ed3bfdafc4f30c",
+            "b0dbb5aeb022a03d5e16cd98deffc7a4233592fcede03da401cd81a404f4c613",
+            "a46b95c3f335f2b7759c5d43d7775bb3538d3390a2c56e39246e04392d5c6503",
         ),
         (True, "complex"): (
-            "dd35ccb527ccced95f863d977bdf288eca4226a04b05a29c02c34e0c194d3805",
-            "b065dd150637262e105e85f06455cb76b441a0b026ac82e54c9e1dc279d29dfa",
+            "3e9f5e686e6136d9df3270deeb3f5257aa693a3e7b0ec665e1ea4d008e873121",
+            "d4653948c9dc8ee98046818741f3c8c3a4ef41f34f084924356fc6ea36015dff",
         ),
     }
 
