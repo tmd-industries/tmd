@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -642,3 +643,21 @@ def hash_file(path: Path | str, chunk_size: int = 2048) -> str:
             m.update(chunk)
             chunk = ifs.read(chunk_size)
     return m.hexdigest()
+
+
+def polyphenylene_smiles(n):
+    def go(k):
+        return f"(c{k}ccc{go(k - 1)}cc{k})" if k > 0 else ""
+
+    return go(n)[1:-1]
+
+
+def make_polyphenylene(n, dihedral_deg):
+    """Make a chain of n benzene rings with each ring rotated `dihedral_deg` degrees with respect to the previous ring"""
+    mol = ligand_from_smiles(polyphenylene_smiles(n))
+    set_mol_name(mol, f"{n}_{dihedral_deg}")
+    mol = AllChem.AddHs(mol)
+    for k in range(n - 1):  # n - 1 inter-ring bonds to rotate
+        i = 2 + 4 * k
+        AllChem.SetDihedralDeg(mol.GetConformer(0), i, i + 1, i + 2, i + 3, dihedral_deg)
+    return mol

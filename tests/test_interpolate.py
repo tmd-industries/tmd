@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,7 +39,7 @@ from tmd.fe.utils import get_romol_conf, read_sdf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.utils import path_to_internal_file
 
-pytestmark = [pytest.mark.nocuda]
+pytestmark = [pytest.mark.nogpu]
 
 
 def test_align_harmonic_bond():

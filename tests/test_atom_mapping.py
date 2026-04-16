@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from common import ligand_from_smiles
+from common import ligand_from_smiles, make_polyphenylene
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -37,7 +37,6 @@ from tmd.fe.utils import (
     get_mol_name,
     get_romol_conf,
     read_sdf,
-    set_mol_name,
     set_romol_conf,
 )
 
@@ -1038,24 +1037,6 @@ def test_get_cores_and_diagnostics():
         assert diagnostics.num_cores <= diagnostics.total_leaves_visited
 
         assert diagnostics.total_leaves_visited <= diagnostics.total_nodes_visited
-
-
-def polyphenylene_smiles(n):
-    def go(k):
-        return f"(c{k}ccc{go(k - 1)}cc{k})" if k > 0 else ""
-
-    return go(n)[1:-1]
-
-
-def make_polyphenylene(n, dihedral_deg):
-    """Make a chain of n benzene rings with each ring rotated `dihedral_deg` degrees with respect to the previous ring"""
-    mol = ligand_from_smiles(polyphenylene_smiles(n))
-    set_mol_name(mol, f"{n}_{dihedral_deg}")
-    mol = AllChem.AddHs(mol)
-    for k in range(n - 1):  # n - 1 inter-ring bonds to rotate
-        i = 2 + 4 * k
-        AllChem.SetDihedralDeg(mol.GetConformer(0), i, i + 1, i + 2, i + 3, dihedral_deg)
-    return mol
 
 
 def get_core(mol_a, mol_b, **kwargs):

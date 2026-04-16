@@ -589,9 +589,9 @@ def test_run_rbfe_legs(
             "5812eb125a0ec707bb169536f506cef18f53fe4c92f59ed0c889ab669dbcde66",
         ),
         (False, "solvent"): (
-            "0486b647802e4c03186b509d1d89c2f91cf9fb6a3e4ef0e8ce4d968c0f5f9d2f",
-            "15f07065aa84affde2adb3d10f40bed2f20028148a1c66e77650f0ea599a3cbd",
-            "675dcc01e335616cd8544bc0a87bab895b0a3310c5c17ccf15f65636f6ebdd2a",
+            "870853817ba2e9dac047bda8acc5cbd18090884845bbeb16f97e5e810b367de3",
+            "834752f7ef0bc1e8929f432d0f475ae43c4a36cc46715f504a9db6b0d5365726",
+            "f0d5a9472eb10fb3d8aaf127f7fc1b341e84e5e5c2030bdc1ba416ccedb66b59",
         ),
         (False, "complex"): (
             "215d806c89acb78bd43d168558f64f170e41564177b5b0a80b85baec50fd37ea",
@@ -604,9 +604,9 @@ def test_run_rbfe_legs(
             "b6c75d5d37939196c3271e7db56299b07e8e9b856ace03e4d9b42f11cf30c220",
         ),
         (True, "solvent"): (
-            "f48b346de44978ab82de3e84426f737c316bd19290336fe1de362a6a45e4742e",
-            "366265ed5cd703a047a6cc286cca4fca3d6de0200ee622ace0dd16a2c00091db",
-            "f7fcc5fc8571124a4e92190ad4513a88d32c80d54988d689989e81b944f67c5a",
+            "3325edf92b5a55689fb89a1f325f48e60bf876bb3b6065a1e57f86f75abc3586",
+            "e50be705a9a4f18f21293ff044b13a9e45a879dced4ff8f3412acf7652c9e131",
+            "85f80b452dddb81c3ae5264b6637a8a28af1cd9f7506da86a9c96cd6142a4622",
         ),
         (True, "complex"): (
             "69a8bc2c8805d63f63a9644f72506e7a63d67542e283abb6c77669963446546b",
@@ -771,6 +771,96 @@ def test_run_rbfe_legs(
 @pytest.mark.fixed_output
 @pytest.mark.parametrize("enable_batching", [False, True])
 @pytest.mark.parametrize(
+    "leg, n_windows, n_frames, n_eq_steps",
+    [("vacuum", 24, 50, 1000), ("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
+)
+@pytest.mark.parametrize("mol", ["15"])
+@pytest.mark.parametrize("seed", [2026])
+def test_rest_ligand_flexibility(
+    enable_batching,
+    leg,
+    n_windows,
+    n_frames,
+    n_eq_steps,
+    mol,
+    seed,
+):
+    leg_hashes = {
+        (False, "vacuum"): (
+            "83ba5b557641ca5f82c0424cc71ea5b40067a9cdc128665b4e68e1b992b9599d",
+            "98f631766cead3e4f58cdd2e7e51764fb36b07aa3ab40aa6281780d5d041660b",
+        ),
+        (False, "solvent"): (
+            "c5106f93a51d4965391ee35de5625a12fcc4a806a8d1dcd9c4aa5e78f19795c1",
+            "c9c3447cd13d809c1da3d03ccbb82fa53dd43c46e1a0bbcea3c824069a4580e5",
+        ),
+        (False, "complex"): (
+            "373dc0f5d65af1a8f21083ccc4909762da8da28475120c7f4f8f37847c4a0b3c",
+            "15b1696749e85b4a5051be0d412a66764ccc10a5604828611465c3b9bace13ac",
+        ),
+        (True, "vacuum"): (
+            "2be4b9aaa6dd2a1dc32db091270094c72bd48dfafc12091ca133940e41aed252",
+            "b1b2526fdcddd4ee761e6c3abd1d254da4a1f4ff40d45cc5b687a18e2a5a89af",
+        ),
+        (True, "solvent"): (
+            "c419be1a61d73efebc283962d093dba7de3a8b3bf90fc9428d736d93acf1af91",
+            "f82daa487792f6d4714e5a5a470260de90ae93ea02cb490116ed3bfdafc4f30c",
+        ),
+        (True, "complex"): (
+            "dd35ccb527ccced95f863d977bdf288eca4226a04b05a29c02c34e0c194d3805",
+            "b065dd150637262e105e85f06455cb76b441a0b026ac82e54c9e1dc279d29dfa",
+        ),
+    }
+
+    def verify_endstate_hashes(leg_dir: Path, expected_hash: str):
+        summary_path = leg_dir / "summary.npz"
+        assert summary_path.is_file()
+        summary_data = dict(np.load(summary_path))
+        with NamedTemporaryFile(suffix=".npz") as temp:
+            # The time changes, so need to remove prior to hashing
+            summary_data.pop("time")
+            np.savez(temp.name, **summary_data)
+            summary_hash = hash_file(temp.name)
+        endstate_hash = hash_file(leg_dir / "endstate_traj.npz")
+        # Load the summary, so we can see what changed
+        assert (summary_hash, endstate_hash) == expected_hash, summary_data
+
+    with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
+        mols = read_sdf_mols_by_name(hif2a_dir / "ligands.sdf")
+        with NamedTemporaryFile(suffix=".sdf") as temp:
+            with Chem.SDWriter(temp.name) as writer:
+                writer.write(mols[mol])
+            config = dict(
+                sdf_path=temp.name,
+                pdb_path=hif2a_dir / "5tbm_prepared.pdb",
+                seed=seed,
+                leg=leg,
+                n_eq_steps=n_eq_steps,
+                n_frames=n_frames,
+                n_windows=n_windows,
+                forcefield=DEFAULT_FF,
+                output_dir=f"{ARTIFACT_DIR_NAME}/rest_endstate_{mol}_{leg}_{seed}_{enable_batching}",
+            )
+
+            env = {"TMD_BATCH_MODE": "on" if enable_batching else "off"}
+
+            config_a = config.copy()
+            config_a["output_dir"] = config["output_dir"] + "_a"
+            proc = run_example("rest_ligand_flexibility.py", get_cli_args(config_a), env=env)
+            assert proc.returncode == 0
+            verify_endstate_hashes(Path(config_a["output_dir"]) / mol, leg_hashes[(enable_batching, leg)])
+
+            config_b = config.copy()
+            config_b["output_dir"] = config["output_dir"] + "_b"
+            assert config_b["output_dir"] != config_a["output_dir"], "Runs are writing to the same output directory"
+            proc = run_example("rest_ligand_flexibility.py", get_cli_args(config_b), env=env)
+            assert proc.returncode == 0
+            verify_endstate_hashes(Path(config_b["output_dir"]) / mol, leg_hashes[(enable_batching, leg)])
+
+
+@pytest.mark.fixed_output
+@pytest.mark.parametrize("enable_batching", [False, True])
+@pytest.mark.parametrize(
     "leg, n_windows, n_frames, n_eq_steps, local_steps",
     [
         ("solvent", 5, 50, 1000, 400),
@@ -799,9 +889,9 @@ def test_run_rbfe_legs_local(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         ("solvent", 400, True): (
-            "c8898ed64d11e62e73756c647392e8259826a8d2090767e2a7b5b7647de40e47",
-            "1671020ce0132d5e768f49d9e9465bfa423eae7ebccf3387c9f103e857ad4afb",
-            "f64baf3d6890cb44884faa37d1a8744b52f48e330eaa50b2afced046b8d49e7e",
+            "f5224cbc402f8043d236f7c770787b21299fcd185d9c9f60cf1cd264d99cffb0",
+            "8e08d533d9e382efe1b6c6fd7b1233d2903a4c83872d331d555405c91ed1ae56",
+            "687efb1c1dca9d163c21a96c38aacf62883ea62d08fb9b9285d1a99a9ccc09ae",
         ),
         ("complex", 400, True): (
             "a78e7eb672e7216146ce28894fc61668fef0a612ccf43c1f5788e1e753c79724",
@@ -809,9 +899,9 @@ def test_run_rbfe_legs_local(
             "0b9bf19f609be0279c6d19beec7462916d56ce0abdbd79bb38039f58fbf87802",
         ),
         ("solvent", 390, True): (
-            "bbc8a787df42dc7a5871165bccce480a5ecb36ab5ae28771b84f41c17ed4d62e",
-            "ae8ec3d4d817406c4f43a94e7da643bbaa55d43a337a81ad54967ceb6e305b7f",
-            "de726992de6e28805868d1b4511c54ef4397856c3417a72efd3596372d08f719",
+            "209e55870a64681080880675d4c143d51301901968b5cc071e55265b4c106c2e",
+            "3dcab09080f27ef1260ff3449a385ab12b55fdd80a6ba47d16e8728d811ee97f",
+            "983b5402829fdb82ea3f2ab0befc6e13c9e4290ad46854db652fff023b8458a5",
         ),
         ("complex", 390, True): (
             "7c11cbb89ef053f6eea266cf9239ec86b180df79743a8bd486cf1da789fd9b0f",
@@ -819,9 +909,9 @@ def test_run_rbfe_legs_local(
             "f0d05cfa63086d08fc528df13a96b226871826c061750b04a59ab8ada5800fdd",
         ),
         ("solvent", 400, False): (
-            "88a47c42da84db9ded4b5c75b405d8f53e1e1b54737fd4ba89a557f269809302",
-            "ae3c13799a2b3de54e776bf21a15a6937303ea5b7168415a9f22fec7c85fb34b",
-            "9896a66cb47e22d457b48ab6f03c2dcb85a13ec01a28988b2c57cb7ed1a7ec2f",
+            "3d86f3719b2a589a48738693e14fb1afeb24199907e4102dc5ade3013344371f",
+            "1fd18cbe89b4dc4d513b5555bd6b94bbcf669029119388d7dc0f03fca1a5ccd4",
+            "1d2cbf5c9d903c2eb0ea22effcc5397a4507fae3c2abf7aa90d797a5f58b29cf",
         ),
         ("complex", 400, False): (
             "3197ffe103a435efb4f1ebb7a385eb7a52e1e0d07cdf9edf52dd19258f905a5e",
@@ -829,9 +919,9 @@ def test_run_rbfe_legs_local(
             "2615c28622911c7b77d643a14b937382a0bdba79f42e27e9422da12eb25f4b90",
         ),
         ("solvent", 390, False): (
-            "67f2c6c5c360b30ff569868e725c43c8aafdbf04b660e7827d0dfa75f2aa9a8c",
-            "fb83a54cb54629d503b2c6ec2c29f7c930fca484e1ecf71838207fc1700a95db",
-            "d9262eb53e230dda24dbee9f909f8d55680bf62f1d8521c8a5a05a44a26713eb",
+            "633e973eaad9d328f1306f34c639a8ffb4b20d85b73c0e964b941a7f6f8d116e",
+            "c41b71d8bfd86fc9649e9230b6f4ecf4139d451fb7a964c2910c76222c0237fb",
+            "60c0e729600e008f8b5d6d070d2b63cd8393ce400bd140f406a457448160cdc7",
         ),
         ("complex", 390, False): (
             "7d93d2e93bf66c29b49fc352fbf0ea0f41240a00348c41babeac1de3978ec540",
@@ -980,7 +1070,7 @@ def test_run_rbfe_legs_local(
 
 @pytest.mark.nightly
 @pytest.mark.parametrize("system", ["dhfr", "hif2a-rbfe"])
-def test_dhfr_mps_benchmark(system):
+def test_dhfr_benchmark(system):
     with temporary_working_dir() as temp_dir:
-        proc = run_example("mps_benchmark.py", ["--processes", "1", "--local_md", "--system", system], cwd=temp_dir)
+        proc = run_example("benchmark.py", ["--processes", "1", "2", "--local_md", "--system", system], cwd=temp_dir)
         assert proc.returncode == 0

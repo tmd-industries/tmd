@@ -1,4 +1,3 @@
-
 MKFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 CPP_DIR := $(MKFILE_DIR)tmd/cpp/
 INSTALL_PREFIX := $(MKFILE_DIR)tmd/
@@ -13,6 +12,7 @@ NOCUDA_MARKER := nocuda
 # (but WITH build dependencies of # custom_ops, e.g. CUDA).
 # These tests can be run on cheaper CPU instances.
 NOGPU_MARKER := nogpu
+MDTRAJ_MARKER := mdtraj
 
 MEMCHECK_MARKER := memcheck
 NIGHTLY_MARKER := nightly
@@ -47,7 +47,11 @@ nocuda_tests:
 
 .PHONY: nogpu_tests
 nogpu_tests:
-	pytest -m '$(NOGPU_MARKER) and not $(NIGHTLY_MARKER)' $(PYTEST_CI_ARGS)
+	pytest -m '$(NOGPU_MARKER) and not $(MDTRAJ_MARKER) and not $(NIGHTLY_MARKER)' $(PYTEST_CI_ARGS)
+
+.PHONY: nogpu_mdtraj_tests
+nogpu_mdtraj_tests:
+	pytest -m '$(NOGPU_MARKER) and $(MDTRAJ_MARKER) and not $(NIGHTLY_MARKER)' $(PYTEST_CI_ARGS)
 
 .PHONY: fixed_output_tests
 fixed_output_tests:
