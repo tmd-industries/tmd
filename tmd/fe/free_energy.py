@@ -1755,11 +1755,12 @@ def compute_potential_matrix_batched_system(
     coord_perm = np.arange(0, n_states)
     param_permutation = np.argsort(hrex.replica_idx_by_state)
     states = n_states
-    if max_delta_states is not None and max_delta_states * 2 < n_states:
-        # Roll back by the number of delta states
+    if max_delta_states is not None:
+        # Roll back by the number of delta states, if the values won't wrap around to states that are not monotonically increasing
+        # In the case that they would wrap, set the minimum state to sample that would be sampled
         param_permutation -= max_delta_states
-        param_permutation = param_permutation % n_states
-        states = max_delta_states * 2 + 1
+        param_permutation = np.clip(param_permutation, 0, max(n_states - (2 * max_delta_states + 1), 0))
+        states = min(max_delta_states * 2 + 1, n_states)
     for i in range(states):
         for j in range(n_pots):
             _, _, u = potentials[j].execute_dim(

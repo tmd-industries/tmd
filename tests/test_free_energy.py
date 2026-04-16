@@ -908,6 +908,11 @@ def test_batch_compute_potential_matrix_with_batched_potentials(
             verify_and_sanitize_potential_matrix(matrix_ref, hrex.replica_idx_by_state)
             mask = np.isfinite(comp_matrix[i])
             np.testing.assert_equal(comp_matrix[i, mask], matrix_ref[mask])
+        # The non inf values should all be sequential, to verify that there is no wrapping taking place
+        collapsed = comp_matrix.sum(0)
+        mask = np.isfinite(collapsed)
+        for row in mask:
+            np.testing.assert_equal(np.diff(np.argwhere(row).reshape(-1)), 1)
 
 
 @pytest.mark.nogpu
