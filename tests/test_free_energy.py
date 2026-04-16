@@ -47,6 +47,7 @@ from tmd.fe.free_energy import (
     batch_compute_potential_matrix,
     batches,
     compute_potential_matrix,
+    compute_potential_matrix_batched_system,
     estimate_free_energy_bar,
     get_context,
     get_water_sampler_params,
@@ -843,6 +844,75 @@ def test_batch_compute_potential_matrix(
 
     comp_matrix = batch_compute_potential_matrix(unbound_impls, hrex, params_by_state_by_pot, max_delta_states)
     np.testing.assert_equal(comp_matrix, combined_ref_matrix)
+
+
+@pytest.mark.parametrize(
+    "n_states,max_delta_states", [(1, 1), (1, None), (1, 2), (2, 1), (3, 6), (6, 3), (2, None), (30, 5)]
+)
+@pytest.mark.parametrize("seed", [2024, 2025])
+def test_batch_compute_potential_matrix_with_batched_potentials(
+    hif2a_ligand_pair_single_topology, n_states: int, max_delta_states: int | None, seed
+):
+    st, _ = hif2a_ligand_pair_single_topology
+    states = [st.setup_intermediate_state(lam) for lam in np.linspace(0.0, 1.0, n_states)]
+
+    potentials = [pot for pot in states[0].get_U_fns()]
+    ref_unbound_impls = [pot.potential.to_gpu(np.float32).unbound_impl for pot in potentials]
+
+    bound_impls = []
+    for i in range(len(states[0].get_U_fns())):
+        combined_bp = states[0].get_U_fns()[i]
+        for state in states[1:]:
+            combined_bp = combined_bp.combine(state.get_U_fns()[i])
+        bound_impls.append(combined_bp.to_gpu(precision=np.float32).bound_impl)
+    batched_unbound_impls = [bp.get_potential() for bp in bound_impls]
+
+    params_by_state_by_pot = []
+    for i in range(len(potentials)):
+        params_by_state = []
+        for j, state in enumerate(states):
+            params_by_state.append([state.get_U_fns()[i].params.astype(np.float32)])
+        params_by_state_by_pot.append(np.array(params_by_state))
+
+    conf_a = utils.get_romol_conf(st.mol_a)
+    conf_b = utils.get_romol_conf(st.mol_b)
+    conf = st.combine_confs(conf_a, conf_b)
+    conf = conf.astype(np.float32)
+
+    rng = np.random.default_rng(seed)
+    confs = conf + rng.normal(0.0, 0.01, (len(states), st.get_num_atoms(), 3)).astype(np.float32)
+    boxes = 100.0 * np.eye(3) + rng.uniform(-1.0, 1.0, (len(states), 3, 3))
+    boxes = boxes.astype(np.float32)
+    xvbs = [CoordsVelBox(conf, np.zeros_like(conf), box) for conf, box in zip(confs, boxes)]
+
+    replica_idx_by_state = [ReplicaIdx(i) for i in rng.choice(n_states, size=n_states, replace=False)]
+    hrex = HREX(xvbs, replica_idx_by_state)
+
+    combined_ref_matrix = []
+    for i, ubp in enumerate(ref_unbound_impls):
+        matrix_ref = compute_potential_matrix(ubp, hrex, params_by_state_by_pot[i], max_delta_states)
+        verify_and_sanitize_potential_matrix(matrix_ref, hrex.replica_idx_by_state)
+        combined_ref_matrix.append(matrix_ref)
+
+    comp_matrix = compute_potential_matrix_batched_system(
+        batched_unbound_impls, hrex, params_by_state_by_pot, max_delta_states
+    )
+    for i, potential_u_kln in enumerate(combined_ref_matrix):
+        mask = np.isfinite(potential_u_kln)
+        np.testing.assert_equal(comp_matrix[i, mask], potential_u_kln[mask])
+
+    # If there are values being filled in by the batched version that aren't covered by the reference impl, verify against the complete matrix
+    if max_delta_states is not None and max_delta_states * 2 < n_states:
+        for i, ubp in enumerate(ref_unbound_impls):
+            matrix_ref = compute_potential_matrix(ubp, hrex, params_by_state_by_pot[i], None)
+            verify_and_sanitize_potential_matrix(matrix_ref, hrex.replica_idx_by_state)
+            mask = np.isfinite(comp_matrix[i])
+            np.testing.assert_equal(comp_matrix[i, mask], matrix_ref[mask])
+        # The non inf values should all be sequential, to verify that there is no wrapping taking place
+        collapsed = comp_matrix.sum(0)
+        mask = np.isfinite(collapsed)
+        for row in mask:
+            np.testing.assert_equal(np.diff(np.argwhere(row).reshape(-1)), 1)
 
 
 @pytest.mark.nogpu

@@ -1647,7 +1647,7 @@ def compute_potential_matrix(
     return U_kl
 
 
-def batch_compute_potential_matrix(
+def compute_potential_matrix_streams(
     potentials: list[custom_ops.Potential_f32],
     hrex: HREX[CoordsVelBox],
     params_by_state_by_potential: list[NDArray],
@@ -1657,7 +1657,8 @@ def batch_compute_potential_matrix(
     computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
     set to `np.inf`.
 
-    A batched variant of `compute_potential_matrix` that parallelizes the computation of energies on the GPU using streams.
+    A batched variant of `compute_potential_matrix` that parallelizes the computation of energies on the GPU using streams. All potentials
+    must act on a single system
 
     Parameters
     ----------
@@ -1674,7 +1675,7 @@ def batch_compute_potential_matrix(
         If given, number of neighbor states on either side of a given replica's initial state for which to compute
         potentials. Otherwise, compute potentials for all (replica, state) pairs.
     """
-
+    assert all([pot.num_systems() == 1 for pot in potentials])
     potential_runner = custom_ops.PotentialExecutor_f32()
     coords = np.array([xvb.coords for xvb in hrex.replicas])
     boxes = np.array([xvb.box for xvb in hrex.replicas])
@@ -1713,6 +1714,104 @@ def batch_compute_potential_matrix(
     U_kl = compute_sparse(max_delta_states) if max_delta_states is not None else compute_dense()
 
     return U_kl
+
+
+def compute_potential_matrix_batched_system(
+    potentials: list[custom_ops.Potential_f32],
+    hrex: HREX[CoordsVelBox],
+    params_by_state_by_potential: list[NDArray],
+    max_delta_states: Optional[int] = None,
+) -> NDArray[np.float32]:
+    """Computes the (n_potentials, n_replicas, n_states) sparse matrix of potential energies, where a given element $(k, l)$ is
+    computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
+    set to `np.inf`.
+
+    A batched variant of `compute_potential_matrix` that parallelizes the computation of energies on the GPU by batching multiple simulations.
+    All potentials must act on the entire set of replicas.
+
+    Parameters
+    ----------
+    potentials : list[custom_ops.Potential_f32]
+        list of potentials to evaluate
+
+    hrex : HREX
+        HREX state (containing replica states and permutation)
+
+    params_by_state : NDArray
+        (n_states, ...) array of potential parameters for each state
+
+    max_delta_states : int or None, optional
+        If given, number of neighbor states on either side of a given replica's initial state for which to compute
+        potentials. Otherwise, compute potentials for all (replica, state) pairs.
+    """
+    assert all([pot.num_systems() == len(hrex.replicas) for pot in potentials])
+    coords = np.stack([xvb.coords for xvb in hrex.replicas])
+    boxes = np.stack([xvb.box for xvb in hrex.replicas])
+
+    n_states = len(hrex.replicas)
+    n_pots = len(potentials)
+    U_kl = np.full((n_pots, n_states, n_states), np.inf, dtype=np.float32)
+
+    coord_perm = np.arange(0, n_states)
+    param_permutation = np.argsort(hrex.replica_idx_by_state)
+    states = n_states
+    if max_delta_states is not None:
+        # Roll back by the number of delta states, if the values won't wrap around to states that are not monotonically increasing
+        # In the case that they would wrap, set the minimum state to sample that would be sampled
+        param_permutation -= max_delta_states
+        param_permutation = np.clip(param_permutation, 0, max(n_states - (2 * max_delta_states + 1), 0))
+        states = min(max_delta_states * 2 + 1, n_states)
+    for i in range(states):
+        for j in range(n_pots):
+            _, _, u = potentials[j].execute_dim(
+                coords,
+                params_by_state_by_potential[j][param_permutation],  # type: ignore
+                boxes,
+                False,
+                False,
+                True,
+            )
+            U_kl[j, coord_perm, param_permutation] = u
+        # Cycle the param permutation
+        param_permutation += 1
+        param_permutation = param_permutation % n_states
+    return U_kl
+
+
+def batch_compute_potential_matrix(
+    potentials: list[custom_ops.Potential_f32],
+    hrex: HREX[CoordsVelBox],
+    params_by_state_by_potential: list[NDArray],
+    max_delta_states: Optional[int] = None,
+) -> NDArray[np.float32]:
+    """Computes the (n_potentials, n_replicas, n_states) sparse matrix of potential energies, where a given element $(k, l)$ is
+    computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
+    set to `np.inf`.
+
+    A batched variant of `compute_potential_matrix` that parallelizes the computation of energies on the GPU. If the potentials are acting
+    on a single system, then streams will be used to parallelize results. If the potentials are acting on all states, parallelism comes
+    from the batched potentials.
+
+    Parameters
+    ----------
+    potentials : list[custom_ops.Potential_f32]
+        list of potentials to evaluate
+
+    hrex : HREX
+        HREX state (containing replica states and permutation)
+
+    params_by_state : NDArray
+        (n_states, ...) array of potential parameters for each state
+
+    max_delta_states : int or None, optional
+        If given, number of neighbor states on either side of a given replica's initial state for which to compute
+        potentials. Otherwise, compute potentials for all (replica, state) pairs. If batched, max delta states will
+        compute energies for states that wrap around. IE replica 0 will be evaluated against parameter from state len(states) - max_delta_states.
+    """
+    if any([pot.num_systems() == 1 for pot in potentials]):
+        return compute_potential_matrix_streams(potentials, hrex, params_by_state_by_potential, max_delta_states)
+    else:
+        return compute_potential_matrix_batched_system(potentials, hrex, params_by_state_by_potential, max_delta_states)
 
 
 def verify_and_sanitize_potential_matrix(
@@ -2134,13 +2233,9 @@ def run_sims_hrex(
     # Set up overall potential and context using the first state.
     if batch_simulations:
         context = get_batched_context(initial_states, md_params=md_params)
-
-        temp_ctxt = get_context(initial_states[0])
-        nrg_pots = [bp.get_potential() for bp in temp_ctxt.get_potentials()]
-        del temp_ctxt
     else:
         context = get_context(initial_states[0], md_params=md_params)
-        nrg_pots = [bp.get_potential() for bp in context.get_potentials()]
+    nrg_pots = [bp.get_potential() for bp in context.get_potentials()]
     assert len(context.get_potentials()) == len(initial_states[0].potentials)
     temperature = initial_states[0].integrator.temperature
     ligand_idxs = initial_states[0].ligand_idxs
@@ -2194,7 +2289,7 @@ def run_sims_hrex(
     for current_frame in range(md_params.n_frames):
         hrex, samples_by_state_iter, U_kl_raw, water_sampler_proposals_by_state = hrex_func(
             hrex,
-            nrg_pots,  # TBD: Use the batched potentials for computing the energy matrix
+            nrg_pots,
             params_by_state_by_pot,
             water_params_by_state,
             context,
