@@ -96,12 +96,11 @@ double __device__ __forceinline__ d_erfc_beta_r_dr(double beta, double dij) {
 // damping_factor = r * V(r) / q_ij = 1 + r^3/(2*rc^3) - 3*r/(2*rc)
 // returns dV/dr / q_ij = -1/r^2 + r/rc^3
 double __device__ __forceinline__ real_es_factor(double cutoff, double dij,
-                                                 double inv_dij,
                                                  double inv_d2ij,
                                                  double &damping_factor) {
   double rc3 = cutoff * cutoff * cutoff;
-  double inv_rc3 = 1.0 / rc3;
-  double inv_rc = 1.0 / cutoff;
+  double inv_rc3 = rcp_rn(rc3);
+  double inv_rc = rcp_rn(cutoff);
   double dij3 = dij * dij * dij;
   damping_factor = 1.0 + 0.5 * dij3 * inv_rc3 - 1.5 * dij * inv_rc;
   return -inv_d2ij + dij * inv_rc3;
@@ -180,11 +179,11 @@ float __device__ __forceinline__ fast_erfc_and_deriv(float x, float &dedx) {
 }
 
 float __device__ __forceinline__ real_es_factor(float cutoff, float dij,
-                                                float inv_dij, float inv_d2ij,
+                                                float inv_d2ij,
                                                 float &damping_factor) {
   float rc3 = cutoff * cutoff * cutoff;
-  float inv_rc3 = 1.0f / rc3;
-  float inv_rc = 1.0f / cutoff;
+  float inv_rc3 = rcp_rn(rc3);
+  float inv_rc = rcp_rn(cutoff);
   float dij3 = dij * dij * dij;
   damping_factor = 1.0f + 0.5f * dij3 * inv_rc3 - 1.5f * dij * inv_rc;
   return -inv_d2ij + dij * inv_rc3;
@@ -207,7 +206,7 @@ void __device__ __forceinline__ compute_electrostatics(
 
   RealType qij = qi * qj;
   es_prefactor = charge_scale * qij * inv_dij *
-                 real_es_factor(cutoff, dij, inv_dij, inv_d2ij, damping_factor);
+                 real_es_factor(cutoff, dij, inv_d2ij, damping_factor);
 
   if (COMPUTE_U) {
     u = charge_scale * qij * inv_dij * damping_factor;
