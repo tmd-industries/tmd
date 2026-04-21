@@ -1302,7 +1302,7 @@ class AlignedNonbondedPairlist(AlignedPotential):
         # boundaries.
         params = batch_interpolate_nonbonded_pair_list_params(self.cutoff, self.src_params, self.dst_params, lamb)
         params = jnp.array(params)
-        return NonbondedPairListPrecomputed(self.num_atoms, self.idxs).bind(params)
+        return NonbondedPairListPrecomputed(self.num_atoms, self.idxs, self.cutoff).bind(params)
 
 
 class SingleTopology(AtomMapMixin):
@@ -1997,7 +1997,6 @@ class SingleTopology(AtomMapMixin):
         assert isinstance(host_nonbonded.params, (np.ndarray, jax.Array))
         host_params = host_nonbonded.params
         cutoff = host_nonbonded.potential.cutoff
-        beta = host_nonbonded.potential.beta
 
         guest_ixn_env_params = self._get_guest_params(self.ff.q_handle, self.ff.lj_handle, lamb, cutoff)
 
@@ -2013,7 +2012,6 @@ class SingleTopology(AtomMapMixin):
             n_atoms,
             combined_exclusion_idxs,
             combined_scale_factors,
-            beta,
             cutoff,
         )
 

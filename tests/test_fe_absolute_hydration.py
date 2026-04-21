@@ -120,7 +120,6 @@ def test_fit_solvent_absolute_hydration_ccc_params(forcefield):
         charges,
         lig_idxs,
         env_idxs,
-        beta=nb_pot.beta,
         cutoff=nb_pot.cutoff,
     )
 

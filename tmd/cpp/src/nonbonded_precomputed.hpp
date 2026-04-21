@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,13 +28,15 @@ class NonbondedPairListPrecomputed : public Potential<RealType> {
       const int num_atoms, const int B, const RealType *__restrict__ coords,
       const RealType *__restrict__ params, const RealType *__restrict__ box,
       const int *__restrict__ pair_idxs, const int *__restrict__ system_idxs,
-      unsigned long long *__restrict__ du_dx,
+      const RealType cutoff, unsigned long long *__restrict__ du_dx,
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
   const int num_systems_;
   const int num_atoms_;
   const int B_;
+
+  const RealType cutoff_;
 
   int *d_idxs_;        // [B, 2]
   int *d_system_idxs_; // [B]
@@ -47,8 +49,8 @@ private:
 public:
   NonbondedPairListPrecomputed(const int num_systems, const int num_atoms,
                                const std::vector<int> &pair_idxs,   // [B, 2]
-                               const std::vector<int> &system_idxs  // [B]
-  );
+                               const std::vector<int> &system_idxs, // [B]
+                               const RealType cutoff);
 
   ~NonbondedPairListPrecomputed();
 

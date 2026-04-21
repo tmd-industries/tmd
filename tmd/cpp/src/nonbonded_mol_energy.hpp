@@ -27,7 +27,6 @@ template <typename RealType> class NonbondedMolEnergyPotential {
 private:
   const int N_;
   const int num_target_mols_;
-  const RealType beta_;
   const RealType cutoff_;
 
   DeviceBuffer<int> d_target_atom_idxs_;
@@ -40,7 +39,7 @@ private:
 public:
   NonbondedMolEnergyPotential(const int N,
                               const std::vector<std::vector<int>> &target_mols,
-                              const RealType beta, const RealType cutoff);
+                              const RealType cutoff);
 
   ~NonbondedMolEnergyPotential() {};
 

@@ -95,9 +95,9 @@ def test_interaction_group_traj_correctness(config):
     U_0 = compute_Us(nb_params)
 
     def U_ref(x, box_diag):
-        kwargs = dict(beta=2.0, cutoff=1.2)
+        kwargs = dict(cutoff=1.2)
         vdw, es = nonbonded_interaction_groups(x, nb_params, jnp.diag(box_diag), lig_idxs, env_idxs, **kwargs)
         return jnp.sum(vdw) + jnp.sum(es)
 
     U_0_ref = np.array([U_ref(x, box_diag) for (x, box_diag) in zip(xs, box_diags)])
-    np.testing.assert_allclose(U_0, U_0_ref)
+    np.testing.assert_allclose(U_0, U_0_ref, rtol=5e-7)

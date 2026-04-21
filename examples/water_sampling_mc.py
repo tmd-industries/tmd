@@ -129,8 +129,6 @@ def test_exchange():
     # [0] nb_all_pairs, [1] nb_ligand_water, [2] nb_ligand_protein
     # all_pairs has masked charges
     nb_pot = get_bound_potential_by_type(bps, Nonbonded)
-    # does not use a summed potential
-    nb_beta = nb_pot.potential.beta
     nb_cutoff = nb_pot.potential.cutoff
     nb_water_ligand_params = nb_pot.params
     if mol:
@@ -155,7 +153,6 @@ def test_exchange():
         assert mol is not None, "Requires a mol for targeted exchange"
         if args.use_reference:
             exc_mover = RefTIBDExchangeMove(
-                nb_beta,
                 nb_cutoff,
                 nb_water_ligand_params,
                 water_idxs,
@@ -170,7 +167,6 @@ def test_exchange():
                 water_idxs,
                 nb_water_ligand_params,
                 DEFAULT_TEMP,
-                nb_beta,
                 nb_cutoff,
                 DEFAULT_BB_RADIUS,
                 seed,
@@ -180,14 +176,13 @@ def test_exchange():
             )
     elif args.insertion_type == "untargeted":
         if args.use_reference:
-            exc_mover = RefBDExchangeMove(nb_beta, nb_cutoff, nb_water_ligand_params, water_idxs, DEFAULT_TEMP)
+            exc_mover = RefBDExchangeMove(nb_cutoff, nb_water_ligand_params, water_idxs, DEFAULT_TEMP)
         else:
             exc_mover = custom_ops.BDExchangeMove_f32(
                 initial_state.x0.shape[0],
                 water_idxs,
                 nb_water_ligand_params,
                 DEFAULT_TEMP,
-                nb_beta,
                 nb_cutoff,
                 seed,
                 args.mc_steps_per_batch,

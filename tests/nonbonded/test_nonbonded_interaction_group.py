@@ -12,65 +12,65 @@ pytestmark = [pytest.mark.memcheck]
 
 def test_nonbonded_interaction_group_invalid_indices():
     with pytest.raises(RuntimeError, match=re.escape("provide at least one batch of row atom indices")):
-        NonbondedInteractionGroup(1, [], 1.0, 1.0).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(1, [], 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("atom indices must be unique")):
-        NonbondedInteractionGroup(3, np.array([1, 1], dtype=np.int32), 1.0, 1.0).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(3, np.array([1, 1], dtype=np.int32), 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("index values must be greater or equal to zero")):
-        NonbondedInteractionGroup(3, np.array([1, -1], dtype=np.int32), 1.0, 1.0).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(3, np.array([1, -1], dtype=np.int32), 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("index values must be less than N")):
-        NonbondedInteractionGroup(3, np.array([1, 100], dtype=np.int32), 1.0, 1.0).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(3, np.array([1, 100], dtype=np.int32), 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("col_atom_idxs must be nonempty")):
-        NonbondedInteractionGroup(3, np.array([0, 1, 2], dtype=np.int32), 1.0, 1.0).to_gpu(np.float64).unbound_impl
+        NonbondedInteractionGroup(3, np.array([0, 1, 2], dtype=np.int32), 1.0).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("num row idxs must be <= N(3)")):
         NonbondedInteractionGroup(
-            3, np.array([0, 1, 2, 3], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([5], dtype=np.int32)
+            3, np.array([0, 1, 2, 3], dtype=np.int32), 1.0, col_atom_idxs=np.array([5], dtype=np.int32)
         ).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("index values must be less than N(3)")):
         NonbondedInteractionGroup(
-            3, np.array([0, 1], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([2, 3, 4, 5], dtype=np.int32)
+            3, np.array([0, 1], dtype=np.int32), 1.0, col_atom_idxs=np.array([2, 3, 4, 5], dtype=np.int32)
         ).to_gpu(np.float64).unbound_impl
 
     # okay; overlapping
     NonbondedInteractionGroup(
-        3, np.array([0, 1], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([0, 1], dtype=np.int32)
+        3, np.array([0, 1], dtype=np.int32), 1.0, col_atom_idxs=np.array([0, 1], dtype=np.int32)
     ).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("index values must be less than N(3)")):
         NonbondedInteractionGroup(
-            3, np.array([0, 1], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([2, 3], dtype=np.int32)
+            3, np.array([0, 1], dtype=np.int32), 1.0, col_atom_idxs=np.array([2, 3], dtype=np.int32)
         ).to_gpu(np.float64).unbound_impl
 
     # non disjoint, and non-overlapping
     with pytest.raises(RuntimeError, match=re.escape("row and col indices are neither disjoint nor overlapping")):
         NonbondedInteractionGroup(
-            3, np.array([1, 2], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([0, 1], dtype=np.int32)
+            3, np.array([1, 2], dtype=np.int32), 1.0, col_atom_idxs=np.array([0, 1], dtype=np.int32)
         ).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match=re.escape("num row atoms(5) must be <= num col atoms(3) if non-disjoint")):
         NonbondedInteractionGroup(
-            6, np.array([5, 1, 3, 2, 4], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([3, 2, 4], dtype=np.int32)
+            6, np.array([5, 1, 3, 2, 4], dtype=np.int32), 1.0, col_atom_idxs=np.array([3, 2, 4], dtype=np.int32)
         ).to_gpu(np.float64).unbound_impl
 
     # Ok for different idxs
     NonbondedInteractionGroup(
-        3, np.array([0, 1], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([2], dtype=np.int32)
+        3, np.array([0, 1], dtype=np.int32), 1.0, col_atom_idxs=np.array([2], dtype=np.int32)
     ).to_gpu(np.float64).unbound_impl
 
     with pytest.raises(RuntimeError, match="each batch of column indices must be one dimensional"):
         NonbondedInteractionGroup(
-            3, [np.array([0], dtype=np.int32)], 1.0, 1.0, col_atom_idxs=[np.array([1, 2], dtype=np.int32).reshape(1, 2)]
+            3, [np.array([0], dtype=np.int32)], 1.0, col_atom_idxs=[np.array([1, 2], dtype=np.int32).reshape(1, 2)]
         ).to_gpu(np.float64).unbound_impl
 
     # Test that if we have disjoint row_atom/atom_idxs we're not allowed to set compute_col_grads=False
     impl = (
         NonbondedInteractionGroup(
-            6, np.array([0, 1, 2], dtype=np.int32), 1.0, 1.0, col_atom_idxs=np.array([3, 4, 5], dtype=np.int32)
+            6, np.array([0, 1, 2], dtype=np.int32), 1.0, col_atom_idxs=np.array([3, 4, 5], dtype=np.int32)
         )
         .to_gpu(np.float64)
         .unbound_impl
@@ -85,7 +85,6 @@ def test_nonbonded_interaction_group_invalid_indices():
 def test_nonbonded_interaction_group_zero_interactions(rng: np.random.Generator, precision):
     num_atoms = 33
     num_atoms_ligand = 15
-    beta = 2.0
     cutoff = 1.1
     box = 10.0 * np.eye(3)
     conf = rng.uniform(0, 1, size=(num_atoms, 3)).astype(precision)
@@ -96,7 +95,7 @@ def test_nonbonded_interaction_group_zero_interactions(rng: np.random.Generator,
 
     params = rng.uniform(0, 1, size=(num_atoms, 4)).astype(precision)
 
-    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff)
+    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, cutoff)
 
     du_dx, du_dp, u = potential.to_gpu(precision).unbound_impl.execute(conf, params, box.astype(precision))
 
@@ -105,7 +104,6 @@ def test_nonbonded_interaction_group_zero_interactions(rng: np.random.Generator,
     assert u == 0
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
 @pytest.mark.parametrize("num_atoms_subset", [None, 33])
@@ -117,7 +115,6 @@ def test_nonbonded_interaction_group_all_pairs_correctness(
     rtol,
     atol,
     cutoff,
-    beta,
     example_nonbonded_potential,
     example_conf,
     example_box,
@@ -135,7 +132,7 @@ def test_nonbonded_interaction_group_all_pairs_correctness(
         else np.arange(num_atoms, dtype=np.int32)
     )
 
-    potential = NonbondedInteractionGroup(num_atoms, atom_idxs, beta, cutoff, col_atom_idxs=atom_idxs)
+    potential = NonbondedInteractionGroup(num_atoms, atom_idxs, cutoff, col_atom_idxs=atom_idxs)
 
     test_impl = potential.to_gpu(precision)
 
@@ -144,7 +141,6 @@ def test_nonbonded_interaction_group_all_pairs_correctness(
         GradientTest().assert_differentiable_interface_consistency(conf, params, box, test_impl)
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 @pytest.mark.parametrize("num_atoms", [50, 231])
@@ -160,7 +156,6 @@ def test_nonbonded_interaction_group_batch_correctness(
     num_atoms,
     precision,
     cutoff,
-    beta,
     example_nonbonded_potential,
     example_conf,
     example_box,
@@ -197,7 +192,7 @@ def test_nonbonded_interaction_group_batch_correctness(
             for idxs, size in zip(host_idxs, col_atom_counts)
         ]
 
-    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs=col_atom_idxs)
+    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, cutoff, col_atom_idxs=col_atom_idxs)
 
     for w_params in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):
         batch_du_dx, batch_du_dp, batch_u = potential.to_gpu(precision).unbound_impl.execute_dim(
@@ -207,7 +202,6 @@ def test_nonbonded_interaction_group_batch_correctness(
             ref_nb = NonbondedInteractionGroup(
                 num_atoms,
                 ligand_idxs[i],
-                beta,
                 cutoff,
                 col_atom_idxs=col_atom_idxs[i] if col_atom_idxs is not None else None,
             )
@@ -219,7 +213,6 @@ def test_nonbonded_interaction_group_batch_correctness(
             np.testing.assert_array_equal(batch_u[i], ref_u, err_msg=f"Batch {i}")
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
 @pytest.mark.parametrize("num_atoms", [50, 231])
@@ -233,7 +226,6 @@ def test_nonbonded_interaction_group_correctness(
     rtol,
     atol,
     cutoff,
-    beta,
     example_nonbonded_potential,
     example_conf,
     example_box,
@@ -255,7 +247,7 @@ def test_nonbonded_interaction_group_correctness(
         host_idxs = np.setdiff1d(np.arange(num_atoms), ligand_idxs).astype(np.int32)
         col_atom_idxs = rng.choice(host_idxs, size=(num_col_atoms,), replace=False).astype(np.int32)
 
-    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs=col_atom_idxs)
+    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, cutoff, col_atom_idxs=col_atom_idxs)
 
     test_impl = potential.to_gpu(precision)
 
@@ -264,7 +256,6 @@ def test_nonbonded_interaction_group_correctness(
         GradientTest().assert_differentiable_interface_consistency(conf, params, box, test_impl)
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
 @pytest.mark.parametrize("num_atoms", [231])
@@ -278,7 +269,6 @@ def test_nonbonded_interaction_group_neighborlist_rebuild(
     rtol,
     atol,
     cutoff,
-    beta,
     example_nonbonded_potential,
     example_conf,
     example_box,
@@ -300,7 +290,7 @@ def test_nonbonded_interaction_group_neighborlist_rebuild(
         host_idxs = np.setdiff1d(np.arange(num_atoms), ligand_idxs).astype(np.int32)
         col_atom_idxs = rng.choice(host_idxs, size=(num_col_atoms,), replace=False).astype(np.int32)
 
-    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs=col_atom_idxs)
+    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, cutoff, col_atom_idxs=col_atom_idxs)
 
     test_impl = potential.to_gpu(precision)
 
@@ -316,7 +306,6 @@ def test_nonbonded_interaction_group_neighborlist_rebuild(
         GradientTest().assert_differentiable_interface_consistency(conf, params, box, test_impl)
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 @pytest.mark.parametrize("num_atoms_ligand", [1, 15])
@@ -326,7 +315,6 @@ def test_nonbonded_interaction_group_consistency_allpairs_4d_decoupled(
     num_atoms_ligand,
     precision,
     cutoff,
-    beta,
     example_nonbonded_potential,
     example_conf,
     example_box,
@@ -357,7 +345,6 @@ def test_nonbonded_interaction_group_consistency_allpairs_4d_decoupled(
         num_atoms,
         row_atom_idxs=np.arange(num_atoms, dtype=np.int32),
         col_atom_idxs=np.arange(num_atoms, dtype=np.int32),
-        beta=beta,
         cutoff=cutoff,
     ).to_gpu(precision)
 
@@ -374,14 +361,12 @@ def test_nonbonded_interaction_group_consistency_allpairs_4d_decoupled(
         num_atoms,
         row_atom_idxs=ligand_idxs,
         col_atom_idxs=ligand_idxs,
-        beta=beta,
         cutoff=cutoff,
     )
     ref_U_B = NonbondedInteractionGroup(
         num_atoms,
         row_atom_idxs=other_idxs,
         col_atom_idxs=other_idxs,
-        beta=beta,
         cutoff=cutoff,
     )
     test_ixn_group = FanoutSummedPotential([ref_U_A, ref_U_B]).to_gpu(precision)
@@ -401,7 +386,6 @@ def test_nonbonded_interaction_group_consistency_allpairs_4d_decoupled(
     )
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 2e-4, 5e-4)])
 @pytest.mark.parametrize("num_atoms_ligand", [1, 15])
@@ -413,7 +397,6 @@ def test_nonbonded_interaction_group_consistency_allpairs_constant_shift(
     rtol,
     atol,
     cutoff,
-    beta,
     example_nonbonded_potential,
     example_conf,
     example_box,
@@ -443,7 +426,6 @@ def test_nonbonded_interaction_group_consistency_allpairs_constant_shift(
             num_atoms,
             exclusion_idxs=np.array([], dtype=np.int32),
             scale_factors=np.zeros((0, 2), dtype=np.float64),
-            beta=beta,
             cutoff=cutoff,
         )
 
@@ -451,7 +433,7 @@ def test_nonbonded_interaction_group_consistency_allpairs_constant_shift(
 
     ligand_idxs = rng.choice(num_atoms, size=(num_atoms_ligand,), replace=False).astype(np.int32)
 
-    test_impl = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff).to_gpu(precision).unbound_impl
+    test_impl = NonbondedInteractionGroup(num_atoms, ligand_idxs, cutoff).to_gpu(precision).unbound_impl
 
     def test_ixngroups(conf):
         _, _, u = test_impl.execute(conf, params, box)
@@ -466,13 +448,12 @@ def test_nonbonded_interaction_group_consistency_allpairs_constant_shift(
         np.testing.assert_allclose(ref_delta, test_delta, rtol=rtol, atol=atol)
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 @pytest.mark.parametrize("num_atoms_ligand", [1, 15])
 @pytest.mark.parametrize("num_atoms", [33, 231])
 def test_nonbonded_interaction_group_set_atom_idxs(
-    num_atoms, num_atoms_ligand, precision, cutoff, beta, rng: np.random.Generator
+    num_atoms, num_atoms_ligand, precision, cutoff, rng: np.random.Generator
 ):
     box = 3.0 * np.eye(3)
     box = box.astype(precision)
@@ -485,7 +466,7 @@ def test_nonbonded_interaction_group_set_atom_idxs(
     # Pick a subset to compare against, should produce different values
     secondary_ligand_set = rng.choice(other_idxs, size=(1), replace=False).astype(np.int32)
 
-    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff)
+    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, cutoff)
     unbound_pot = potential.to_gpu(precision).unbound_impl
 
     ref_du_dx, ref_du_dp, ref_u = unbound_pot.execute(conf, params, box)
@@ -502,7 +483,7 @@ def test_nonbonded_interaction_group_set_atom_idxs(
     assert not np.allclose(ref_u, diff_u)
 
     # Reconstructing an Ixn group with the other set of atoms should be identical.
-    potential2 = NonbondedInteractionGroup(num_atoms, secondary_ligand_set, beta, cutoff)
+    potential2 = NonbondedInteractionGroup(num_atoms, secondary_ligand_set, cutoff)
     unbound_pot2 = potential2.to_gpu(precision).unbound_impl
 
     diff_ref_du_dx, diff_ref_du_dp, diff_ref_u = unbound_pot2.execute(conf, params, box)
@@ -521,13 +502,12 @@ def test_nonbonded_interaction_group_set_atom_idxs(
     np.testing.assert_equal(test_u, ref_u)
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 @pytest.mark.parametrize("num_atoms_ligand", [1, 15])
 @pytest.mark.parametrize("num_atoms", [33, 231])
 def test_nonbonded_interaction_group_set_nblist_padding(
-    num_atoms, num_atoms_ligand, precision, cutoff, beta, rng: np.random.Generator
+    num_atoms, num_atoms_ligand, precision, cutoff, rng: np.random.Generator
 ):
     box = 3.0 * np.eye(3)
     box = box.astype(precision)
@@ -536,7 +516,7 @@ def test_nonbonded_interaction_group_set_nblist_padding(
 
     ligand_idxs = rng.choice(num_atoms, size=(num_atoms_ligand,), replace=False).astype(np.int32)
 
-    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff)
+    potential = NonbondedInteractionGroup(num_atoms, ligand_idxs, cutoff)
     unbound_pot = potential.to_gpu(precision).unbound_impl
 
     def verify_padding(expected_padding: float):
@@ -566,7 +546,6 @@ def test_nonbonded_interaction_group_set_nblist_padding(
         np.testing.assert_equal(test_u, ref_u)
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 @pytest.mark.parametrize("num_atoms_ligand", [1, 15])
@@ -576,7 +555,6 @@ def test_nonbonded_ixn_group_order_independent(
     num_atoms_ligand,
     precision,
     cutoff,
-    beta,
     example_nonbonded_potential,
     example_conf,
     example_box,
@@ -590,8 +568,8 @@ def test_nonbonded_ixn_group_order_independent(
 
     ligand_idxs = rng.choice(num_atoms, size=(num_atoms_ligand,), replace=False).astype(np.int32)
 
-    sorted_pot = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff)
-    unsorted_pot = NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, disable_hilbert_sort=True)
+    sorted_pot = NonbondedInteractionGroup(num_atoms, ligand_idxs, cutoff)
+    unsorted_pot = NonbondedInteractionGroup(num_atoms, ligand_idxs, cutoff, disable_hilbert_sort=True)
 
     sorted_impl = sorted_pot.to_gpu(precision).unbound_impl
     unsorted_impl = unsorted_pot.to_gpu(precision).unbound_impl
@@ -604,7 +582,6 @@ def test_nonbonded_ixn_group_order_independent(
         assert a_u == b_u
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.2])
 @pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
 @pytest.mark.parametrize("num_free_idxs", [1, 7, 35, 63, 102])
@@ -618,7 +595,6 @@ def test_nonbonded_interaction_group_consistency_local_md(
     rtol,
     atol,
     cutoff,
-    beta,
     example_nonbonded_potential,
     example_conf,
     example_box,
@@ -652,18 +628,17 @@ def test_nonbonded_interaction_group_consistency_local_md(
     col_idxs = np.concatenate([free_idxs, frozen_idxs])
 
     # test potential
-    U_AAB = NonbondedInteractionGroup(num_atoms, row_idxs, beta, cutoff, col_idxs).to_gpu(precision)
+    U_AAB = NonbondedInteractionGroup(num_atoms, row_idxs, cutoff, col_idxs).to_gpu(precision)
 
     # build ref potential
     U_AA = Nonbonded(
         num_atoms,
         exclusion_idxs=np.array([], dtype=np.int32),
         scale_factors=np.zeros((0, 2), dtype=precision),
-        beta=beta,
         cutoff=cutoff,
         atom_idxs=free_idxs,
     )
-    U_AB = NonbondedInteractionGroup(num_atoms, free_idxs, beta, cutoff, frozen_idxs)
+    U_AB = NonbondedInteractionGroup(num_atoms, free_idxs, cutoff, frozen_idxs)
     U_sum = FanoutSummedPotential([U_AA, U_AB]).to_gpu(precision)
 
     for params in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):
@@ -678,7 +653,7 @@ def test_nonbonded_interaction_group_consistency_local_md(
         )
 
     # compare just the ixn group itself to reference Python potential.
-    U_AAB_jax = NonbondedInteractionGroup(num_atoms, row_idxs, beta, cutoff, col_idxs)
+    U_AAB_jax = NonbondedInteractionGroup(num_atoms, row_idxs, cutoff, col_idxs)
     U_AAB_gpu = U_AAB_jax.to_gpu(precision)
 
     for params in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):

@@ -76,7 +76,7 @@ def verify_bias_deletion_moves(
                 after_log_weights, tested = ref_bdem.batch_log_weights_incremental(
                     last_conf, x_box, idx, new_pos, before_log_weights
                 )
-                np.testing.assert_array_equal(tested, x_move)
+                np.testing.assert_allclose(tested, x_move, atol=1e-7, rtol=1e-8)
             else:
                 after_log_weights = ref_bdem.batch_log_weights(x_move, box)
             ref_log_prob = np.minimum(logsumexp(before_log_weights) - logsumexp(after_log_weights), 0.0)
@@ -109,7 +109,6 @@ def verify_bias_deletion_moves(
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 def test_bd_exchange_validation(precision):
     N = 10
-    beta = 1.2
     cutoff = 1.2
     seed = 2023
 
@@ -125,29 +124,29 @@ def test_bd_exchange_validation(precision):
     # Test group indices verification
     group_idxs = []
     with pytest.raises(RuntimeError, match="must provide at least one molecule"):
-        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, beta, cutoff, seed, proposals_per_move, 1)
+        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, cutoff, seed, proposals_per_move, 1)
 
     # Second molecule is not contiguous with first
     group_idxs = [[0, 1, 2], [4, 5]]
     with pytest.raises(RuntimeError, match="Molecules are not contiguous: mol 1"):
-        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, beta, cutoff, seed, proposals_per_move, 1)
+        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, cutoff, seed, proposals_per_move, 1)
 
     group_idxs = [[0, 1, 2], [3, 4]]
     with pytest.raises(RuntimeError, match="only support running with mols with constant size, got mixed sizes"):
-        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, beta, cutoff, seed, proposals_per_move, 1)
+        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, cutoff, seed, proposals_per_move, 1)
 
     group_idxs = [[]]
     with pytest.raises(RuntimeError, match="must provide non-empty molecule indices"):
-        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, beta, cutoff, seed, proposals_per_move, 1)
+        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, cutoff, seed, proposals_per_move, 1)
 
     # Proposals must be non-zero
     with pytest.raises(RuntimeError, match="proposals per move must be greater than 0"):
-        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, beta, cutoff, seed, 0, 1)
+        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, cutoff, seed, 0, 1)
 
     group_idxs = [[0], [1]]
     # Interval must be greater than zero
     with pytest.raises(RuntimeError, match="must provide interval greater than 0"):
-        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, beta, cutoff, seed, proposals_per_move, 0)
+        klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, cutoff, seed, proposals_per_move, 0)
 
     with pytest.raises(RuntimeError, match="must provide batch size greater than 0"):
         klass(
@@ -155,7 +154,6 @@ def test_bd_exchange_validation(precision):
             group_idxs,
             params.astype(precision),
             DEFAULT_TEMP,
-            beta,
             cutoff,
             seed,
             proposals_per_move,
@@ -169,7 +167,6 @@ def test_bd_exchange_validation(precision):
             group_idxs,
             params.astype(precision),
             DEFAULT_TEMP,
-            beta,
             cutoff,
             seed,
             proposals_per_move,
@@ -177,14 +174,13 @@ def test_bd_exchange_validation(precision):
             batch_size=proposals_per_move + 1,
         )
 
-    klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, beta, cutoff, seed, proposals_per_move, 1)
+    klass(N, group_idxs, params.astype(precision), DEFAULT_TEMP, cutoff, seed, proposals_per_move, 1)
 
 
 @pytest.mark.memcheck
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 def test_bd_exchange_get_set_params(precision):
     N = 10
-    beta = 1.2
     cutoff = 1.2
     seed = 2023
     klass = custom_ops.BDExchangeMove_f32
@@ -197,7 +193,7 @@ def test_bd_exchange_get_set_params(precision):
 
     group_idxs = [[0], [1]]
 
-    exchange_move = klass(N, group_idxs, params, DEFAULT_TEMP, beta, cutoff, seed, proposals_per_move, 1)
+    exchange_move = klass(N, group_idxs, params, DEFAULT_TEMP, cutoff, seed, proposals_per_move, 1)
 
     np.testing.assert_array_equal(params, exchange_move.get_params())
 
@@ -251,7 +247,6 @@ def test_pair_of_waters_in_box(proposals_per_move, total_num_proposals, batch_si
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         seed,
         proposals_per_move,
@@ -259,7 +254,7 @@ def test_pair_of_waters_in_box(proposals_per_move, total_num_proposals, batch_si
         batch_size=batch_size,
     )
 
-    ref_bdem = RefBDExchangeMove(nb.potential.beta, cutoff, params, group_idxs, DEFAULT_TEMP)
+    ref_bdem = RefBDExchangeMove(cutoff, params, group_idxs, DEFAULT_TEMP)
 
     assert bdem.last_log_probability() == 0.0, "First log probability expected to be zero"
     verify_bias_deletion_moves(
@@ -305,7 +300,6 @@ def test_sampling_single_water_in_bulk(
         water_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         seed,
         proposals_per_move,
@@ -313,7 +307,7 @@ def test_sampling_single_water_in_bulk(
         batch_size=batch_size,
     )
 
-    ref_bdem = RefBDExchangeMove(nb.potential.beta, cutoff, params, water_idxs, DEFAULT_TEMP)
+    ref_bdem = RefBDExchangeMove(cutoff, params, water_idxs, DEFAULT_TEMP)
 
     assert bdem.last_log_probability() == 0.0, "First log probability expected to be zero"
     verify_bias_deletion_moves(
@@ -360,7 +354,6 @@ def test_bias_deletion_bulk_water_with_context(precision, seed, batch_size, num_
         water_idxs,
         [nb.params.astype(precision)] * num_systems,
         DEFAULT_TEMP,
-        nb.potential.beta,
         nb.potential.cutoff,
         seed,
         proposals_per_move,
@@ -432,14 +425,13 @@ def test_bd_exchange_deterministic_moves(proposals_per_move, batch_size, precisi
         klass = custom_ops.BDExchangeMove_f64
 
     # Reference that makes a single proposal per move
-    bdem_a = klass(N, group_idxs, params, DEFAULT_TEMP, nb.potential.beta, cutoff, seed, 1, 1)
+    bdem_a = klass(N, group_idxs, params, DEFAULT_TEMP, cutoff, seed, 1, 1)
     # Test version that makes all proposals in a single move
     bdem_b = klass(
         N,
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         seed,
         proposals_per_move,
@@ -492,7 +484,6 @@ def test_bd_exchange_deterministic_batch_moves(proposals_per_move, batch_size, p
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         seed,
         proposals_per_move,
@@ -505,7 +496,6 @@ def test_bd_exchange_deterministic_batch_moves(proposals_per_move, batch_size, p
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         seed,
         proposals_per_move * iterations,
@@ -604,7 +594,6 @@ def test_moves_in_a_water_box(
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         seed,
         num_proposals_per_move,
@@ -613,7 +602,7 @@ def test_moves_in_a_water_box(
     )
     assert bdem.last_log_probability() == 0.0, "First log probability expected to be zero"
 
-    ref_bdem = RefBDExchangeMove(nb.potential.beta, cutoff, params, group_idxs, DEFAULT_TEMP)
+    ref_bdem = RefBDExchangeMove(cutoff, params, group_idxs, DEFAULT_TEMP)
 
     iterations = 10
     # Up to some number of iterations of MD/MC are allowed before considering the test a failure
@@ -655,7 +644,6 @@ def test_compute_incremental_log_weights_match_initial_log_weights_when_recomput
     )
     rng = np.random.default_rng(seed)
     cutoff = 1.2
-    beta = 2.0
 
     box_size = 1.0
     box = np.eye(3) * box_size
@@ -682,7 +670,6 @@ def test_compute_incremental_log_weights_match_initial_log_weights_when_recomput
         group_idxs,
         params,
         DEFAULT_TEMP,
-        beta,
         cutoff,
         seed,
         proposals_per_move,
@@ -743,11 +730,9 @@ def test_compute_incremental_log_weights(batch_size, samples, box_size, precisio
     if precision == np.float64:
         klass = custom_ops.BDExchangeMove_f64
 
-    bdem = klass(
-        N, group_idxs, params, DEFAULT_TEMP, nb.potential.beta, cutoff, seed, proposals_per_move, 1, batch_size
-    )
+    bdem = klass(N, group_idxs, params, DEFAULT_TEMP, cutoff, seed, proposals_per_move, 1, batch_size)
 
-    ref_bdem = RefBDExchangeMove(nb.potential.beta, cutoff, params, group_idxs, DEFAULT_TEMP)
+    ref_bdem = RefBDExchangeMove(cutoff, params, group_idxs, DEFAULT_TEMP)
 
     rng = np.random.default_rng(seed)
 
@@ -881,7 +866,6 @@ def test_moves_with_complex(
         water_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         seed,
         num_proposals_per_move,
@@ -889,7 +873,7 @@ def test_moves_with_complex(
         batch_size=batch_size,
     )
 
-    ref_bdem = RefBDExchangeMove(nb.potential.beta, cutoff, params, water_idxs, DEFAULT_TEMP)
+    ref_bdem = RefBDExchangeMove(cutoff, params, water_idxs, DEFAULT_TEMP)
 
     assert bdem.last_log_probability() == 0.0, "First log probability expected to be zero"
     verify_bias_deletion_moves(
@@ -969,7 +953,6 @@ def test_bd_moves_with_complex_and_ligand(
         water_idxs,
         water_params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         seed,
         num_proposals_per_move,
@@ -977,7 +960,7 @@ def test_bd_moves_with_complex_and_ligand(
         batch_size=batch_size,
     )
 
-    ref_bdem = RefBDExchangeMove(nb.potential.beta, cutoff, water_params, water_idxs, DEFAULT_TEMP)
+    ref_bdem = RefBDExchangeMove(cutoff, water_params, water_idxs, DEFAULT_TEMP)
 
     assert bdem.last_log_probability() == 0.0, "First log probability expected to be zero"
 

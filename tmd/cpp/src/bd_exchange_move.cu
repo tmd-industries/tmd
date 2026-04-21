@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025, Forrest York
+// Modifications Copyright 2025-2026, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,11 +38,11 @@ BDExchangeMove<RealType>::BDExchangeMove(
     const int num_systems, const int N,
     const std::vector<std::vector<int>> &target_mols,
     const std::vector<RealType> &params, const RealType temperature,
-    const RealType nb_beta, const RealType cutoff, const int seed,
-    const int num_proposals_per_move, const int interval, const int batch_size)
+    const RealType cutoff, const int seed, const int num_proposals_per_move,
+    const int interval, const int batch_size)
     : BDExchangeMove<RealType>(
-          num_systems, N, target_mols, params, temperature, nb_beta, cutoff,
-          seed, num_proposals_per_move, interval, batch_size,
+          num_systems, N, target_mols, params, temperature, cutoff, seed,
+          num_proposals_per_move, interval, batch_size,
           BD_TRANSLATIONS_PER_STEP_XYZ * num_proposals_per_move) {}
 
 template <typename RealType>
@@ -50,20 +50,18 @@ BDExchangeMove<RealType>::BDExchangeMove(
     const int num_systems, const int N,
     const std::vector<std::vector<int>> &target_mols,
     const std::vector<RealType> &params, const RealType temperature,
-    const RealType nb_beta, const RealType cutoff, const int seed,
-    const int num_proposals_per_move, const int interval, const int batch_size,
-    const int translation_buffer_size)
+    const RealType cutoff, const int seed, const int num_proposals_per_move,
+    const int interval, const int batch_size, const int translation_buffer_size)
     : Mover<RealType>(num_systems, interval), N_(N),
       mol_size_(target_mols[0].size()),
       num_proposals_per_move_(num_proposals_per_move),
       steps_per_move_(num_proposals_per_move_ / batch_size),
-      num_target_mols_(target_mols.size()), nb_beta_(nb_beta),
+      num_target_mols_(target_mols.size()),
       beta_(static_cast<RealType>(1.0 /
                                   (BOLTZ * static_cast<double>(temperature)))),
       cutoff_(cutoff), batch_size_(batch_size),
       num_intermediates_per_reduce_(ceil_divide(N_, WEIGHT_THREADS_PER_BLOCK)),
-      num_attempted_(num_systems, 0),
-      mol_potential_(N, target_mols, nb_beta, cutoff),
+      num_attempted_(num_systems, 0), mol_potential_(N, target_mols, cutoff),
       sampler_(num_target_mols_, batch_size_, seed),
       logsumexp_(num_target_mols_, batch_size_),
       d_intermediate_coords_(batch_size_ * mol_size_ * 3), d_params_(params),
@@ -372,8 +370,7 @@ void BDExchangeMove<RealType>::compute_incremental_log_weights_device(
 
   k_atom_by_atom_energies<RealType><<<atom_by_atom_grid, tpb, 0, stream>>>(
       N, mol_size_ * batch_size_, d_target_mol_atoms_.data, nullptr, d_coords,
-      d_params, d_box, nb_beta_, cutoff_,
-      d_sample_per_atom_energy_buffer_.data);
+      d_params, d_box, cutoff_, d_sample_per_atom_energy_buffer_.data);
   gpuErrchk(cudaPeekAtLastError());
 
   // Subtract off the weights for the individual waters from the sampled water.
@@ -390,8 +387,8 @@ void BDExchangeMove<RealType>::compute_incremental_log_weights_device(
 
   k_atom_by_atom_energies<RealType><<<atom_by_atom_grid, tpb, 0, stream>>>(
       N, mol_size_ * batch_size_, d_target_mol_atoms_.data,
-      d_intermediate_coords_.data, d_coords, d_params, d_box, nb_beta_,
-      cutoff_, d_sample_per_atom_energy_buffer_.data);
+      d_intermediate_coords_.data, d_coords, d_params, d_box, cutoff_,
+      d_sample_per_atom_energy_buffer_.data);
   gpuErrchk(cudaPeekAtLastError());
 
   // Add in the new weights from the individual waters

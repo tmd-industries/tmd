@@ -28,9 +28,8 @@ namespace tmd {
 template <typename RealType>
 NonbondedMolEnergyPotential<RealType>::NonbondedMolEnergyPotential(
     const int N, const std::vector<std::vector<int>> &target_mols,
-    const RealType beta, const RealType cutoff)
+    const RealType cutoff)
     : N_(N), num_target_mols_(target_mols.size()),
-      beta_(static_cast<RealType>(beta)),
       cutoff_(static_cast<RealType>(cutoff)) {
   verify_group_idxs(N_, target_mols);
 
@@ -83,8 +82,8 @@ void NonbondedMolEnergyPotential<RealType>::mol_energies_device(
       <<<dimGrid, tpb, 0, stream>>>(
           N, static_cast<int>(d_target_atom_idxs_.length),
           d_target_atom_idxs_.data, d_target_mol_idxs_.data,
-          d_target_mol_offsets_.data, d_coords, d_params, d_box, beta_,
-          cutoff_, d_atom_energy_buffer_.data);
+          d_target_mol_offsets_.data, d_coords, d_params, d_box, cutoff_,
+          d_atom_energy_buffer_.data);
   gpuErrchk(cudaPeekAtLastError());
 
   k_accumulate_atom_energies_to_per_mol_energies<RealType, BLOCK_SIZE>

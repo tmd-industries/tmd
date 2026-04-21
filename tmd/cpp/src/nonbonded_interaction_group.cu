@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -146,9 +146,8 @@ template <typename RealType>
 NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
     const int num_systems, const int N,
     const std::vector<std::vector<int>> &row_atom_idxs,
-    const std::vector<std::vector<int>> &col_atom_idxs, const RealType beta,
-    const RealType cutoff, const bool disable_hilbert_sort,
-    const RealType nblist_padding)
+    const std::vector<std::vector<int>> &col_atom_idxs, const RealType cutoff,
+    const bool disable_hilbert_sort, const RealType nblist_padding)
     : num_systems_(num_systems), N_(N),
       interaction_type_(
           get_nonbonded_interaction_type(row_atom_idxs, col_atom_idxs)),
@@ -225,7 +224,7 @@ NonbondedInteractionGroup<RealType>::NonbondedInteractionGroup(
            &k_nonbonded_unified<RealType, NONBONDED_KERNEL_THREADS_PER_BLOCK, 1,
                                 1, 1, 1, 1>}),
       column_idx_counts_(num_systems_), row_idx_counts_(num_systems_),
-      beta_(beta), cutoff_(cutoff), steps_since_last_sort_(0),
+      cutoff_(cutoff), steps_since_last_sort_(0),
       nblist_(num_systems_, N_, is_upper_triangular(interaction_type_)),
       nblist_padding_(nblist_padding), hilbert_sort_(nullptr),
       disable_hilbert_(disable_hilbert_sort) {
@@ -540,7 +539,7 @@ void NonbondedInteractionGroup<RealType>::execute_device(
                              NONBONDED_KERNEL_THREADS_PER_BLOCK, 0, stream>>>(
       num_systems_, N_, K, mnkb, nblist_.max_ixn_count(),
       nblist_.get_num_row_idxs(), nblist_.get_ixn_count(), d_perm_, d_sorted_x_,
-      d_sorted_p_, d_box, beta_, cutoff_, nblist_.get_ixn_tiles(),
+      d_sorted_p_, d_box, cutoff_, nblist_.get_ixn_tiles(),
       nblist_.get_ixn_atoms(), d_du_dx, d_du_dp,
       d_u == nullptr
           ? nullptr

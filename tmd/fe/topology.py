@@ -196,12 +196,10 @@ class HostGuestTopology:
             ff_q_params, None, ff_lj_params, None, lamb, intramol_params=False
         )
 
-        beta = guest_pot.beta
         cutoff = guest_pot.cutoff
 
         assert guest_ixn_env_params.shape == (num_guest_atoms, 4)
         assert self.host_nonbonded is not None
-        assert beta == self.host_nonbonded.potential.beta
         assert cutoff == self.host_nonbonded.potential.cutoff
 
         exclusion_idxs = self.host_nonbonded.potential.exclusion_idxs
@@ -217,7 +215,6 @@ class HostGuestTopology:
             self.num_host_atoms + num_guest_atoms,
             combined_exclusion_idxs,
             combined_scale_factors,
-            beta,
             cutoff,
         )
         return nb_params, nb_pot
@@ -232,6 +229,7 @@ class HostGuestTopology:
             self.get_num_atoms(),
             # shift idxs to account for the host
             guest_intra_pot.idxs + self.num_host_atoms,
+            guest_intra_pot.cutoff,
         )
         return guest_intra_params, combined_intra_pot
 
@@ -283,12 +281,11 @@ class BaseTopology:
             self.mol, scale12=_SCALE_12, scale13=_SCALE_13, scale14_q=_SCALE_14_Q, scale14_lj=_SCALE_14_LJ
         )
 
-        beta = _BETA
-        cutoff = _CUTOFF  # solve for this analytically later
+        cutoff = _CUTOFF
 
         N = len(q_params)
 
-        nb = potentials.Nonbonded(N, exclusion_idxs, scale_factors, beta, cutoff)
+        nb = potentials.Nonbonded(N, exclusion_idxs, scale_factors, cutoff)
 
         w_coords = lamb * cutoff * jnp.ones((N, 1))
         params = jnp.concatenate([jnp.reshape(q_params, (-1, 1)), jnp.reshape(lj_params, (-1, 2)), w_coords], axis=1)
@@ -354,7 +351,9 @@ class BaseTopology:
         params[:, NBParamIdx.LJ_EPS_IDX] = eps_ij * rescale_mask[:, 1]
         params[:, NBParamIdx.W_IDX] = 0.0
 
-        return params, potentials.NonbondedPairListPrecomputed(N, inclusion_idxs)
+        cutoff = _CUTOFF
+
+        return params, potentials.NonbondedPairListPrecomputed(N, inclusion_idxs, cutoff)
 
     def parameterize_harmonic_bond(self, ff_params):
         params, idxs = self.ff.hb_handle.partial_parameterize(ff_params, self.mol)
@@ -572,8 +571,7 @@ class MultiTopology(BaseTopology):
         N = self.get_num_atoms()
         w_coords = jnp.zeros((N, 1))
 
-        beta = _BETA
-        cutoff = _CUTOFF  # solve for this analytically later
+        cutoff = _CUTOFF
 
         qlj_params = jnp.concatenate(
             [jnp.reshape(q_params, (-1, 1)), jnp.reshape(lj_params, (-1, 2)), w_coords], axis=1
@@ -583,7 +581,6 @@ class MultiTopology(BaseTopology):
             N,
             combined_exclusion_idxs,
             combined_scale_factors,
-            beta,
             cutoff,
         )
 
@@ -610,7 +607,9 @@ class MultiTopology(BaseTopology):
 
         inclusion_idxs = np.concatenate(mol_idxs)
 
-        return params, potentials.NonbondedPairListPrecomputed(offset, inclusion_idxs)
+        cutoff = _CUTOFF
+
+        return params, potentials.NonbondedPairListPrecomputed(offset, inclusion_idxs, cutoff)
 
     def _parameterize_bonded_term(self, ff_params, bonded_handle, potential):
         offset = 0
@@ -696,7 +695,6 @@ def get_ligand_ixn_pots_params(
     env_idxs: Optional[NDArray],
     host_nb_params: Array | NDArray,
     guest_params_ixn_env: Array | NDArray,
-    beta=2.0,
     cutoff=1.2,
 ) -> tuple[potentials.NonbondedInteractionGroup, Array | NDArray]:
     """
@@ -730,7 +728,6 @@ def get_ligand_ixn_pots_params(
     hg_ixn_pot = potentials.NonbondedInteractionGroup(
         num_total_atoms,
         lig_idxs,
-        beta,
         cutoff,
         col_atom_idxs=env_idxs,
     )

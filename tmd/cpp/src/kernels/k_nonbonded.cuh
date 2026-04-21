@@ -140,7 +140,7 @@ void __device__ v_nonbonded_unified(
     const RealType *__restrict__ coords,  // [N * 3]
     const RealType *__restrict__ params,  // [N * PARAMS_PER_ATOM]
     const RealType *__restrict__ box, __int128 &energy_accumulator,
-    const RealType beta, const RealType cutoff, const RealType cutoff_squared,
+    const RealType cutoff, const RealType cutoff_squared,
     const int *__restrict__ ixn_tiles,
     const unsigned int *__restrict__ ixn_atoms,
     unsigned long long *__restrict__ du_dx,
@@ -418,7 +418,7 @@ void __global__ k_nonbonded_unified(
     const RealType
         *__restrict__ params,         // [num_systems, max_idx, PARAMS_PER_ATOM]
     const RealType *__restrict__ box, // [num_systems, 3, 3]
-    const RealType beta, const RealType cutoff,
+    const RealType cutoff,
     const int *__restrict__ ixn_tiles, //[num_systems, tiles_per_system]
     const unsigned int *__restrict__ ixn_atoms,
     unsigned long long *__restrict__ du_dx,
@@ -498,28 +498,28 @@ void __global__ k_nonbonded_unified(
         v_nonbonded_unified<RealType, 0, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 1>(
             tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
-            energy_accumulator, beta, cutoff, cutoff_squared, tiles_ptr,
-            ixn_atom_ptr, du_dx_ptr, du_dp_ptr);
+            energy_accumulator, cutoff, cutoff_squared, tiles_ptr, ixn_atom_ptr,
+            du_dx_ptr, du_dp_ptr);
       } else {
         v_nonbonded_unified<RealType, 1, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 1>(
             tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
-            energy_accumulator, beta, cutoff, cutoff_squared, tiles_ptr,
-            ixn_atom_ptr, du_dx_ptr, du_dp_ptr);
+            energy_accumulator, cutoff, cutoff_squared, tiles_ptr, ixn_atom_ptr,
+            du_dx_ptr, du_dp_ptr);
       };
     } else {
       if (tile_is_vanilla) {
         v_nonbonded_unified<RealType, 0, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 0>(
             tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
-            energy_accumulator, beta, cutoff, cutoff_squared, tiles_ptr,
-            ixn_atom_ptr, du_dx_ptr, du_dp_ptr);
+            energy_accumulator, cutoff, cutoff_squared, tiles_ptr, ixn_atom_ptr,
+            du_dx_ptr, du_dp_ptr);
       } else {
         v_nonbonded_unified<RealType, 1, COMPUTE_U, COMPUTE_DU_DX,
                             COMPUTE_DU_DP, COMPUTE_UPPER_TRIANGLE, 0>(
             tile_idx, max_idx, NR, perm_ptr, coords_ptr, params_ptr, box_ptr,
-            energy_accumulator, beta, cutoff, cutoff_squared, tiles_ptr,
-            ixn_atom_ptr, du_dx_ptr, du_dp_ptr);
+            energy_accumulator, cutoff, cutoff_squared, tiles_ptr, ixn_atom_ptr,
+            du_dx_ptr, du_dp_ptr);
       };
     }
     tile_idx += stride;
@@ -548,7 +548,7 @@ void __global__ k_compute_nonbonded_target_atom_energies(
     const RealType *__restrict__ coords,         // [N, 3]
     const RealType *__restrict__ params,         // [N, PARAMS_PER_ATOM]
     const RealType *__restrict__ box,            // [3, 3],
-    const RealType beta, const RealType cutoff,
+    const RealType cutoff,
     __int128 *__restrict__ output_energies // [num_target_atoms, gridDim.x]
 ) {
   static_assert(THREADS_PER_BLOCK <= 256 &&
@@ -640,8 +640,8 @@ void __global__ k_compute_nonbonded_target_atom_energies(
           RealType dij;
           RealType inv_dij;
           RealType inv_d2ij;
-          compute_electrostatics<RealType, true>(1.0, qi, qj, d2ij, cutoff,
-                                                 dij, inv_dij, inv_d2ij, ebd,
+          compute_electrostatics<RealType, true>(1.0, qi, qj, d2ij, cutoff, dij,
+                                                 inv_dij, inv_d2ij, ebd,
                                                  delta_prefactor, u);
           // lennard jones energy
           if (eps_i != 0 && eps_j != 0) {
@@ -734,7 +734,7 @@ void __global__ k_atom_by_atom_energies(
     const RealType *__restrict__ coords, // [N, 3]
     const RealType *__restrict__ params, // [N, PARAMS_PER_ATOM]
     const RealType *__restrict__ box,    // [3, 3],
-    const RealType beta, const RealType cutoff,
+    const RealType cutoff,
     RealType *__restrict__ output_energies // [num_target_atoms, N]
 ) {
   const RealType cutoff_squared = cutoff * cutoff;

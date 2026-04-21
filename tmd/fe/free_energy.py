@@ -703,7 +703,7 @@ def get_batched_context(initial_states: Sequence[InitialState], md_params: Optio
 
         water_idxs = get_water_idxs(group_indices, ligand_idxs=initial_states[0].ligand_idxs)
 
-        # Select a Nonbonded Potential to get the the cutoff/beta, assumes all have same cutoff/beta.
+        # Select a Nonbonded Potential to get the the cutoff, assumes all have same cutoff.
         nb = get_bound_potential_by_type(initial_states[0].potentials, Nonbonded).potential
 
         water_params = np.array([get_water_sampler_params(initial_state) for initial_state in initial_states])
@@ -719,7 +719,6 @@ def get_batched_context(initial_states: Sequence[InitialState], md_params: Optio
             water_idxs,
             water_params,
             initial_states[0].integrator.temperature,
-            nb.beta,
             nb.cutoff,
             md_params.water_sampling_params.radius,
             water_sampler_seed,
@@ -756,7 +755,7 @@ def get_context(initial_state: InitialState, md_params: Optional[MDParams] = Non
 
         water_idxs = get_water_idxs(group_indices, ligand_idxs=initial_state.ligand_idxs)
 
-        # Select a Nonbonded Potential to get the the cutoff/beta, assumes all have same cutoff/beta.
+        # Select a Nonbonded Potential to get the the cutoff, assumes all have same cutoff.
         nb = get_bound_potential_by_type(initial_state.potentials, Nonbonded).potential
 
         water_params = get_water_sampler_params(initial_state)
@@ -771,7 +770,6 @@ def get_context(initial_state: InitialState, md_params: Optional[MDParams] = Non
             water_idxs,
             water_params,
             initial_state.integrator.temperature,
-            nb.beta,
             nb.cutoff,
             md_params.water_sampling_params.radius,
             water_sampler_seed,
