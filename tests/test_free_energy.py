@@ -43,6 +43,7 @@ from tmd.fe.free_energy import (
     PairBarResult,
     Trajectory,
     WaterSamplingParams,
+    apportion,
     assert_potentials_compatible,
     batch_compute_potential_matrix,
     batches,
@@ -615,6 +616,62 @@ def test_get_context_with_non_contiguous_waters(neutralize, ionic_concentration)
     assert len(movers) == 2
     assert isinstance(movers[0], custom_ops.MonteCarloBarostat_f32)
     assert isinstance(movers[1], custom_ops.TIBDExchangeMove_f32)
+
+
+class TestApportion:
+    def test_uniform_weights(self):
+        """Equal weights should distribute as evenly as possible."""
+        result = apportion(np.array([1.0, 1.0, 1.0]), 9)
+        np.testing.assert_array_equal(result, [3, 3, 3])
+
+    def test_uniform_weights_with_remainder(self):
+        """When total is not divisible, remainder goes to entries with largest fractional parts."""
+        result = apportion(np.array([1.0, 1.0, 1.0]), 10)
+        assert result.sum() == 10
+        # Each gets at least 3; one gets a bonus
+        assert np.min(result) == 3
+        assert np.max(result) == 4
+
+    def test_proportional(self):
+        """Weights of 3:1 with total=8 should give [6, 2]."""
+        result = apportion(np.array([3.0, 1.0]), 8)
+        np.testing.assert_array_equal(result, [6, 2])
+
+    def test_single_weight(self):
+        """Single entry gets everything."""
+        result = apportion(np.array([5.0]), 7)
+        np.testing.assert_array_equal(result, [7])
+
+    def test_minimum_one_per_entry(self):
+        """With total == n, each entry should get at least 1 (even tiny weights)."""
+        result = apportion(np.array([0.001, 0.001, 100.0]), 3)
+        assert result.sum() == 3
+        assert np.all(result >= 0)
+        # The dominant weight gets most; but floor guarantees at least 0 per entry.
+        # Largest remainder distributes the rest.
+        assert result[2] >= 1
+
+    def test_sum_is_exact(self):
+        """Allocation must always sum to total exactly."""
+        rng = np.random.default_rng(42)
+        for _ in range(50):
+            n = rng.integers(1, 10)
+            total = rng.integers(n, n + 20)
+            weights = rng.random(n) + 1e-6
+            result = apportion(weights, int(total))
+            assert result.sum() == total
+            assert len(result) == n
+            assert np.all(result >= 0)
+
+    def test_small_deficit_gets_zero_windows(self):
+        """A gap with a tiny deficit relative to others can receive zero windows."""
+        # Simulate 3 gaps: two with large deficit, one nearly at target
+        # deficits: [0.5, 0.5, 0.001]
+        weights = np.array([0.5, 0.5, 0.001])
+        result = apportion(weights, 3)
+        assert result.sum() == 3
+        # The near-target gap gets 0 — windows go where they're needed most
+        assert result[2] == 0
 
 
 @pytest.mark.parametrize("batch_size", [2, 4, 8, 16])

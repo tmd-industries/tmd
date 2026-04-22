@@ -1286,6 +1286,37 @@ def _run_sequential_bisection(
     return results, trajectories
 
 
+def apportion(weights: NDArray, total: int) -> NDArray:
+    """Apportion `total` items proportionally to `weights` using the largest-remainder method.
+
+    Each entry receives at least floor(weight_i / sum * total) items; the remaining
+    items are assigned one each to the entries with the largest fractional remainders.
+
+    Parameters
+    ----------
+    weights : array of float, length n
+        Non-negative weights (must sum to > 0).
+    total : int
+        Total number of items to distribute (must be >= len(weights)).
+
+    Returns
+    -------
+    NDArray of int, length n
+        Integer allocation summing to `total`.
+    """
+    assert len(weights) > 0
+    assert total >= len(weights)
+    raw = weights / weights.sum() * total
+    floored = np.floor(raw).astype(int)
+    remainders = raw - floored
+    deficit = total - floored.sum()
+    if deficit > 0:
+        bonus_idxs = np.argsort(remainders)[-deficit:]
+        floored[bonus_idxs] += 1
+    assert floored.sum() == total
+    return floored
+
+
 def _run_batched_bisection(
     initial_lambdas: Sequence[float],
     make_initial_state: Callable[[float], InitialState],
@@ -1458,40 +1489,23 @@ def _run_batched_bisection(
 
         sorted_idxs = np.argsort(overlaps)
 
-        sorted_overlaps = overlaps[sorted_idxs]
+        # Identify gaps below target, in ascending order of overlap
+        n_below = int(np.sum(overlaps[sorted_idxs] < target_overlap))
+        assert n_below >= 1, "At least one gap must be below target_overlap"
 
-        # gaps with overlap below the target in ascending order of overlap
-        overlap_gap_indices = np.where(sorted_overlaps < target_overlap)[0]
-        assert len(overlap_gap_indices) >= 1, "At least one gap must be below target_overlap"
+        # The first n_below entries of sorted_idxs are the gap indices we care about
+        gap_idxs = sorted_idxs[:n_below]
+        overlap_deficit = target_overlap - overlaps[gap_idxs]
 
-        overlap_dist = target_overlap - sorted_overlaps[overlap_gap_indices]
-
-        # Assign 1 window to each deficit gap, then distribute remaining windows proportionally
-        remaining = batch_size - len(overlap_gap_indices)
-        additional_windows = np.zeros(len(overlap_gap_indices), dtype=int)
-
-        if remaining > 0:
-            weights = overlap_dist / overlap_dist.sum()
-            additional_windows = (weights * remaining).astype(int)
-            fractional = weights * remaining - additional_windows
-            bonus_count = remaining - additional_windows.sum()
-            if bonus_count > 0:
-                bonus_idxs = np.argsort(fractional)[-bonus_count:]
-                additional_windows[bonus_idxs] += 1
-            assert np.sum(additional_windows) + len(overlap_gap_indices) == batch_size
+        # Distribute batch_size windows proportionally to overlap deficit
+        windows_per_gap = apportion(overlap_deficit, batch_size)
 
         lambs_to_add = []
-        for i, idx in enumerate(overlap_gap_indices):
-            gap_idx = sorted_idxs[idx]
-            if len(lambs_to_add) == batch_size:
-                break
-            spots_left = batch_size - len(lambs_to_add)
-            assert spots_left > 0
-            to_add = min(1 + additional_windows[i], spots_left)
+        for gap_idx, n_windows in zip(gap_idxs, windows_per_gap):
             lamb_start = lambs[gap_idx]
             lamb_end = lambs[gap_idx + 1]
-            delta = (lamb_end - lamb_start) / (to_add + 1)
-            lambs_to_add.extend(np.linspace(lamb_start + delta, lamb_end, to_add, endpoint=False))
+            delta = (lamb_end - lamb_start) / (n_windows + 1)
+            lambs_to_add.extend(np.linspace(lamb_start + delta, lamb_end, n_windows, endpoint=False))
 
         assert len(lambs_to_add) == batch_size
         return overlaps, lambs_to_add
