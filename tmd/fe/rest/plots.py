@@ -13,8 +13,6 @@ def plot_rest_region(single_top: SingleTopologyREST) -> Draw.MolsToGridImage:
     """
     assert isinstance(single_top, SingleTopologyREST), "Must provide SingleTopologyREST object"
 
-    mol_a_idxs, mol_b_idxs = single_top.split_combined_idxs(single_top.base_rest_region_atom_idxs)
-
     mol_a = Chem.Mol(single_top.mol_a)
     mol_b = Chem.Mol(single_top.mol_b)
 
