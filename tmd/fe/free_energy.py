@@ -1492,6 +1492,7 @@ def _run_batched_bisection(
         # Identify gaps below target, in ascending order of overlap
         n_below = int(np.sum(overlaps[sorted_idxs] < target_overlap))
         assert n_below >= 1, "At least one gap must be below target_overlap"
+        n_below = min(n_below, batch_size)
 
         # The first n_below entries of sorted_idxs are the gap indices we care about
         gap_idxs = sorted_idxs[:n_below]
