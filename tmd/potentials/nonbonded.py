@@ -92,10 +92,13 @@ def switched_direct_space_pme(dij, qij, beta, cutoff):
 
 
 def reaction_field_electrostatics(dij, qij, cutoff):
-    """Reaction Field from eq 11 of:
-    "Cisneros GA, et al 2015
-    Classical Electrostatics for Biomolecular Simulations"
+    """Barker-Watts reaction field with tinfoil boundary conditions
+    
+    from eq 16 of:
+    [Cisneros, et al 2015] Classical Electrostatics for Biomolecular Simulations
     https://pmc.ncbi.nlm.nih.gov/articles/PMC3947274/
+    
+    with eps = inf
     """
     dij = jnp.where(jnp.isfinite(dij), dij, cutoff)
     return qij * (1 / dij + dij**2 / (2 * cutoff**3) - 3 / (2 * cutoff))
