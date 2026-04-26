@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,10 +19,33 @@ from jax import grad, jit
 from jax import numpy as jnp
 from jax.scipy.special import logsumexp
 
-from tmd.fe.interaction_group_traj import InteractionGroupTraj, nb_pair_fxn
+from tmd.fe.interaction_group_traj import InteractionGroupTraj
+from tmd.potentials import nonbonded
+from tmd.potentials.jax_utils import distance2
 from tmd.potentials.nonbonded import nonbonded_interaction_groups
 
 pytestmark = [pytest.mark.nocuda]
+
+
+# example pair function
+def nb_pair_fxn(x_a, x_b, param_a, param_b, box):
+    cutoff = 1.2
+
+    # alchemical distance
+    r2 = distance2(x_a, x_b, box)
+    w_offset = param_b[3] - param_a[3]
+    r = jnp.sqrt(r2 + w_offset**2)
+
+    # TM reaction field
+    q_prod = param_a[0] * param_b[0]
+    e_q = nonbonded.reaction_field_electrostatics(r, q_prod, cutoff)
+
+    # Lennard-Jones
+    sig = nonbonded.combining_rule_sigma(param_a[1], param_b[1])
+    eps = nonbonded.combining_rule_epsilon(param_a[2], param_b[2])
+    e_lj = nonbonded.lennard_jones(r, sig, eps)
+
+    return jnp.where(r < cutoff, e_q + e_lj, 0.0)
 
 
 def sample_random_instance(n_frames, n_env, n_lig, box_size=10, seed=2024):

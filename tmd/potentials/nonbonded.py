@@ -18,7 +18,6 @@ from typing import Optional, cast
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, jit, vmap
-from jax.scipy.special import erfc
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 from scipy.special import binom
@@ -75,20 +74,6 @@ def lennard_jones(dij, sig_ij, eps_ij):
     sig12 = sig6**2
 
     return 4 * eps_ij * (sig12 - sig6)
-
-
-def direct_space_pme(dij, qij, beta):
-    """Direct-space contribution from eq 2 of:
-    Darden, York, Pedersen, 1993, J. Chem. Phys.
-    "Particle mesh Ewald: An N log(N) method for Ewald sums in large systems"
-    https://aip.scitation.org/doi/abs/10.1063/1.470117
-    """
-    return qij * erfc(beta * dij) / dij
-
-
-def switched_direct_space_pme(dij, qij, beta, cutoff):
-    """direct_space_pme * switch_fn"""
-    return direct_space_pme(dij, qij, beta) * switch_fn(dij, cutoff)
 
 
 def reaction_field_electrostatics(dij, qij, cutoff):
