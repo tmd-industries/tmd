@@ -744,7 +744,6 @@ def test_host_batch_simulation(
             water_idxs,
             np.array(nb.params, dtype=precision),
             temperature,
-            nb.potential.beta,
             nb.potential.cutoff,
             1.5,  # Fixed radius
             seed,
@@ -1362,7 +1361,6 @@ def test_local_md_potentials_setup(N, freeze_reference):
     frozen_frozen = NonbondedInteractionGroup(
         N,
         frozen_particles.astype(np.int32),
-        beta=potential.beta,
         cutoff=potential.cutoff,
         col_atom_idxs=frozen_particles.astype(np.int32),
     )

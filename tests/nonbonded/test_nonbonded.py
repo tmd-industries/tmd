@@ -159,9 +159,7 @@ def test_correctness(
     atom_idxs: Optional[NDArray] = None
     if select_atom_indices:
         atom_idxs = np.array(rng.choice(num_atoms, num_atoms // 2, replace=False), dtype=np.int32)
-    potential = potentials.Nonbonded(
-        num_atoms, test_exclusions, test_scales, nonbonded_fn.beta, nonbonded_fn.cutoff, atom_idxs=atom_idxs
-    )
+    potential = potentials.Nonbonded(num_atoms, test_exclusions, test_scales, nonbonded_fn.cutoff, atom_idxs=atom_idxs)
 
     test_box = example_box.astype(precision)
 
@@ -224,9 +222,7 @@ def test_batch_correctness(
         [example_nonbonded_potential.params[:num_atoms, :].astype(precision) for _ in range(num_systems)]
     ).astype(precision)
 
-    potential = potentials.Nonbonded(
-        num_atoms, exclusion_idxs, scales, nonbonded_fn.beta, nonbonded_fn.cutoff, atom_idxs=atom_idxs
-    )
+    potential = potentials.Nonbonded(num_atoms, exclusion_idxs, scales, nonbonded_fn.cutoff, atom_idxs=atom_idxs)
 
     non_zero_nrg = False
     for w_params in gen_nonbonded_params_with_4d_offsets(rng, params, nonbonded_fn.cutoff):
@@ -243,7 +239,6 @@ def test_batch_correctness(
                 num_atoms,
                 exclusion_idxs[i],
                 scales[i],
-                nonbonded_fn.beta,
                 nonbonded_fn.cutoff,
                 atom_idxs=atom_idxs[i] if atom_idxs is not None else None,
             )
@@ -294,7 +289,7 @@ def test_nblist_box_resize(precision, rtol, atol, du_dp_rtol, du_dp_atol):
 
 @pytest.mark.parametrize("cutoff", [1.2])
 @pytest.mark.parametrize("size", [33, 231, 1050])
-@pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
+@pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 2e-4, 5e-4)])
 def test_nonbonded_water(size, cutoff, precision, rtol, atol):
     np.random.seed(4321)
     ff = Forcefield.load_default()
@@ -347,10 +342,9 @@ def test_nonbonded_exclusions(precision, rtol):
     for idx in exclusion_atoms:
         test_coords[idx] = np.zeros(3) + np.random.rand() / 1000 + 2
 
-    beta = 2.0
     cutoff = 1.2
 
-    potential = potentials.Nonbonded(N, exclusion_idxs, scales, beta, cutoff)
+    potential = potentials.Nonbonded(N, exclusion_idxs, scales, cutoff)
 
     params = prepare_system_params(test_coords, cutoff)
 

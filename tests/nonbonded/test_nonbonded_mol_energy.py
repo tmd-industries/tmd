@@ -23,7 +23,6 @@ def test_nonbonded_mol_energy_potential_validation(precision):
 
     N = 10
     cutoff = 1.2
-    beta = 2.0
 
     conf = host_config.conf[:N].astype(precision)
     params = rng.uniform(size=(conf.shape[0], 4)).astype(precision)
@@ -35,18 +34,18 @@ def test_nonbonded_mol_energy_potential_validation(precision):
     if precision == np.float64:
         klass = custom_ops.NonbondedMolEnergyPotential_f64
     with pytest.raises(RuntimeError, match="Grouped indices must be between 0 and N"):
-        klass(N, indices_beyond_range_group_indices, beta, cutoff)
+        klass(N, indices_beyond_range_group_indices, cutoff)
 
     indices_in_multiple_groups = [[0, 1, 2], [2, 3]]
     with pytest.raises(RuntimeError, match="All grouped indices must be unique"):
-        klass(N, indices_in_multiple_groups, beta, cutoff)
+        klass(N, indices_in_multiple_groups, cutoff)
 
     empty_groups = []
     with pytest.raises(RuntimeError, match="must provide at least one target mol"):
-        klass(N, empty_groups, beta, cutoff)
+        klass(N, empty_groups, cutoff)
 
     group_idxs = [[0, 1, 2]]
-    pot = klass(N, group_idxs, beta, cutoff)
+    pot = klass(N, group_idxs, cutoff)
     with pytest.raises(RuntimeError, match="params N != coords N"):
         pot.execute(np.concatenate([conf] * 2), params, box)
 
@@ -83,15 +82,14 @@ def test_nonbonded_mol_energy_matches_exchange_mover_batch_U(num_mols, precision
 
     params = nb.params[conf_idxs].astype(precision)
 
-    beta = nb.potential.beta
     cutoff = nb.potential.cutoff
     klass = custom_ops.NonbondedMolEnergyPotential_f32
     if precision == np.float64:
         klass = custom_ops.NonbondedMolEnergyPotential_f64
 
-    mover = BDExchangeMove(beta, cutoff, params, group_idxs, DEFAULT_TEMP)
+    mover = BDExchangeMove(cutoff, params, group_idxs, DEFAULT_TEMP)
 
-    mol_by_mol_pot = klass(N, group_idxs, beta, cutoff)
+    mol_by_mol_pot = klass(N, group_idxs, cutoff)
 
     def u_ref(x, box):
         return mover.batch_U_fn(x, box, mover.all_a_idxs, mover.all_b_idxs)
@@ -142,15 +140,14 @@ def test_nonbonded_mol_energy_random_moves(box_size, num_mols, moves, precision,
 
     params = nb.params[conf_idxs].astype(precision)
 
-    beta = nb.potential.beta
     cutoff = nb.potential.cutoff
     klass = custom_ops.NonbondedMolEnergyPotential_f32
     if precision == np.float64:
         klass = custom_ops.NonbondedMolEnergyPotential_f64
 
-    mover = BDExchangeMove(beta, cutoff, params, group_idxs, DEFAULT_TEMP)
+    mover = BDExchangeMove(cutoff, params, group_idxs, DEFAULT_TEMP)
 
-    mol_by_mol_pot = klass(N, group_idxs, beta, cutoff)
+    mol_by_mol_pot = klass(N, group_idxs, cutoff)
 
     def u_ref(x, box):
         return mover.batch_U_fn(x, box, mover.all_a_idxs, mover.all_b_idxs)
@@ -264,16 +261,15 @@ def test_nonbonded_mol_energy_matches_exchange_mover_batch_U_in_complex(precisio
 
     params = nb.params
 
-    beta = nb.potential.beta
     cutoff = nb.potential.cutoff
     klass = custom_ops.NonbondedMolEnergyPotential_f32
     if precision == np.float64:
         klass = custom_ops.NonbondedMolEnergyPotential_f64
 
     params = params.astype(precision)
-    mover = BDExchangeMove(beta, cutoff, params, water_groups, DEFAULT_TEMP)
+    mover = BDExchangeMove(cutoff, params, water_groups, DEFAULT_TEMP)
 
-    mol_by_mol_pot = klass(N, water_groups, beta, cutoff)
+    mol_by_mol_pot = klass(N, water_groups, cutoff)
 
     def u_ref(x, box):
         return mover.batch_U_fn(x, box, mover.all_a_idxs, mover.all_b_idxs)

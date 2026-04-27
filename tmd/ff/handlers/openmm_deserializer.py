@@ -261,9 +261,9 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
     nb_forces = get_forces_by_type(omm_forces, mm.NonbondedForce)
     if len(nb_forces) > 0:
         assert len(nb_forces) == 1, "Only supports a single nonbonded force"
-        nb_params, exclusion_idxs, beta, scale_factors = deserialize_nonbonded_force(nb_forces[0], N)
+        nb_params, exclusion_idxs, _, scale_factors = deserialize_nonbonded_force(nb_forces[0], N)
 
-        nonbonded = potentials.Nonbonded(N, exclusion_idxs, scale_factors, beta, cutoff).bind(nb_params)
+        nonbonded = potentials.Nonbonded(N, exclusion_idxs, scale_factors, cutoff).bind(nb_params)
 
     assert bond
     assert angle

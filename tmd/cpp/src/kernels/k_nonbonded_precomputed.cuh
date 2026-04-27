@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York, Justin Gullingsrud
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,11 +33,11 @@ void __global__ k_nonbonded_precomputed(
     const RealType *__restrict__ box,    // box vectors
     const int *__restrict__ pair_idxs,   // [M, 2] pair-list of atoms
     const int *__restrict__ system_idxs, // [M] Which system the pair is from
-    const RealType beta, const RealType cutoff_squared,
-    unsigned long long *__restrict__ du_dx,
+    const RealType cutoff, unsigned long long *__restrict__ du_dx,
     unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer) {
 
   int pair_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  const RealType cutoff_squared = cutoff * cutoff;
   while (pair_idx < M) {
 
     const int system_idx = system_idxs[pair_idx];
@@ -104,8 +104,8 @@ void __global__ k_nonbonded_precomputed(
       if (q_ij != 0) {
 
         RealType damping_factor;
-        RealType es_factor = real_es_factor(beta, d_ij, inv_dij,
-                                            inv_dij * inv_dij, damping_factor);
+        RealType es_factor =
+            real_es_factor(cutoff, d_ij, inv_dij * inv_dij, damping_factor);
 
         if (COMPUTE_U) {
           // energies

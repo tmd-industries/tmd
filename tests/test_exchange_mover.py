@@ -51,7 +51,6 @@ def test_batch_log_weights_incremental(add_offset):
     np.random.seed(2023)
     W = 111  # num waters
     N = 439  # num atoms
-    nb_beta = 1.2
     nb_cutoff = 0.6
     nb_params = np.random.rand(N, 4)
     nb_params[:, 0] -= 0.5
@@ -67,7 +66,7 @@ def test_batch_log_weights_incremental(add_offset):
     for wi in range(W):
         water_idxs.append([wi * 3 + offset + 0, wi * 3 + offset + 1, wi * 3 + offset + 2])  # has to be contiguous
 
-    bdem = exchange_mover.BDExchangeMove(nb_beta, nb_cutoff, nb_params, water_idxs, beta)
+    bdem = exchange_mover.BDExchangeMove(nb_cutoff, nb_params, water_idxs, beta)
 
     for _ in range(100):
         conf = np.random.rand(N, 3)

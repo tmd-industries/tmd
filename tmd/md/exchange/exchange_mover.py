@@ -89,14 +89,12 @@ class BDExchangeMove(moves.MonteCarloMove):
 
     def __init__(
         self,
-        nb_beta: float,
         nb_cutoff: float,
         nb_params: NDArray,
         water_idxs: NDArray,
         temperature: float,
     ):
         super().__init__()
-        self.nb_beta = nb_beta
         self.nb_cutoff = nb_cutoff
         self.nb_params = jnp.array(nb_params)
         self.num_waters = len(water_idxs)
@@ -138,9 +136,7 @@ class BDExchangeMove(moves.MonteCarloMove):
             conf_j = conf[b_idxs]
             params_i = self.nb_params[a_idxs]
             params_j = self.nb_params[b_idxs]
-            nrgs = nonbonded.nonbonded_block_unsummed(
-                conf_i, conf_j, box, params_i, params_j, self.nb_beta, self.nb_cutoff
-            )
+            nrgs = nonbonded.nonbonded_block_unsummed(conf_i, conf_j, box, params_i, params_j, self.nb_cutoff)
 
             return jnp.where(jnp.isnan(nrgs), np.inf, nrgs)
 
@@ -356,7 +352,6 @@ class TIBDExchangeMove(BDExchangeMove):
 
     def __init__(
         self,
-        nb_beta: float,
         nb_cutoff: float,
         nb_params: NDArray,
         water_idxs: NDArray,
@@ -367,8 +362,6 @@ class TIBDExchangeMove(BDExchangeMove):
         """
         Parameters
         ----
-        nb_beta: float
-            nonbonded beta parameters used in direct space pme
 
         nb_cutoff: float
             cutoff in the nonbonded kernel
@@ -392,7 +385,7 @@ class TIBDExchangeMove(BDExchangeMove):
             Radius to use for the ligand_idxs
 
         """
-        super().__init__(nb_beta, nb_cutoff, nb_params, water_idxs, temperature)
+        super().__init__(nb_cutoff, nb_params, water_idxs, temperature)
 
         self.ligand_idxs = np.array(ligand_idxs)  # used to determine center of sphere
         self.radius = radius

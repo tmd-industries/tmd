@@ -1296,14 +1296,13 @@ class AlignedChiralAtom(AlignedPotential):
 @dataclass
 class AlignedNonbondedPairlist(AlignedPotential):
     cutoff: float
-    beta: float
 
     def interpolate(self, lamb):
         # (ytz): batch_interpolate_nonbonded_pair_list_params currently fails to respect the self.mins and self.maxes
         # boundaries.
         params = batch_interpolate_nonbonded_pair_list_params(self.cutoff, self.src_params, self.dst_params, lamb)
         params = jnp.array(params)
-        return NonbondedPairListPrecomputed(self.num_atoms, self.idxs, self.beta, self.cutoff).bind(params)
+        return NonbondedPairListPrecomputed(self.num_atoms, self.idxs, self.cutoff).bind(params)
 
 
 class SingleTopology(AtomMapMixin):
@@ -1436,14 +1435,7 @@ class SingleTopology(AtomMapMixin):
         return AlignedChiralAtom(self.get_num_atoms(), idxs, src_params, dst_params, mins, maxes)
 
     def _align_nonbonded_pair_list(self):
-        src_cutoff = self.src_system.nonbonded_pair_list.potential.cutoff
-        src_beta = self.src_system.nonbonded_pair_list.potential.beta
-
-        dst_cutoff = self.dst_system.nonbonded_pair_list.potential.cutoff
-        dst_beta = self.dst_system.nonbonded_pair_list.potential.beta
-
-        assert src_cutoff == dst_cutoff
-        assert src_beta == dst_beta
+        src_cutoff = topology._CUTOFF
 
         idxs, src_params, dst_params, mins, maxes = self._align_bonded_term(
             interpolate.align_nonbonded_idxs_and_params,
@@ -1462,7 +1454,6 @@ class SingleTopology(AtomMapMixin):
             mins=mins,
             maxes=maxes,
             cutoff=src_cutoff,
-            beta=src_beta,
         )
 
     def combine_masses(self, use_hmr: bool = False) -> list[float]:
@@ -2006,7 +1997,6 @@ class SingleTopology(AtomMapMixin):
         assert isinstance(host_nonbonded.params, (np.ndarray, jax.Array))
         host_params = host_nonbonded.params
         cutoff = host_nonbonded.potential.cutoff
-        beta = host_nonbonded.potential.beta
 
         guest_ixn_env_params = self._get_guest_params(self.ff.q_handle, self.ff.lj_handle, lamb, cutoff)
 
@@ -2022,7 +2012,6 @@ class SingleTopology(AtomMapMixin):
             n_atoms,
             combined_exclusion_idxs,
             combined_scale_factors,
-            beta,
             cutoff,
         )
 

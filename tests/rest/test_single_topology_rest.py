@@ -229,7 +229,6 @@ def test_single_topology_rest_solvent(mol_pair, temperature_scale_interpolation_
         return NonbondedInteractionGroup(
             hgs.nonbonded_all_pairs.potential.num_atoms,
             ligand_idxs_,
-            hgs.nonbonded_all_pairs.potential.beta,
             hgs.nonbonded_all_pairs.potential.cutoff,
             col_atom_idxs=np.arange(num_atoms_host, dtype=np.int32),
         )(conf, hgs.nonbonded_all_pairs.params, host_config.box)

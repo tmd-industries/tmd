@@ -220,7 +220,7 @@ def test_ideal_gas():
         assert_correctness(incorrect_local_move)
 
 
-@pytest.mark.parametrize("freeze_reference", [True, False])  # unused?
+@pytest.mark.parametrize("freeze_reference", [True, False])
 @pytest.mark.parametrize("k", [1.0, 1000.0, 10000.0])
 def test_local_md_particle_density(freeze_reference, k):
     """Verify that the average particle density around a single particle is stable.
@@ -286,7 +286,7 @@ def test_local_md_particle_density(freeze_reference, k):
     ctxt = custom_ops.Context_f32(coords, v0, box, intg_impl, bps, movers=[barostat.impl(bps)])
     ctxt.setup_local_md(temperature, freeze_reference)
     # Equilibrate using global steps to start off from a reasonable place
-    x0, boxes = ctxt.multiple_steps(2000)
+    x0, boxes = ctxt.multiple_steps(4000)
 
     rng = np.random.default_rng(seed)
 

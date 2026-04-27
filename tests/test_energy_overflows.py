@@ -227,13 +227,12 @@ def test_energy_overflow_cancelled_by_exclusions(precision, rtol, atol):
     all_pairs = NonbondedInteractionGroup(
         potential.num_atoms,
         atom_idxs,
-        potential.beta,
         potential.cutoff,
         nblist_padding=potential.nblist_padding,
         col_atom_idxs=atom_idxs,
     )
     pair_list = NonbondedExclusions(
-        N, potential.exclusion_idxs, potential.scale_factors.astype(precision), potential.beta, potential.cutoff
+        N, potential.exclusion_idxs, potential.scale_factors.astype(precision), potential.cutoff
     )
 
     def compute_potential_energy(pot):
@@ -304,7 +303,6 @@ def test_energy_overflows_with_summation_of_energies(precision):
         num_atoms=num_atoms,
         exclusion_idxs=np.array([(0, num_atoms - 1)], dtype=np.int32),
         scale_factors=np.zeros((1, 2)),
-        beta=2.0,
         cutoff=1.2,
     )
     nonbonded_gpu = nonbonded.to_gpu(precision)
