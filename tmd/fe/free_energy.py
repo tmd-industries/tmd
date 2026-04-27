@@ -35,7 +35,7 @@ from tmd.fe.bar import (
     sanitize_energies_for_bar,
     works_from_ukln,
 )
-from tmd.fe.lambda_schedule import interpolate_pre_optimized_protocol
+from tmd.fe.lambda_schedule import apportion, interpolate_pre_optimized_protocol
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_dG_errs_figure,
@@ -1286,37 +1286,6 @@ def _run_sequential_bisection(
     return results, trajectories
 
 
-def apportion(weights: NDArray, total: int) -> NDArray:
-    """Apportion `total` items proportionally to `weights` using the largest-remainder method.
-
-    Each entry receives at least floor(weight_i / sum * total) items; the remaining
-    items are assigned one each to the entries with the largest fractional remainders.
-
-    Parameters
-    ----------
-    weights : array of float, length n
-        Non-negative weights (must sum to > 0).
-    total : int
-        Total number of items to distribute (must be >= len(weights)).
-
-    Returns
-    -------
-    NDArray of int, length n
-        Integer allocation summing to `total`.
-    """
-    assert len(weights) > 0
-    assert total >= len(weights)
-    raw = weights / weights.sum() * total
-    floored = np.floor(raw).astype(int)
-    remainders = raw - floored
-    deficit = total - floored.sum()
-    if deficit > 0:
-        bonus_idxs = np.argsort(remainders)[-deficit:]
-        floored[bonus_idxs] += 1
-    assert floored.sum() == total
-    return floored
-
-
 def _run_batched_bisection(
     initial_lambdas: Sequence[float],
     make_initial_state: Callable[[float], InitialState],
@@ -1503,8 +1472,8 @@ def _run_batched_bisection(
 
         lambs_to_add = []
         for gap_idx, n_windows in zip(gap_idxs, windows_per_gap):
-            lamb_start = lambs[gap_idx]
-            lamb_end = lambs[gap_idx + 1]
+            lamb_start = lambs[int(gap_idx)]
+            lamb_end = lambs[int(gap_idx) + 1]
             delta = (lamb_end - lamb_start) / (n_windows + 1)
             lambs_to_add.extend(np.linspace(lamb_start + delta, lamb_end, n_windows, endpoint=False))
 
