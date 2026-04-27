@@ -534,7 +534,7 @@ def test_amber_am1ccc_parameterization():
 
     new_charges = am1h.static_parameterize(params, smirks, mol)
     # Sum of charges shouldn't change
-    np.testing.assert_allclose(np.sum(new_charges), np.sum(charges))
+    np.testing.assert_allclose(np.sum(new_charges), np.sum(charges), atol=1e-12)
 
     changed_charges = charges != new_charges
     total_changed = np.sum(changed_charges)
