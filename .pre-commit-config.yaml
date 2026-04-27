@@ -20,10 +20,10 @@ repos:
         # include dependencies that export types (i.e. have a py.typed file in the root module) so that they can be used
         # by mypy in pre-commit
         additional_dependencies:
-          - "jax==0.4.28"
-          - "numpy==2.2.2"
-          - "scipy==1.15.1"
-          - "matplotlib==3.10.0"
+          - "jax==0.10.0"
+          - "numpy==2.4.3"
+          - "scipy==1.17.1"
+          - "matplotlib==3.10.9"
 
         # Exclude custom_ops.py to work around clash with stub file when typechecking
         # Exclude vendored code to reduce maintenance burden

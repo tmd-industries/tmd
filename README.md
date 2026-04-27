@@ -33,7 +33,12 @@ conda activate tmd
 The CUDA extension module implementing custom ops is only supported on Linux, but partial functionality is still available on non-Linux OSes.
 
 ```shell
+# Install the pinned requirements
 pip install -r requirements.txt
+
+# If you are using the OpenEye AM1BCC charges additionally install OpenEye
+pip install --extra-index-url https://pypi.anaconda.org/OpenEye/simple openeye-toolkits
+
 pip install .
 ```
 
