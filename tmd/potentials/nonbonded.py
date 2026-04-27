@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2026, Forrest York
+# Modifications Copyright 2026, Forrest York, Justin Gullingsrud
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,13 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import warnings
 from typing import Optional, cast
 
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, jit, vmap
-from jax.scipy.special import erfc
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 from scipy.special import binom
@@ -78,18 +76,17 @@ def lennard_jones(dij, sig_ij, eps_ij):
     return 4 * eps_ij * (sig12 - sig6)
 
 
-def direct_space_pme(dij, qij, beta):
-    """Direct-space contribution from eq 2 of:
-    Darden, York, Pedersen, 1993, J. Chem. Phys.
-    "Particle mesh Ewald: An N log(N) method for Ewald sums in large systems"
-    https://aip.scitation.org/doi/abs/10.1063/1.470117
+def reaction_field_electrostatics(dij, qij, cutoff):
+    """Barker-Watts reaction field with tinfoil boundary conditions
+
+    from eq 16 of:
+    [Cisneros, et al 2015] Classical Electrostatics for Biomolecular Simulations
+    https://pmc.ncbi.nlm.nih.gov/articles/PMC3947274/
+
+    with eps = inf
     """
-    return qij * erfc(beta * dij) / dij
-
-
-def switched_direct_space_pme(dij, qij, beta, cutoff):
-    """direct_space_pme * switch_fn"""
-    return direct_space_pme(dij, qij, beta) * switch_fn(dij, cutoff)
+    dij = jnp.where(jnp.isfinite(dij), dij, cutoff)
+    return qij * (1 / dij + dij**2 / (2 * cutoff**3) - 3 / (2 * cutoff))
 
 
 def nonbonded_block_unsummed(
@@ -98,7 +95,6 @@ def nonbonded_block_unsummed(
     box: NDArray,
     params_i: NDArray,
     params_j: NDArray,
-    beta: float,
     cutoff: float,
 ) -> Array:
     """
@@ -122,8 +118,6 @@ def nonbonded_block_unsummed(
         3-Tuples of (charge, sigma, epsilons, w_offset)
     params_j : (M,4) np.ndarray
         3-Tuples of (charge, sigma, epsilons, w_offset)
-    beta : float
-        the charge product q_ij will be multiplied by erfc(beta*d_ij)
     cutoff : Optional float
         a pair of particles (i,j) will be considered non-interacting if the distance d_ij
         between their 3D coordinates exceeds cutoff
@@ -157,18 +151,18 @@ def nonbonded_block_unsummed(
 
     qij = jnp.multiply(qi, qj)
 
-    es = switched_direct_space_pme(dij, qij, beta, cutoff)
+    es = reaction_field_electrostatics(dij, qij, cutoff)
     lj = lennard_jones(dij, sig_ij, eps_ij)
 
     nrgs = jnp.where(dij < cutoff, es + lj, 0)
     return cast(Array, nrgs)
 
 
-def nonbonded_block(xi, xj, box, params_i, params_j, beta, cutoff):
+def nonbonded_block(xi, xj, box, params_i, params_j, cutoff):
     """
     This is a summed version of nonbonded_block_unsummed, returning a scalar
     """
-    return jnp.sum(nonbonded_block_unsummed(xi, xj, box, params_i, params_j, beta, cutoff))
+    return jnp.sum(nonbonded_block_unsummed(xi, xj, box, params_i, params_j, cutoff))
 
 
 def convert_exclusions_to_rescale_masks(exclusion_idxs, scales, N):
@@ -239,7 +233,6 @@ def nonbonded(
     box,
     exclusion_idxs: NDArray[np.int32],
     scale_factors: NDArray[np.float64],
-    beta,
     cutoff,
     runtime_validate=True,
     atom_idxs=None,
@@ -260,13 +253,11 @@ def nonbonded(
         List of atom pairs to exclude.
     scale_factors:
         Per exclusion charge and lj scale factors.
-    beta : float
-        the charge product q_ij will be multiplied by erfc(beta*d_ij)
     cutoff : Optional float
         a pair of particles (i,j) will be considered non-interacting if the distance d_ij
         between their 4D coordinates exceeds cutoff
     runtime_validate: bool
-        check whether beta is compatible with cutoff
+        Runs assertions to validate inputs
         (if True, this function will currently not play nice with Jax JIT)
         TODO: is there a way to conditionally print a runtime warning inside
             of a Jax JIT-compiled function, without triggering a Jax ConcretizationTypeError?
@@ -317,8 +308,6 @@ def nonbonded(
     keep_mask = jnp.where(eps_ij != 0, keep_mask, 0)
 
     if cutoff is not None:
-        if runtime_validate:
-            validate_coulomb_cutoff(cutoff, beta, threshold=1e-2)
         eps_ij = jnp.where(dij < cutoff, eps_ij, 0)
 
     # (ytz): this avoids a nan in the gradient in both jax and tensorflow
@@ -344,8 +333,7 @@ def nonbonded(
     qij = jnp.where(keep_mask, qij, 0)
     dij = jnp.where(keep_mask, dij, 0)
 
-    # funny enough lim_{x->0} erfc(x)/x = 0
-    eij_charge = jnp.where(keep_mask, switched_direct_space_pme(dij, qij, beta, cutoff), 0)  # zero out diagonals
+    eij_charge = jnp.where(keep_mask, reaction_field_electrostatics(dij, qij, cutoff), 0)  # zero out diagonals
     if cutoff is not None:
         eij_charge = jnp.where(dij < cutoff, eij_charge, 0)
 
@@ -359,7 +347,6 @@ def nonbonded_on_specific_pairs(
     params,
     box,
     pairs,
-    beta: float,
     cutoff: Optional[float] = None,
     rescale_mask=None,
 ) -> tuple[Array, Array]:
@@ -398,9 +385,9 @@ def nonbonded_on_specific_pairs(
 
     vdW = jnp.where(eps_ij != 0, lennard_jones(dij, sig_ij, eps_ij), 0)
 
-    # Electrostatics by direct-space part of PME
+    # Electrostatics by reaction field
     qij = apply_cutoff(charges[inds_l] * charges[inds_r])
-    electrostatics = switched_direct_space_pme(dij, qij, beta, cutoff)
+    electrostatics = reaction_field_electrostatics(dij, qij, cutoff)
 
     if rescale_mask is not None:
         assert rescale_mask.shape == (len(pairs), 2)
@@ -415,14 +402,7 @@ def nonbonded_on_specific_pairs(
     return vdW_arr, electrostatics_arr
 
 
-def nonbonded_on_precomputed_pairs(
-    conf,
-    params,
-    box,
-    pairs,
-    beta: float,
-    cutoff: Optional[float] = None,
-):
+def nonbonded_on_precomputed_pairs(conf, params, box, pairs, cutoff: float | None = None):
     """
     Similar to pairlist, except that we pre-compute parameters with:
 
@@ -440,9 +420,10 @@ def nonbonded_on_precomputed_pairs(
 
     inds_l, inds_r = pairs.T
 
-    # distances and cutoff
+    # distances
     q_ij, sig_ij, eps_ij, offsets = params.T
     dij = distance_on_pairs(conf[inds_l], conf[inds_r], box, offsets)
+
     if cutoff is None:
         cutoff = np.inf
 
@@ -456,7 +437,7 @@ def nonbonded_on_precomputed_pairs(
     eps_ij = apply_cutoff(eps_ij)
 
     vdW = jnp.where(eps_ij != 0, lennard_jones(dij, sig_ij, eps_ij), 0)
-    electrostatics = jnp.where(q_ij != 0, switched_direct_space_pme(dij, q_ij, beta, cutoff), 0)
+    electrostatics = jnp.where(q_ij != 0, reaction_field_electrostatics(dij, q_ij, cutoff), 0)
 
     return vdW, electrostatics
 
@@ -483,7 +464,6 @@ def nonbonded_interaction_groups(
     box,
     a_idxs,
     b_idxs,
-    beta: float,
     cutoff: Optional[float] = None,
 ):
     """Nonbonded interactions between all pairs of atoms $(i, j)$
@@ -497,15 +477,8 @@ def nonbonded_interaction_groups(
         b_idxs = np.setdiff1d(jnp.arange(num_atoms), a_idxs)
     validate_interaction_group_idxs(num_atoms, a_idxs, b_idxs)
     pairs = pairs_from_interaction_groups(a_idxs, b_idxs)
-    vdW, electrostatics = nonbonded_on_specific_pairs(conf, params, box, pairs, beta, cutoff)
+    vdW, electrostatics = nonbonded_on_specific_pairs(conf, params, box, pairs, cutoff)
     return vdW, electrostatics
-
-
-def validate_coulomb_cutoff(cutoff=1.0, beta=2.0, threshold=1e-2):
-    """check whether f(r) = erfc(beta * r) <= threshold at r = cutoff
-    following https://github.com/proteneer/timemachine/pull/424#discussion_r629678467"""
-    if erfc(beta * cutoff) > threshold:
-        warnings.warn(f"erfc(beta * cutoff) = {erfc(beta * cutoff)} > threshold = {threshold}")
 
 
 # utilities for efficiently recomputing energy as a function of ligand charges
@@ -514,7 +487,7 @@ def validate_coulomb_cutoff(cutoff=1.0, beta=2.0, threshold=1e-2):
 #   TODO: avoid repetition between this and lennard-jones
 
 
-def coulomb_prefactor_on_atom(x_i, x_others, q_others, box=None, beta=2.0, cutoff=jnp.inf) -> Array:
+def coulomb_prefactor_on_atom(x_i, x_others, q_others, box=None, cutoff=jnp.inf) -> Array:
     """Precompute part of (sum_i q_i * q_j / d_ij * rxn_field(d_ij)) that does not depend on q_i
 
     Parameters
@@ -526,20 +499,19 @@ def coulomb_prefactor_on_atom(x_i, x_others, q_others, box=None, beta=2.0, cutof
     q_others: [N_env] array
         charges of all other atoms (in environment)
     box: optional diagonal [D, D] array
-    beta: float
     cutoff: float
 
     Returns
     -------
     prefactor_i : float
-        sum_j q_j / d_ij * erfc(beta * d_ij)
+        sum_j q_j * rxn_field(d_ij, cutoff)
     """
     d_ij = jax_utils.distance_from_one_to_others(x_i, x_others, box, cutoff)
-    prefactor_i = jnp.sum((q_others / d_ij) * erfc(beta * d_ij) * switch_fn(d_ij, cutoff))
+    prefactor_i = jnp.sum(q_others * reaction_field_electrostatics(d_ij, 1.0, cutoff))
     return prefactor_i
 
 
-def coulomb_prefactors_on_snapshot(x_ligand, x_env, q_env, box=None, beta=2.0, cutoff=np.inf) -> Array:
+def coulomb_prefactors_on_snapshot(x_ligand, x_env, q_env, box=None, cutoff=np.inf) -> Array:
     """Map coulomb_prefactor_on_atom over atoms in x_ligand
 
     Parameters
@@ -548,7 +520,6 @@ def coulomb_prefactors_on_snapshot(x_ligand, x_env, q_env, box=None, beta=2.0, c
     x_env: [N_env, D] array
     q_env: [N_env] array
     box: optional diagonal [D, D] array
-    beta: float
     cutoff: float
 
     Returns
@@ -558,13 +529,13 @@ def coulomb_prefactors_on_snapshot(x_ligand, x_env, q_env, box=None, beta=2.0, c
     """
 
     def f_atom(x_i):
-        return coulomb_prefactor_on_atom(x_i, x_env, q_env, box, beta, cutoff)
+        return coulomb_prefactor_on_atom(x_i, x_env, q_env, box, cutoff)
 
     return vmap(f_atom)(x_ligand)
 
 
 def coulomb_prefactors_on_traj(
-    traj, boxes, charges, ligand_indices, env_indices, beta=2.0, cutoff=jnp.inf, chunk_size=DEFAULT_CHUNK_SIZE
+    traj, boxes, charges, ligand_indices, env_indices, cutoff=jnp.inf, chunk_size=DEFAULT_CHUNK_SIZE
 ):
     """Map coulomb_prefactors_on_snapshot over snapshots in a trajectory
 
@@ -575,7 +546,6 @@ def coulomb_prefactors_on_traj(
     charges: [N] array
     ligand_indices: [N_lig] array of ints
     env_indices: [N_env] array of ints
-    beta: float
     cutoff: float
     chunk_size: int
         process traj in ceil(T / chunk_size) chunks, to limit memory consumption
@@ -592,7 +562,7 @@ def coulomb_prefactors_on_traj(
     def f_snapshot(coords, box):
         x_ligand = coords[ligand_indices]
         x_env = coords[env_indices]
-        return jit(coulomb_prefactors_on_snapshot)(x_ligand, x_env, q_env, box, beta, cutoff)
+        return jit(coulomb_prefactors_on_snapshot)(x_ligand, x_env, q_env, box, cutoff)
 
     return process_traj_in_chunks(f_snapshot, traj, boxes, chunk_size)
 

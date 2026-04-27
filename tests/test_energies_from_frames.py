@@ -34,7 +34,7 @@ pytestmark = [pytest.mark.memcheck]
 
 @pytest.mark.parametrize(
     "precision,rtol,atol",
-    [(np.float32, 1e-7, 1e-7)],
+    [(np.float32, 1.5e-7, 1e-7)],
 )
 @pytest.mark.parametrize("seed", [1234, 2025, 2022, 2021, 814])
 def test_recomputation_of_energies(precision, rtol, atol, seed):
@@ -89,7 +89,6 @@ def test_recomputation_of_energies(precision, rtol, atol, seed):
         water_idxs,
         nb.params.astype(precision),
         DEFAULT_TEMP,
-        nb.potential.beta,
         nb.potential.cutoff,
         radius,
         seed,

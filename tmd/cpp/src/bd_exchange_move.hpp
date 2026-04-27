@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025, Forrest York
+// Modifications Copyright 2025-2026, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -52,9 +52,8 @@ protected:
   // for rewinding
   const int steps_per_move_; // num_proposals_per_move_ / batch_size
   const int num_target_mols_;
-  const RealType nb_beta_;
   const RealType beta_; // 1 / kT
-  const RealType cutoff_squared_;
+  const RealType cutoff_;
   const int batch_size_;
   const int num_intermediates_per_reduce_; // Number of intermediate values to
                                            // reduce mol weights
@@ -124,19 +123,18 @@ protected:
   BDExchangeMove(const int num_system, const int N,
                  const std::vector<std::vector<int>> &target_mols,
                  const std::vector<RealType> &params,
-                 const RealType temperature, const RealType nb_beta,
-                 const RealType cutoff, const int seed,
-                 const int num_proposals_per_move, const int interval,
-                 const int batch_size, const int translation_buffer_size);
+                 const RealType temperature, const RealType cutoff,
+                 const int seed, const int num_proposals_per_move,
+                 const int interval, const int batch_size,
+                 const int translation_buffer_size);
 
 public:
   BDExchangeMove(const int num_system, const int N,
                  const std::vector<std::vector<int>> &target_mols,
                  const std::vector<RealType> &params,
-                 const RealType temperature, const RealType nb_beta,
-                 const RealType cutoff, const int seed,
-                 const int num_proposals_per_move, const int interval,
-                 const int batch_size);
+                 const RealType temperature, const RealType cutoff,
+                 const int seed, const int num_proposals_per_move,
+                 const int interval, const int batch_size);
 
   void compute_incremental_log_weights_device(const int N, const bool scale,
                                               const RealType *d_box,

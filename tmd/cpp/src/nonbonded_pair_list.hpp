@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,8 +34,8 @@ class NonbondedPairList : public Potential<RealType> {
       const int N, const int M, const RealType *__restrict__ coords,
       const RealType *__restrict__ params, const RealType *__restrict__ box,
       const int *__restrict__ idxs, const int *__restrict__ system_idxs,
-      const RealType *__restrict__ scales, const RealType beta,
-      const RealType cutoff, unsigned long long *__restrict__ du_dx,
+      const RealType *__restrict__ scales, const RealType cutoff,
+      unsigned long long *__restrict__ du_dx,
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
 
 private:
@@ -44,7 +44,6 @@ private:
   const int max_idxs_;
   int cur_num_idxs_; // number of pairs
 
-  const RealType beta_;
   const RealType cutoff_;
 
   __int128 *d_u_buffer_; // [M]
@@ -64,7 +63,7 @@ public:
                     const std::vector<int> &pair_idxs,   // [M, 2]
                     const std::vector<RealType> &scales, // [M, 2]
                     const std::vector<int> &system_idxs, // [M]
-                    const RealType beta, const RealType cutoff);
+                    const RealType cutoff);
 
   ~NonbondedPairList();
 

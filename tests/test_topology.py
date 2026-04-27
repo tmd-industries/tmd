@@ -90,7 +90,7 @@ def parameterize_nonbonded_full(
     hg_scale_factors = np.concatenate([hgt.host_nonbonded.potential.scale_factors, guest_pot.scale_factors])
     hg_nb_params = jnp.concatenate([hgt.host_nonbonded.params, guest_params])
     return hg_nb_params, potentials.Nonbonded(
-        hgt.num_host_atoms + num_guest_atoms, hg_exclusion_idxs, hg_scale_factors, guest_pot.beta, guest_pot.cutoff
+        hgt.num_host_atoms + num_guest_atoms, hg_exclusion_idxs, hg_scale_factors, guest_pot.cutoff
     )
 
 
@@ -104,8 +104,17 @@ def test_host_guest_nonbonded_tiny_mol():
 
 
 @no_type_check
-@pytest.mark.parametrize("precision, rtol, atol", [(np.float64, 1e-8, 1e-8), (np.float32, 5e-4, 5e-4)])
-@pytest.mark.parametrize("ctor", [BaseTopology, DualTopology, MultiTopology])
+@pytest.mark.parametrize(
+    "ctor, precision, rtol, atol",
+    [
+        (BaseTopology, np.float64, 1e-8, 1e-8),
+        (DualTopology, np.float64, 1e-8, 1e-8),
+        (MultiTopology, np.float64, 1e-8, 1e-8),
+        (BaseTopology, np.float32, 6e-5, 6e-5),
+        (DualTopology, np.float32, 6e-5, 6e-5),
+        (MultiTopology, np.float32, 1.5e-3, 1e-3),
+    ],
+)
 @pytest.mark.parametrize("use_tiny_mol", [True, False])
 def test_host_guest_nonbonded(ctor, precision, rtol, atol, use_tiny_mol):
     host_guest_nonbonded_impl(ctor, precision, rtol, atol, use_tiny_mol)
@@ -190,7 +199,6 @@ def host_guest_nonbonded_impl(ctor, precision, rtol, atol, use_tiny_mol):
         u = potentials.NonbondedInteractionGroup(
             num_total_atoms,
             ligand_idxs,
-            hgt.host_nonbonded.potential.beta,
             hgt.host_nonbonded.potential.cutoff,
             col_atom_idxs=water_idxs if is_solvent else protein_idxs,
         )

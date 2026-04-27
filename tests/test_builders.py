@@ -488,7 +488,7 @@ def test_build_host_config_from_omm():
     This test demonstrates setting up a system with DNA.
     """
     lipid_patch = Path(app.__file__).parent / "data" / "POPC.pdb"
-    with pytest.raises(ValueError, match=r"No template found for residue 1"):
+    with pytest.raises(ValueError, match=r"No template found for residue"):
         build_protein_system(str(lipid_patch), DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF)
 
     omm_pdb = app.PDBFile(str(lipid_patch))

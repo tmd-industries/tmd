@@ -1,5 +1,6 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
+//
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,10 +31,10 @@ NonbondedPairList<RealType, Negated>::NonbondedPairList(
     const std::vector<int> &pair_idxs,   // [M, 2]
     const std::vector<RealType> &scales, // [M, 2]
     const std::vector<int> &system_idxs, // [M]
-    const RealType beta, const RealType cutoff)
+    const RealType cutoff)
     : num_systems_(num_systems), num_atoms_(num_atoms),
       max_idxs_(pair_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
-      beta_(beta), cutoff_(cutoff), nrg_accum_(num_systems_, cur_num_idxs_),
+      cutoff_(cutoff), nrg_accum_(num_systems_, cur_num_idxs_),
       kernel_ptrs_({// enumerate over every possible kernel combination
                     // U: Compute U
                     // X: Compute DU_DX
@@ -133,7 +134,7 @@ void NonbondedPairList<RealType, Negated>::execute_device(
 
     kernel_ptrs_[kernel_idx]<<<num_blocks_pairs, tpb, 0, stream>>>(
         num_atoms_, cur_num_idxs_, d_x, d_p, d_box, d_pair_idxs_,
-        d_system_idxs_, d_scales_, beta_, cutoff_, d_du_dx, d_du_dp,
+        d_system_idxs_, d_scales_, cutoff_, d_du_dx, d_du_dp,
         d_u == nullptr ? nullptr : d_u_buffer_);
 
     gpuErrchk(cudaPeekAtLastError());

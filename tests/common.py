@@ -149,9 +149,7 @@ def prepare_water_system(x, p_scale, cutoff):
     scales = np.array(scales, dtype=np.float64)
     exclusion_idxs = np.array(exclusion_idxs, dtype=np.int32)
 
-    beta = 2.0
-
-    potential = Nonbonded(N, exclusion_idxs, scales, beta, cutoff)
+    potential = Nonbonded(N, exclusion_idxs, scales, cutoff)
 
     return params, potential
 
@@ -222,9 +220,7 @@ def prepare_nb_system(
 
     scales = np.stack([np.random.rand(E), np.random.rand(E)], axis=1)
 
-    beta = 2.0
-
-    potential = Nonbonded(N, exclusion_idxs, scales, beta, cutoff)
+    potential = Nonbonded(N, exclusion_idxs, scales, cutoff)
 
     return params, potential
 
@@ -360,7 +356,7 @@ class GradientTest(unittest.TestCase):
             else:
                 assert test_du_dx is None
             if compute_du_dp:
-                if rtol == 0 or atol == 0:
+                if du_dp_rtol == 0 or du_dp_atol == 0:
                     np.testing.assert_array_equal(ref_du_dp, test_du_dp)
                 else:
                     np.testing.assert_allclose(ref_du_dp, test_du_dp, rtol=du_dp_rtol, atol=du_dp_atol)

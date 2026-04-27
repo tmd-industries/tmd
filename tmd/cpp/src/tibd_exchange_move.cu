@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025, Forrest York
+// Modifications Copyright 2025-2026, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,12 +40,11 @@ TIBDExchangeMove<RealType>::TIBDExchangeMove(
     const int num_system, const int N, const std::vector<int> ligand_idxs,
     const std::vector<std::vector<int>> &target_mols,
     const std::vector<RealType> &params, const RealType temperature,
-    const RealType nb_beta, const RealType cutoff, const RealType radius,
-    const int seed, const int num_proposals_per_move, const int interval,
-    const int batch_size)
+    const RealType cutoff, const RealType radius, const int seed,
+    const int num_proposals_per_move, const int interval, const int batch_size)
     : BDExchangeMove<RealType>(
-          num_system, N, target_mols, params, temperature, nb_beta, cutoff,
-          seed, num_proposals_per_move, interval, batch_size,
+          num_system, N, target_mols, params, temperature, cutoff, seed,
+          num_proposals_per_move, interval, batch_size,
           TIBD_TRANSLATIONS_PER_STEP_XYZXYZ * num_proposals_per_move),
       radius_(static_cast<RealType>(radius)),
       inner_volume_(static_cast<RealType>((4.0 / 3.0) * M_PI * pow(radius, 3))),

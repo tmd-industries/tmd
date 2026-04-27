@@ -369,11 +369,10 @@ void declare_nonbonded_mol_energy(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const int N,
                        const std::vector<std::vector<int>> &target_mols,
-                       const RealType beta, const RealType cutoff) {
-             return new Class(N, target_mols, beta, cutoff);
+                       const RealType cutoff) {
+             return new Class(N, target_mols, cutoff);
            }),
-           py::arg("N"), py::arg("target_mols"), py::arg("beta"),
-           py::arg("cutoff"))
+           py::arg("N"), py::arg("target_mols"), py::arg("cutoff"))
       .def(
           "execute",
           [](Class &potential,
@@ -2590,20 +2589,19 @@ void declare_nonbonded_precomputed(py::module &m, const char *typestr) {
       m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
       .def(py::init([](const int num_atoms,
                        const py::array_t<int, py::array::c_style> &pair_idxs,
-                       const double beta, const double cutoff) {
+                       const double cutoff) {
              verify_bond_idxs(pair_idxs, 2);
              std::vector<int> system_idxs(pair_idxs.shape(0), 0);
              const int num_systems = 1;
              return new NonbondedPairListPrecomputed<RealType>(
                  num_systems, num_atoms, py_array_to_vector(pair_idxs),
-                 system_idxs, beta, cutoff);
+                 system_idxs, cutoff);
            }),
-           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("beta"),
-           py::arg("cutoff"))
+           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("cutoff"))
       .def(py::init([](const int num_atoms,
                        const std::vector<py::array_t<int, py::array::c_style>>
                            &pair_idxs,
-                       const double beta, const double cutoff) {
+                       const double cutoff) {
              const int num_systems = pair_idxs.size();
              std::vector<int> combined_pair_idxs;
              std::vector<int> system_idxs;
@@ -2622,11 +2620,10 @@ void declare_nonbonded_precomputed(py::module &m, const char *typestr) {
                          system_idxs.end(), i);
              }
              return new NonbondedPairListPrecomputed<RealType>(
-                 num_systems, num_atoms, combined_pair_idxs, system_idxs, beta,
+                 num_systems, num_atoms, combined_pair_idxs, system_idxs,
                  cutoff);
            }),
-           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("beta"),
-           py::arg("cutoff"));
+           py::arg("num_atoms"), py::arg("pair_idxs"), py::arg("cutoff"));
 }
 
 template <typename RealType>
@@ -2874,7 +2871,7 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
           py::init(
               [](const int N,
                  const py::array_t<int, py::array::c_style> &row_atom_idxs_i,
-                 const double beta, const double cutoff,
+                 const double cutoff,
                  std::optional<py::array_t<int, py::array::c_style>>
                      &col_atom_idxs_i,
                  const bool disable_hilbert_sort, const double nblist_padding) {
@@ -2895,11 +2892,11 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
 
                 return new NonbondedInteractionGroup<RealType>(
                     1, N, std::vector<std::vector<int>>(1, row_atom_idxs),
-                    std::vector<std::vector<int>>(1, col_atom_idxs), beta,
-                    cutoff, disable_hilbert_sort, nblist_padding);
+                    std::vector<std::vector<int>>(1, col_atom_idxs), cutoff,
+                    disable_hilbert_sort, nblist_padding);
               }),
           py::arg("num_atoms"), py::arg("row_atom_idxs_i").noconvert(),
-          py::arg("beta"), py::arg("cutoff"),
+          py::arg("cutoff"),
           py::arg("col_atom_idxs_i").noconvert() = py::none(),
           py::arg("disable_hilbert_sort") = false,
           py::arg("nblist_padding") = 0.1,
@@ -2913,8 +2910,6 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
 
                     row_atom_idxs: NDArray
                         First group of atoms in the interaction.
-
-                    beta: float
 
                     cutoff: float
                         Ignore all interactions beyond this distance in nm.
@@ -2933,7 +2928,7 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
       .def(py::init([](const int N,
                        const std::vector<py::array_t<int, py::array::c_style>>
                            &row_atom_idxs_i,
-                       const double beta, const double cutoff,
+                       const double cutoff,
                        std::optional<
                            std::vector<py::array_t<int, py::array::c_style>>>
                            &col_atom_idxs_i,
@@ -2980,11 +2975,11 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
                combined_col_atoms.push_back(col_atom_idxs);
              }
              return new NonbondedInteractionGroup<RealType>(
-                 num_systems, N, combined_row_atoms, combined_col_atoms, beta,
-                 cutoff, disable_hilbert_sort, nblist_padding);
+                 num_systems, N, combined_row_atoms, combined_col_atoms, cutoff,
+                 disable_hilbert_sort, nblist_padding);
            }),
            py::arg("num_atoms"), py::arg("row_atom_idxs_i").noconvert(),
-           py::arg("beta"), py::arg("cutoff"),
+           py::arg("cutoff"),
            py::arg("col_atom_idxs_i").noconvert() = py::none(),
            py::arg("disable_hilbert_sort") = false,
            py::arg("nblist_padding") = 0.1,
@@ -2998,8 +2993,6 @@ void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
 
                     row_atom_idxs: NDArray
                         Batches of group of atoms in the interaction.
-
-                    beta: float
 
                     cutoff: float
                         Ignore all interactions beyond this distance in nm.
@@ -3066,7 +3059,7 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
           py::init([](const int num_atoms,
                       const py::array_t<int, py::array::c_style> &pair_idxs_i,
                       const py::array_t<RealType, py::array::c_style> &scales_i,
-                      const RealType beta, const RealType cutoff) {
+                      const RealType cutoff) {
             verify_bond_idxs(pair_idxs_i, 2);
             std::vector<int> pair_idxs = py_array_to_vector(pair_idxs_i);
 
@@ -3074,17 +3067,16 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
             std::vector<int> system_idxs(pair_idxs_i.shape(0), 0);
             const int num_systems = 1;
             return new NonbondedPairList<RealType, Negated>(
-                num_systems, num_atoms, pair_idxs, scales, system_idxs, beta,
-                cutoff);
+                num_systems, num_atoms, pair_idxs, scales, system_idxs, cutoff);
           }),
           py::arg("num_atoms"), py::arg("pair_idxs_i"),
-          py::arg("scales_i").noconvert(), py::arg("beta"), py::arg("cutoff"))
+          py::arg("scales_i").noconvert(), py::arg("cutoff"))
       .def(py::init([](const int num_atoms,
                        const std::vector<py::array_t<int, py::array::c_style>>
                            &pair_idxs,
                        const std::vector<
                            py::array_t<RealType, py::array::c_style>> &scales,
-                       const RealType beta, const RealType cutoff) {
+                       const RealType cutoff) {
              const int num_systems = pair_idxs.size();
              std::vector<int> combined_pair_idxs;
              std::vector<RealType> combined_scales;
@@ -3113,10 +3105,10 @@ void declare_nonbonded_pair_list(py::module &m, const char *typestr) {
              }
              return new NonbondedPairList<RealType, Negated>(
                  num_systems, num_atoms, combined_pair_idxs, combined_scales,
-                 system_idxs, beta, cutoff);
+                 system_idxs, cutoff);
            }),
            py::arg("num_atoms"), py::arg("pair_idxs_i").noconvert(),
-           py::arg("scales_i").noconvert(), py::arg("beta"), py::arg("cutoff"))
+           py::arg("scales_i").noconvert(), py::arg("cutoff"))
       .def("get_idxs",
            [](Class &pot) -> py::array_t<int, py::array::c_style> {
              std::vector<int> output_idxs = pot.get_idxs_host();
@@ -3315,10 +3307,9 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
       .def(py::init([](const int N,
                        const std::vector<std::vector<int>> &target_mols,
                        const py::array_t<RealType, py::array::c_style> &params,
-                       const RealType temperature, const RealType nb_beta,
-                       const RealType cutoff, const int seed,
-                       const int num_proposals_per_move, const int interval,
-                       const int batch_size) {
+                       const RealType temperature, const RealType cutoff,
+                       const int seed, const int num_proposals_per_move,
+                       const int interval, const int batch_size) {
              const size_t params_dim = params.ndim();
              if (num_proposals_per_move <= 0) {
                throw std::runtime_error(
@@ -3356,13 +3347,13 @@ void declare_biased_deletion_exchange_move(py::module &m, const char *typestr) {
              }
              std::vector<RealType> v_params = py_array_to_vector(params);
              return new Class(num_systems, N, target_mols, v_params,
-                              temperature, nb_beta, cutoff, seed,
-                              num_proposals_per_move, interval, batch_size);
+                              temperature, cutoff, seed, num_proposals_per_move,
+                              interval, batch_size);
            }),
            py::arg("N"), py::arg("target_mols"), py::arg("params"),
-           py::arg("temperature"), py::arg("nb_beta"), py::arg("cutoff"),
-           py::arg("seed"), py::arg("num_proposals_per_move"),
-           py::arg("interval"), py::arg("batch_size") = 1)
+           py::arg("temperature"), py::arg("cutoff"), py::arg("seed"),
+           py::arg("num_proposals_per_move"), py::arg("interval"),
+           py::arg("batch_size") = 1)
       .def(
           "move",
           [](Class &mover,
@@ -3499,10 +3490,10 @@ void declare_targeted_insertion_biased_deletion_exchange_move(
       .def(py::init([](const int N, const std::vector<int> &ligand_idxs,
                        const std::vector<std::vector<int>> &target_mols,
                        const py::array_t<RealType, py::array::c_style> &params,
-                       const RealType temperature, const RealType nb_beta,
-                       const RealType cutoff, const RealType radius,
-                       const int seed, const int num_proposals_per_move,
-                       const int interval, const int batch_size) {
+                       const RealType temperature, const RealType cutoff,
+                       const RealType radius, const int seed,
+                       const int num_proposals_per_move, const int interval,
+                       const int batch_size) {
              size_t params_dim = params.ndim();
              if (num_proposals_per_move <= 0) {
                throw std::runtime_error(
@@ -3544,13 +3535,12 @@ void declare_targeted_insertion_biased_deletion_exchange_move(
              }
              std::vector<RealType> v_params = py_array_to_vector(params);
              return new Class(num_systems, N, ligand_idxs, target_mols,
-                              v_params, temperature, nb_beta, cutoff, radius,
-                              seed, num_proposals_per_move, interval,
-                              batch_size);
+                              v_params, temperature, cutoff, radius, seed,
+                              num_proposals_per_move, interval, batch_size);
            }),
            py::arg("N"), py::arg("ligand_idxs"), py::arg("target_mols"),
-           py::arg("params"), py::arg("temperature"), py::arg("nb_beta"),
-           py::arg("cutoff"), py::arg("radius"), py::arg("seed"),
+           py::arg("params"), py::arg("temperature"), py::arg("cutoff"),
+           py::arg("radius"), py::arg("seed"),
            py::arg("num_proposals_per_move"), py::arg("interval"),
            py::arg("batch_size") = 1);
 }
@@ -3590,7 +3580,7 @@ py::array_t<RealType, py::array::c_style> py_atom_by_atom_energies(
     const py::array_t<RealType, py::array::c_style> &coords,
     const py::array_t<RealType, py::array::c_style> &params,
     const py::array_t<RealType, py::array::c_style> &box,
-    const RealType nb_beta, const RealType cutoff) {
+    const RealType cutoff) {
 
   const int N = coords.shape()[0];
   verify_coords_and_box(coords, box);
@@ -3601,9 +3591,9 @@ py::array_t<RealType, py::array::c_style> py_atom_by_atom_energies(
   std::vector<RealType> v_box = py_array_to_vector(box);
 
   std::vector<RealType> output_energies =
-      compute_atom_by_atom_energies<RealType>(
-          N, v_target_atoms, v_coords, v_params, v_box,
-          static_cast<RealType>(nb_beta), static_cast<RealType>(cutoff));
+      compute_atom_by_atom_energies<RealType>(N, v_target_atoms, v_coords,
+                                              v_params, v_box,
+                                              static_cast<RealType>(cutoff));
 
   py::array_t<RealType, py::array::c_style> py_energy(
       {static_cast<int>(target_atoms.size()), N});
@@ -3854,11 +3844,11 @@ PYBIND11_MODULE(custom_ops, m) {
   m.def("atom_by_atom_energies_f32", &py_atom_by_atom_energies<float>,
         "Function for testing atom by atom energies", py::arg("target_atoms"),
         py::arg("coords"), py::arg("params"), py::arg("box"),
-        py::arg("nb_beta"), py::arg("nb_cutoff"));
+        py::arg("nb_cutoff"));
   m.def("atom_by_atom_energies_f64", &py_atom_by_atom_energies<double>,
         "Function for testing atom by atom energies", py::arg("target_atoms"),
         py::arg("coords"), py::arg("params"), py::arg("box"),
-        py::arg("nb_beta"), py::arg("nb_cutoff"));
+        py::arg("nb_cutoff"));
   m.def("inner_and_outer_mols_f32", &py_inner_outer_mols<float>,
         "Function to test computation of inner and outer mols",
         py::arg("center_atoms"), py::arg("coords"), py::arg("box"),

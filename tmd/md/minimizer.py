@@ -456,7 +456,6 @@ def pre_equilibrate_host(
             water_idxs,
             np.array(nb.params, dtype=np.float32),
             temperature,
-            nb.potential.beta,  # type: ignore
             nb.potential.cutoff,  # type: ignore
             float(radius),
             seed + 2,
