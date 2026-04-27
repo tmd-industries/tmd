@@ -3,6 +3,6 @@ scipy==1.17.1
 networkx==3.6.1
 matplotlib==3.10.9
 rdkit==2026.3.1
-openmm==8.5.1
+openmm==8.3.1
 jax==0.10.0
 jaxlib==0.10.0
