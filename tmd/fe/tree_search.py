@@ -45,8 +45,8 @@ def best_first(
     state = initial_state
     queue = [root]
     while queue:
-        node = heapq.heappop(queue)
+        node = heapq.heappop(queue)  # type: ignore
         children, state = expand(node, state)
         yield node
         for child in children:
-            heapq.heappush(queue, child)
+            heapq.heappush(queue, child)  # type: ignore

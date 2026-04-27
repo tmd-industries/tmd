@@ -39,7 +39,7 @@ def test_nonbonded_pair_list_correctness(
     rng: np.random.Generator,
 ):
     "Compares with jax reference implementation."
-    seed = rng.integers(np.iinfo(np.int32).max)
+    seed = int(rng.integers(np.iinfo(np.int32).max))
 
     num_atoms, _ = example_conf.shape
 

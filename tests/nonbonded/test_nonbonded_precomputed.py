@@ -66,7 +66,7 @@ def test_nonbonded_pair_list_precomputed_correctness(
         GradientTest().compare_forces(conf, params, box, potential, test_impl, rtol=rtol, atol=atol)
         GradientTest().assert_differentiable_interface_consistency(conf, params, box, test_impl)
 
-    seed = rng.integers(np.iinfo(np.int32).max)
+    seed = int(rng.integers(np.iinfo(np.int32).max))
     num_systems = 3
 
     coords = np.array(

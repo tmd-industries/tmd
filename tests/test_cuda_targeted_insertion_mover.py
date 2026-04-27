@@ -114,7 +114,7 @@ def verify_targeted_moves(
         if num_moved == 1:
             # The molecules should all be imaged in the home box
             np.testing.assert_allclose(image_frame(mol_groups, x_move, x_box), x_move)
-            vol_inner = (4 / 3) * np.pi * ref_bdem.radius**3
+            vol_inner = np.float64((4 / 3) * np.pi * ref_bdem.radius**3)
             vol_outer = np.prod(np.diag(box)) - vol_inner
 
             center = np.mean(last_conf[ref_bdem.ligand_idxs], axis=0)
