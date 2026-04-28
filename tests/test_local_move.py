@@ -52,7 +52,7 @@ def make_hmc_mover(x, logpdf_fxn, dt=0.1, n_steps=100):
         x1, v1 = integrator._update_via_fori_loop(x0, v0, n_steps=n_steps)
         logp_after = augmented_logpdf(x1, v1)
 
-        log_accept_prob = jnp.clip(jnp.nan_to_num(logp_after - logp_before, nan=-np.inf), a_max=0.0)
+        log_accept_prob = jnp.clip(jnp.nan_to_num(logp_after - logp_before, nan=-np.inf), max=0.0)
 
         return (x1, v1), log_accept_prob
 
