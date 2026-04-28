@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2026, Forrest York, Justin Gullingsrud
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -92,38 +92,6 @@ def construct_pre_optimized_absolute_lambda_schedule_solvent(num_windows: int, n
     lambda_schedule = interpolate_pre_optimized_protocol(solvent_decoupling_protocol, num_windows)
 
     return lambda_schedule
-
-
-def apportion(weights: NDArray, total: int) -> NDArray:
-    """Apportion `total` items proportionally to `weights` using the largest-remainder method.
-
-    Each entry receives at least floor(weight_i / sum * total) items; the remaining
-    items are assigned one each to the entries with the largest fractional remainders.
-
-    Parameters
-    ----------
-    weights : array of float, length n
-        Non-negative weights (must sum to > 0).
-    total : int
-        Total number of items to distribute (must be >= len(weights)).
-
-    Returns
-    -------
-    NDArray of int, length n
-        Integer allocation summing to `total`.
-    """
-    assert len(weights) > 0, "Must provide at least one weight"
-    assert total >= len(weights), "total must be greater than the number of weights"
-    assert np.all(weights >= 0.0), "All weights must greater than or equal to 0"
-    raw = weights / weights.sum() * total
-    floored = np.floor(raw).astype(int)
-    remainders = raw - floored
-    deficit = total - floored.sum()
-    if deficit > 0:
-        bonus_idxs = np.argsort(remainders)[-deficit:]
-        floored[bonus_idxs] += 1
-    assert floored.sum() == total, "Failed to apportion values"
-    return floored
 
 
 def construct_pre_optimized_relative_lambda_schedule(n_windows: Optional[int]):

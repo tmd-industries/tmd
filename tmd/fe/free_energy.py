@@ -35,13 +35,13 @@ from tmd.fe.bar import (
     sanitize_energies_for_bar,
     works_from_ukln,
 )
-from tmd.fe.lambda_schedule import apportion, interpolate_pre_optimized_protocol
+from tmd.fe.lambda_schedule import interpolate_pre_optimized_protocol
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_dG_errs_figure,
     plot_overlap_summary_figure,
 )
-from tmd.fe.protocol_refinement import greedy_bisection_step
+from tmd.fe.protocol_refinement import apportion, greedy_bisection_step
 from tmd.fe.rest.single_topology import InterpolationFxnName
 from tmd.fe.stored_arrays import StoredArrays
 from tmd.fe.utils import get_mol_masses, get_romol_conf
