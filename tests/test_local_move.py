@@ -145,6 +145,7 @@ def naive_local_resampling_move(
     return x_next, aux
 
 
+@pytest.mark.nocuda
 @pytest.mark.nightly(reason="Slow")
 def test_ideal_gas():
     """Run HMC on subsets of an ideal gas system, where the subsets are selected based on a geometric criterion.
