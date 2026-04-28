@@ -251,7 +251,9 @@ def test_hrex_gaussian_mixture(seed):
     proposal_radius = 0.1
     proposal = lambda x: gaussian(x, proposal_radius)
 
-    samples_by_state_by_iter, diagnostics = run_hrex_with_local_proposal(states, initial_replicas, proposal, seed)
+    samples_by_state_by_iter, diagnostics = run_hrex_with_local_proposal(
+        states, initial_replicas, proposal, seed, n_samples_per_iter=40
+    )
 
     samples_by_state = np.concatenate(samples_by_state_by_iter, axis=1)
     hrex_samples = samples_by_state[0]  # samples from gaussian mixture
