@@ -214,7 +214,7 @@ if __name__ == "__main__":
                     # we don't do cutoffs.
                     continue
                 elif "scale" in key:
-                    val = float(val)
+                    val = float(val)  # type: ignore
                 elif key == "switch_width":
                     continue
                 if key == "version":

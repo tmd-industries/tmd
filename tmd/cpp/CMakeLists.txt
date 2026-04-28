@@ -68,12 +68,12 @@ set(LIBRARY_NAME custom_ops)
 set(PYBIND_SRC_DIR pybind11)
 
 if(NOT EXISTS ${PYBIND_SRC_DIR})
-  execute_process(COMMAND git clone --depth 1 --branch v2.13.6 https://github.com/pybind/pybind11.git ${PYBIND_SRC_DIR})
+  execute_process(COMMAND git clone --depth 1 --branch v3.0.4 https://github.com/pybind/pybind11.git ${PYBIND_SRC_DIR})
 endif()
 
 set(EIGEN_SRC_DIR eigen)
 if(NOT EXISTS ${EIGEN_SRC_DIR})
-  execute_process(COMMAND git clone --depth 1 --branch 3.3.9 https://gitlab.com/libeigen/eigen.git ${EIGEN_SRC_DIR})
+  execute_process(COMMAND git clone --depth 1 --branch 5.0.1 https://gitlab.com/libeigen/eigen.git ${EIGEN_SRC_DIR})
 endif()
 
 add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/${PYBIND_SRC_DIR} ${CMAKE_CURRENT_BINARY_DIR}/${PYBIND_SRC_DIR})

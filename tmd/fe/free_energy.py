@@ -1203,7 +1203,7 @@ def _run_sequential_bisection(
         # Update the seed of the MDParams to ensure Local MD doesn't select the same sequence of reference atoms
         traj = sample_with_context(
             context,
-            replace(md_params, seed=rng.integers(np.iinfo(np.int32).max)),
+            replace(md_params, seed=int(rng.integers(np.iinfo(np.int32).max))),
             temperature,
             initial_state.ligand_idxs,
             max_buffer_frames=100,
@@ -1407,7 +1407,7 @@ def _run_batched_bisection(
         # TBD: Handle the ligand idxs in a more dynamic manner
         for frames, boxes, velos in sample_with_context_iter(
             context,
-            replace(md_params, seed=rng.integers(np.iinfo(np.int32).max)),
+            replace(md_params, seed=int(rng.integers(np.iinfo(np.int32).max))),
             temperature,
             ligand_idxs,
             batch_size=1,
