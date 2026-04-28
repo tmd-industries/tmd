@@ -19,7 +19,6 @@ import numpy as np
 import pytest
 from jax import jit, value_and_grad
 from jax import numpy as jnp
-from openeye.oechem import OEChemIsLicensed
 from scipy.optimize import minimize
 
 from tmd import testsystems
@@ -32,6 +31,13 @@ from tmd.potentials.nonbonded import coulomb_interaction_group_energy, coulomb_p
 from tmd.potentials.potential import get_bound_potential_by_type
 from tmd.potentials.potentials import Nonbonded
 from tmd.testsystems import fetch_freesolv
+
+try:
+    from openeye.oechem import OEChemIsLicensed
+except ImportError:
+    # OpenEye Toolkits may not be installed
+    def OEChemIsLicensed():
+        return False
 
 
 def test_run_solvent_absolute_hydration():

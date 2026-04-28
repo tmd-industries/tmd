@@ -276,7 +276,7 @@ def setup_initial_state(
             st, host, ligand_conf, lamb, temperature, init_seed, verify_constraints=verify_constraints
         )
         box0 = host.box
-        protein_idxs = np.arange(0, len(host.masses) - host.num_water_atoms)
+        protein_idxs = np.arange(0, len(host.masses) - host.num_water_atoms, dtype=np.int32)
     else:
         x0, box0, hmr_masses, potentials, baro = setup_in_vacuum(
             st, ligand_conf, lamb, verify_constraints=verify_constraints
