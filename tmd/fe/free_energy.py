@@ -41,7 +41,7 @@ from tmd.fe.plots import (
     plot_dG_errs_figure,
     plot_overlap_summary_figure,
 )
-from tmd.fe.protocol_refinement import greedy_bisection_step
+from tmd.fe.protocol_refinement import apportion, greedy_bisection_step
 from tmd.fe.rest.single_topology import InterpolationFxnName
 from tmd.fe.stored_arrays import StoredArrays
 from tmd.fe.utils import get_mol_masses, get_romol_conf
@@ -1452,27 +1452,28 @@ def _run_batched_bisection(
 
     def get_next_lambda_batch(lambs: Sequence[float]) -> tuple[NDArray, list[float]]:
         overlaps = np.array([get_bar_result(lamb1, lamb2).overlap for lamb1, lamb2 in zip(lambs, lambs[1:])])
-        idxs_below_overlap = np.argsort(overlaps)
         target_overlap = min_overlap if min_overlap is not None else 1.0
 
-        num_gaps = np.sum(overlaps < target_overlap)
-        assert num_gaps >= 1
+        sorted_idxs = np.argsort(overlaps)
+
+        # Identify gaps below target, in ascending order of overlap
+        n_below = int(np.sum(overlaps[sorted_idxs] < target_overlap))
+        assert n_below >= 1, "At least one gap must be below target_overlap"
+        n_below = min(n_below, batch_size)
+
+        # The first n_below entries of sorted_idxs are the gap indices we care about
+        gap_idxs = sorted_idxs[:n_below]
+        overlap_deficit = target_overlap - overlaps[gap_idxs]
+
+        # Distribute batch_size windows proportionally to overlap deficit
+        windows_per_gap = apportion(overlap_deficit, batch_size)
 
         lambs_to_add = []
-
-        lambs_per_gaps = max(1, int(np.ceil(batch_size / num_gaps)))
-
-        for idx in idxs_below_overlap:
-            if overlaps[idx] >= target_overlap:
-                break
-            if len(lambs_to_add) == batch_size:
-                break
-            spots_left = batch_size - len(lambs_to_add)
-            assert spots_left > 0
-            to_add = min(spots_left, lambs_per_gaps)
-            delta = abs(lambs[idx + 1] - lambs[idx]) / (to_add + 1)
-
-            lambs_to_add.extend(np.linspace(lambs[idx] + delta, lambs[idx + 1], to_add, endpoint=False))
+        for gap_idx, n_windows in zip(gap_idxs, windows_per_gap):
+            lamb_start = lambs[int(gap_idx)]
+            lamb_end = lambs[int(gap_idx) + 1]
+            delta = (lamb_end - lamb_start) / (n_windows + 1)
+            lambs_to_add.extend(np.linspace(lamb_start + delta, lamb_end, n_windows, endpoint=False))
 
         assert len(lambs_to_add) == batch_size
         return overlaps, lambs_to_add
