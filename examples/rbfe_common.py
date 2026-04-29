@@ -322,6 +322,7 @@ def run_rbfe_leg(
     if isinstance(res, HREXSimulationResult):
         summary_data["bisected_windows"] = len(res.intermediate_results[-1].initial_states)
         summary_data["normalized_kl_divergence"] = res.hrex_diagnostics.normalized_kl_divergence
+        summary_data["hrex_bottleneck_statistic"] = res.hrex_diagnostics.bottleneck_statistic
 
     np.savez_compressed(results_path, **summary_data)
 

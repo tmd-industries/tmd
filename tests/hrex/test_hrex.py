@@ -3,7 +3,12 @@ import numpy as np
 import pytest
 from hypothesis import given, seed
 
-from tmd.md.hrex import ReplicaIdx, get_normalized_kl_divergence, get_samples_by_iter_by_replica
+from tmd.md.hrex import (
+    ReplicaIdx,
+    compute_bottleneck_statistic,
+    get_normalized_kl_divergence,
+    get_samples_by_iter_by_replica,
+)
 
 pytestmark = [pytest.mark.nogpu]
 
@@ -137,6 +142,28 @@ def test_normalized_kl_divergence_no_mixing(n_windows, frames):
     hrex_matrix = simulate_no_mixing_hrex(n_windows, frames)
     res = get_normalized_kl_divergence(hrex_matrix)
     assert res >= 1.0
+
+
+@pytest.mark.parametrize("n_windows,frames", [(16, 2000), (48, 2000)])
+def test_bottleneck_statistic_no_mixing(n_windows, frames):
+    """With no mixing at all, the kl divergence becomes larger than 1.0 and continues to grow with the number of windows
+
+    Verify that values are greater than one in this case.
+    """
+    hrex_matrix = simulate_no_mixing_hrex(n_windows, frames)
+    res = compute_bottleneck_statistic(hrex_matrix)
+    assert res == 1.0
+
+
+@pytest.mark.parametrize("n_windows,frames", [(5, 2000), (9, 2000), (16, 2000), (48, 2000)])
+def test_bottleneck_statistic_with_bottleneck(n_windows, frames):
+    """With no mixing at all, the kl divergence becomes larger than 1.0 and continues to grow with the number of windows
+
+    Verify that values are greater than one in this case.
+    """
+    hrex_matrix = simulate_bottlenecked_hrex(n_windows, frames)
+    res = compute_bottleneck_statistic(hrex_matrix)
+    assert res >= 0.5
 
 
 @pytest.mark.parametrize("n_windows,frames", [(5, 2000), (9, 2000), (16, 2000), (48, 2000)])

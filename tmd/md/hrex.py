@@ -276,6 +276,59 @@ def get_normalized_kl_divergence(replica_idx_by_state_by_iter: Sequence[Sequence
     return -np.mean(entropy(fraction_by_replica_by_state, axis=0)) + np.log(n_states)
 
 
+def compute_bottleneck_statistic(replica_idx_by_state_by_iter):
+    """Compute the bottleneck statistic for HREX replica exchange trajectories.
+
+    The bottleneck statistic quantifies how poorly replicas explore the temperature
+    space by measuring the fraction of the replica-state matrix that is unreachable
+    via nearest-neighbor swaps. A value of 1.0 indicates no mixing at all, while
+    0.0 indicates perfect mixing. Intermediate values indicate partial mixing or
+    bottlenecks where certain states are rarely swapped with neighbors.
+
+    Parameters
+    ----------
+    replica_idx_by_state_by_iter : list of list of int
+        A 2D list of shape (n_frames, n_states) representing the HREX trajectory.
+        Each row corresponds to a frame, and each element is the replica index
+        occupying the corresponding state.
+
+    Returns
+    -------
+    float
+        A value between 0.0 and 1.0 representing the severity of bottlenecks in the HREX mixing.
+        Higher values indicates a higher likelihood of bottlenecks in HREX mixing.
+    """
+
+    cumulative_counts = get_cumulative_replica_state_counts(replica_idx_by_state_by_iter)
+    n_iters, n_states, n_replicas = cumulative_counts.shape
+    count_by_replica_by_state = cumulative_counts[-1]
+    fraction_by_replica_by_state = count_by_replica_by_state / n_iters
+
+    assert fraction_by_replica_by_state.ndim == 2
+    assert fraction_by_replica_by_state.shape[0] == fraction_by_replica_by_state.shape[1]
+
+    from scipy import ndimage
+
+    N = fraction_by_replica_by_state.shape[0]
+
+    symmetric_zero_mask = (fraction_by_replica_by_state == fraction_by_replica_by_state.T) & (
+        fraction_by_replica_by_state == 0
+    )
+
+    adj_matrix = np.zeros_like(fraction_by_replica_by_state)
+    adj_matrix[symmetric_zero_mask] = 1
+    labeled_array, n_features = ndimage.label(adj_matrix)
+
+    total_area = 0
+    for feature in range(1, n_features + 1):
+        total_cells = np.sum(labeled_array == feature)
+        if total_cells > 1:
+            total_area += total_cells
+
+    # Exclude the diagonal from the total area, since it will never be zero
+    return total_area / (fraction_by_replica_by_state.size - N)
+
+
 def get_cumulative_replica_state_counts(replica_idx_by_state_by_iter: Sequence[Sequence[ReplicaIdx]]) -> NDArray:
     """Given a mapping of state index to replica index by iteration, returns an array of cumulative counts by iteration, replica, and state.
 
@@ -395,6 +448,10 @@ class HREXDiagnostics:
     @property
     def normalized_kl_divergence(self) -> float:
         return get_normalized_kl_divergence(self.replica_idx_by_state_by_iter)
+
+    @property
+    def bottleneck_statistic(self) -> float:
+        return compute_bottleneck_statistic(self.replica_idx_by_state_by_iter)
 
 
 def get_swap_attempts_per_iter_heuristic(n_states: int) -> int:
