@@ -92,7 +92,7 @@ Papers that relate to methods implemented in the repository.
 
 ## Supporting TMD
 
-TMD is possible thanks to contracts to either maintain or develop new features. Reach out to tmd-industries@pm.me if you would like to support this project, to fund a new feature or to help develop a TMD workflow.
+TMD is possible thanks to support by [Glysade](https://www.glysade.com/) and companies using TMD. Maintenance, support, workflow development and new feature development are available by contracting through Glysade. Please reach out to business@glysade.com for more information.
 
 # License
 
