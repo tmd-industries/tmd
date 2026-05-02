@@ -41,7 +41,7 @@ from numpy.typing import NDArray
 from rbfe_common import COMPLEX_LEG, SOLVENT_LEG, compute_total_ns
 
 from tmd import potentials
-from tmd.constants import BOLTZ, DEFAULT_FF, DEFAULT_PRESSURE, DEFAULT_TEMP, KCAL_TO_KJ
+from tmd.constants import BOLTZ, DEFAULT_FF, DEFAULT_PRESSURE, DEFAULT_TEMP, KCAL_TO_KJ, NBParamIdx
 from tmd.fe import model_utils
 from tmd.fe.absolute.restraints import (
     select_ligand_atoms_baumann,
@@ -56,11 +56,15 @@ from tmd.fe.free_energy import (
     LocalMDParams,
     MDParams,
     SimulationResult,
+    Trajectory,
     WaterSamplingParams,
+    get_batched_context,
+    get_context,
     make_pair_bar_plots,
     run_sims_bisection,
-    sample,
+    sample_with_context_iter,
 )
+from tmd.fe.interpolate import linear_interpolation, pad
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_forward_and_reverse_dg,
@@ -89,11 +93,7 @@ from tmd.parallel.client import (
     iterate_completed_futures,
 )
 from tmd.parallel.utils import get_gpu_count
-from tmd.potentials import (
-    HarmonicAngle,
-    HarmonicBond,
-    PeriodicTorsion,
-)
+from tmd.potentials import HarmonicAngle, HarmonicBond, Nonbonded, PeriodicTorsion
 from tmd.potentials.bonded import kahan_angle, signed_torsion_angle
 from tmd.potentials.jax_utils import delta_r
 from tmd.potentials.potential import get_potential_by_type
@@ -263,6 +263,23 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
         b = 1 - m
         hglamb = max(0, m * lamb + b)
         ubps, params, masses = super().prepare_host_edge(ff, host_config, hglamb)
+        params = list(params)  # type: ignore
+
+        if hglamb > 0.0:
+            # Linearly decharge the ligand from lamb 0.0 -> 0.4
+            nb_params_idx = next(i for i, pot in enumerate(ubps) if isinstance(pot, Nonbonded))
+            nb_params = params[nb_params_idx]
+            nb_params = nb_params.at[len(host_config.conf) :, NBParamIdx.Q_IDX].set(
+                pad(
+                    linear_interpolation,
+                    nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX],
+                    np.zeros_like(nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX]),
+                    hglamb,
+                    0.0,
+                    0.25,
+                )
+            )
+            params[nb_params_idx] = nb_params  # type: ignore
 
         scale = min(1, lamb / restraint_on)
         # must use the same set of potentials in all windows, even if scale is zero
@@ -271,7 +288,7 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
         dr, drp = self.get_dihedral_restraint(scale)
 
         ubps = (*list(ubps), hb, ha, dr)
-        params = (*list(params), hbp, hap, drp)
+        params = (*params, hbp, hap, drp)
 
         return ubps, params, masses
 
@@ -458,6 +475,25 @@ def optimize_abfe_initial_state(state):
     return replace(state, x0=x_opted[0])
 
 
+def sample_for_restraints(initial_state, md_params, replicas: int = 1) -> Trajectory:
+    if replicas > 1:
+        ctxt = get_batched_context([initial_state] * replicas, md_params)
+    else:
+        ctxt = get_context(initial_state, md_params)
+    traj = Trajectory.empty()
+    for frame, box, _ in sample_with_context_iter(
+        ctxt, md_params, initial_state.integrator.temperature, initial_state.ligand_idxs, 1
+    ):
+        if replicas == 1:
+            traj.frames.extend([frame[-1]])
+            traj.boxes.extend([box[-1]])
+        else:
+            for x, b in zip(frame[-1], box[-1]):
+                traj.frames.extend([x])
+                traj.boxes.extend([b])
+    return traj
+
+
 def estimate_abfe_leg(
     mol,
     ff: Forcefield,
@@ -480,8 +516,8 @@ def estimate_abfe_leg(
         initial_state = get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, 0.0)
         minimized_state = optimize_abfe_initial_state(initial_state)
         # TBD: How many frames do you want from here?
-        sample_md_params = replace(md_params, n_eq_steps=200000)
-        trj = sample(minimized_state, sample_md_params, 100)
+        sample_md_params = replace(md_params, n_eq_steps=200_000)
+        trj = sample_for_restraints(minimized_state, sample_md_params, replicas=1)
 
         afe = AbsoluteBindingFreeEnergy.create(bt, host_config, trj, rst_params)
 
@@ -491,7 +527,7 @@ def estimate_abfe_leg(
         # get equilibrated coordinates and box
         host_conf = afe.cpx_coords[: len(host_conf)]
         set_romol_conf(afe.mol, afe.cpx_coords[len(host_conf) :])
-        host_config = replace(host_config, box=afe.box)
+        host_config = replace(host_config, conf=host_conf, box=afe.box)
     else:
         # Disable water sampling
         md_params = replace(md_params, water_sampling_params=None)
@@ -660,11 +696,6 @@ def run_abfe(
             file_client.full_path(leg_path / "lambda0_traj.npz"),
             coords=np.array(res.trajectories[0].frames),
             boxes=np.asarray(res.trajectories[0].boxes),
-        )
-        np.savez_compressed(
-            file_client.full_path(leg_path / "lambda1_traj.npz"),
-            coords=np.array(res.trajectories[-1].frames),
-            boxes=np.asarray(res.trajectories[-1].boxes),
         )
     if host_config is not None:
         file_client.store(leg_path / "host_config.pkl", pickle.dumps(host_config))
