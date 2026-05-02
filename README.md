@@ -33,7 +33,12 @@ conda activate tmd
 The CUDA extension module implementing custom ops is only supported on Linux, but partial functionality is still available on non-Linux OSes.
 
 ```shell
+# Install the pinned requirements
 pip install -r requirements.txt
+
+# If you are using the OpenEye AM1BCC charges additionally install OpenEye
+pip install --extra-index-url https://pypi.anaconda.org/OpenEye/simple openeye-toolkits
+
 pip install .
 ```
 
@@ -77,8 +82,7 @@ Most of the training is using the correctable charge corrections [ccc forcefield
 1. The charges have been multiplied by sqrt(ONE_4PI_EPS0) as an optimization.
 2. The eps parameter in LJ have been replaced by an alpha such that alpha^2=eps in order to avoid negative eps values during training.
 3. We use a consistent 0.5 scaling for the 1-4 terms across LJ and electrostatics.
-4. The reaction field used is the real part of PME with a beta (alpha) coefficient of 2.0
-5. The recharge BCC port is not yet complete, as there are some missing types that will cause very large errors (eg. P=S moieties).
+4. The recharge BCC port is not yet complete, as there are some missing types that will cause very large errors (eg. P=S moieties).
 
 ## Papers
 
@@ -88,7 +92,7 @@ Papers that relate to methods implemented in the repository.
 
 ## Supporting TMD
 
-TMD is possible thanks to contracts to either maintain or develop new features. Reach out to tmd-industries@pm.me if you would like to support this project, to fund a new feature or to help develop a TMD workflow.
+TMD is possible thanks to support by [Glysade](https://www.glysade.com/) and companies using TMD. Maintenance, support, workflow development and new feature development are available by contracting through Glysade. Please reach out to business@glysade.com for more information.
 
 # License
 

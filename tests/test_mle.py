@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,7 +25,7 @@ from scipy.stats import linregress
 
 from tmd.fe.mle import infer_node_vals, infer_node_vals_and_errs, infer_node_vals_and_errs_networkx
 
-pytestmark = [pytest.mark.nocuda]
+pytestmark = [pytest.mark.nogpu]
 
 
 def generate_instance(g: nx.Graph, edge_noise_stddev: float = 0.0):
@@ -83,7 +84,7 @@ def test_random_spanning_graphs_with_no_edge_noise():
     np.random.seed(2022)
     for i in range(10):
         K = np.random.randint(3, 500)
-        g = nx.random_tree(K, seed=hash(K * i))
+        g = nx.random_labeled_tree(K, seed=hash(K * i))
         E = g.number_of_edges()
         assert E == K - 1
         print(f"instance: random tree on {K} nodes ({E} noiseless edges)")
@@ -102,7 +103,7 @@ def test_random_spanning_graphs_with_some_edge_noise():
     for i in range(10):
         K = np.random.randint(3, 500)
         sigma = np.random.rand()
-        g = nx.random_tree(K, seed=hash(K * i))
+        g = nx.random_labeled_tree(K, seed=hash(K * i))
         E = g.number_of_edges()
         assert E == K - 1
         print(f"instance: random tree on {K} nodes\n\t{E} noisy edges, sigma\t\t= {sigma:.3f}")
@@ -520,7 +521,7 @@ def test_disconnection():
     for i in range(5):
         # generate random spanning tree, remove one random edge
         K = np.random.randint(10, 100)
-        g = nx.random_tree(K, seed=hash(K * i))
+        g = nx.random_labeled_tree(K, seed=hash(K * i))
         bridge_edges = list(nx.bridges(g))
         random_edge = bridge_edges[np.random.randint(len(bridge_edges))]
         g.remove_edge(*random_edge)

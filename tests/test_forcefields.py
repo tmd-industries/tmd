@@ -216,7 +216,7 @@ def test_amber14_tip3p_matches_tip3p():
     with NamedTemporaryFile(suffix=".pdb") as temp:
         Chem.MolToPDBFile(mol, temp.name)
         # tip3p will fail to handle ions
-        with pytest.raises(ValueError, match="No template found for residue 1"):
+        with pytest.raises(ValueError, match="No template found for residue"):
             builders.build_protein_system(temp.name, constants.DEFAULT_PROTEIN_FF, tip3p_water_ff)
 
         # Amber14/tip3p handles ions without issue

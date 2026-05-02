@@ -37,7 +37,6 @@ def test_nonbonded_atom_by_atom_energies_match(num_mols, adjustments, precision,
 
     params = nb.params.astype(precision)
 
-    beta = nb.potential.beta
     cutoff = nb.potential.cutoff
     func = custom_ops.atom_by_atom_energies_f32
     if precision == np.float64:
@@ -51,8 +50,8 @@ def test_nonbonded_atom_by_atom_energies_match(num_mols, adjustments, precision,
     for _ in range(adjustments):
         adjusted_params = params.copy()
         adjusted_params[:, 3] = rng.uniform(0, 1, size=adjusted_params[:, 3].shape)
-        mover = BDExchangeMove(beta, cutoff, adjusted_params, all_group_idxs, DEFAULT_TEMP)
+        mover = BDExchangeMove(cutoff, adjusted_params, all_group_idxs, DEFAULT_TEMP)
         ref_energies = mover.U_fn_unsummed(conf, box, target_atoms, all_atoms)
-        comp_energies = func(target_atoms, conf, adjusted_params, box, mover.nb_beta, mover.nb_cutoff)
+        comp_energies = func(target_atoms, conf, adjusted_params, box, mover.nb_cutoff)
         assert ref_energies.shape == comp_energies.shape
         assert_energy_arrays_match(ref_energies, comp_energies, atol=atol, rtol=rtol, threshold=threshold)

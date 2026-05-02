@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,8 +39,8 @@ class NonbondedInteractionGroup : public Potential<RealType> {
       const unsigned int *__restrict__ ixn_count,
       const unsigned int *__restrict__ d_atom_idxs,
       const RealType *__restrict__ coords, const RealType *__restrict__ params,
-      const RealType *__restrict__ box, const RealType beta,
-      const RealType cutoff, const int *__restrict__ ixn_tiles,
+      const RealType *__restrict__ box, const RealType cutoff,
+      const int *__restrict__ ixn_tiles,
       const unsigned int *__restrict__ ixn_atoms,
       unsigned long long *__restrict__ du_dx,
       unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer);
@@ -72,7 +72,6 @@ private:
 
   int *p_ixn_count_; // pinned memory
 
-  const RealType beta_;
   const RealType cutoff_;
   // This is safe to overflow, either reset to 0 or increment
   unsigned int steps_since_last_sort_;
@@ -127,8 +126,6 @@ public:
   void set_compute_col_grads(const bool value);
   bool get_compute_col_grads() const { return compute_col_grads_; };
 
-  RealType get_beta() const { return beta_; };
-
   int get_num_col_idxs() const;
   int get_num_row_idxs() const;
 
@@ -149,7 +146,7 @@ public:
   NonbondedInteractionGroup(const int num_systems, const int N,
                             const std::vector<std::vector<int>> &row_atom_idxs,
                             const std::vector<std::vector<int>> &col_atom_idxs,
-                            const RealType beta, const RealType cutoff,
+                            const RealType cutoff,
                             const bool disable_hilbert_sort = false,
                             const RealType nblist_padding = 0.1);
 

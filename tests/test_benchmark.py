@@ -688,7 +688,6 @@ def test_nonbonded_interaction_group_potential(hi2fa_test_frames):
     config = BenchmarkConfig(num_batches=2, steps_per_batch=1, verbose=False, generate_plots=False)
 
     num_param_batches = 5
-    beta = 1 / (constants.BOLTZ * constants.DEFAULT_TEMP)
     cutoff = 1.2
 
     precisions = [np.float32, np.float64]
@@ -697,7 +696,6 @@ def test_nonbonded_interaction_group_potential(hi2fa_test_frames):
     potential = NonbondedInteractionGroup(
         nonbonded_potential.num_atoms,
         ligand_idxs,
-        beta,
         cutoff,
     )
     class_name = potential.__class__.__name__

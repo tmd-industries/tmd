@@ -19,7 +19,6 @@ from jax import jit, vmap
 from jax import numpy as jnp
 from numpy.typing import NDArray as Array
 
-from tmd.potentials import nonbonded
 from tmd.potentials.jax_utils import distance2
 
 Position = Array
@@ -27,28 +26,6 @@ Param = Array
 Box = Array
 Energy = float
 PairFxn = Callable[[Position, Position, Param, Param, Box], Energy]
-
-
-# example pair function
-def nb_pair_fxn(x_a, x_b, param_a, param_b, box):
-    beta = 2.0
-    cutoff = 1.2
-
-    # alchemical distance
-    r2 = distance2(x_a, x_b, box)
-    w_offset = param_b[3] - param_a[3]
-    r = jnp.sqrt(r2 + w_offset**2)
-
-    # TM reaction field
-    q_prod = param_a[0] * param_b[0]
-    e_q = nonbonded.switched_direct_space_pme(r, q_prod, beta, cutoff)
-
-    # Lennard-Jones
-    sig = nonbonded.combining_rule_sigma(param_a[1], param_b[1])
-    eps = nonbonded.combining_rule_epsilon(param_a[2], param_b[2])
-    e_lj = nonbonded.lennard_jones(r, sig, eps)
-
-    return jnp.where(r < cutoff, e_q + e_lj, 0.0)
 
 
 # brute-force pre-computed neighborlist

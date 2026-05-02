@@ -23,7 +23,6 @@ def filter_valid_exclusions(
 
 
 @pytest.mark.parametrize("disable_hilbert_sort", [False, True])
-@pytest.mark.parametrize("beta", [1.0, 2.0])
 @pytest.mark.parametrize("cutoff", [0.7, 1.1])
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 @pytest.mark.parametrize(
@@ -35,7 +34,6 @@ def test_nonbonded_consistency(
     num_ixn_groups,
     precision,
     cutoff,
-    beta,
     disable_hilbert_sort,
     example_nonbonded_potential,
     example_conf,
@@ -63,19 +61,19 @@ def test_nonbonded_consistency(
         all_col_atom_idxs = [None]
 
     ref_impl = (
-        Nonbonded(num_atoms, exclusion_idxs, exclusion_scales, beta, cutoff, None, disable_hilbert_sort)
+        Nonbonded(num_atoms, exclusion_idxs, exclusion_scales, cutoff, None, disable_hilbert_sort)
         .to_gpu(precision)
         .unbound_impl
     )
 
     def make_allpairs_potential(atom_idxs):
-        return NonbondedInteractionGroup(num_atoms, atom_idxs, beta, cutoff, atom_idxs, disable_hilbert_sort)
+        return NonbondedInteractionGroup(num_atoms, atom_idxs, cutoff, atom_idxs, disable_hilbert_sort)
 
     def make_ixngroup_potential(ligand_idxs, col_atom_idxs):
-        return NonbondedInteractionGroup(num_atoms, ligand_idxs, beta, cutoff, col_atom_idxs, disable_hilbert_sort)
+        return NonbondedInteractionGroup(num_atoms, ligand_idxs, cutoff, col_atom_idxs, disable_hilbert_sort)
 
     def make_exclusions_potential(exclusion_idxs, exclusion_scales):
-        return NonbondedExclusions(num_atoms, exclusion_idxs, exclusion_scales, beta, cutoff)
+        return NonbondedExclusions(num_atoms, exclusion_idxs, exclusion_scales, cutoff)
 
     test_impl = (
         FanoutSummedPotential(

@@ -41,7 +41,7 @@ from tmd.fe.plots import (
     plot_dG_errs_figure,
     plot_overlap_summary_figure,
 )
-from tmd.fe.protocol_refinement import greedy_bisection_step
+from tmd.fe.protocol_refinement import apportion, greedy_bisection_step
 from tmd.fe.rest.single_topology import InterpolationFxnName
 from tmd.fe.stored_arrays import StoredArrays
 from tmd.fe.utils import get_mol_masses, get_romol_conf
@@ -703,7 +703,7 @@ def get_batched_context(initial_states: Sequence[InitialState], md_params: Optio
 
         water_idxs = get_water_idxs(group_indices, ligand_idxs=initial_states[0].ligand_idxs)
 
-        # Select a Nonbonded Potential to get the the cutoff/beta, assumes all have same cutoff/beta.
+        # Select a Nonbonded Potential to get the the cutoff, assumes all have same cutoff.
         nb = get_bound_potential_by_type(initial_states[0].potentials, Nonbonded).potential
 
         water_params = np.array([get_water_sampler_params(initial_state) for initial_state in initial_states])
@@ -719,7 +719,6 @@ def get_batched_context(initial_states: Sequence[InitialState], md_params: Optio
             water_idxs,
             water_params,
             initial_states[0].integrator.temperature,
-            nb.beta,
             nb.cutoff,
             md_params.water_sampling_params.radius,
             water_sampler_seed,
@@ -756,7 +755,7 @@ def get_context(initial_state: InitialState, md_params: Optional[MDParams] = Non
 
         water_idxs = get_water_idxs(group_indices, ligand_idxs=initial_state.ligand_idxs)
 
-        # Select a Nonbonded Potential to get the the cutoff/beta, assumes all have same cutoff/beta.
+        # Select a Nonbonded Potential to get the the cutoff, assumes all have same cutoff.
         nb = get_bound_potential_by_type(initial_state.potentials, Nonbonded).potential
 
         water_params = get_water_sampler_params(initial_state)
@@ -771,7 +770,6 @@ def get_context(initial_state: InitialState, md_params: Optional[MDParams] = Non
             water_idxs,
             water_params,
             initial_state.integrator.temperature,
-            nb.beta,
             nb.cutoff,
             md_params.water_sampling_params.radius,
             water_sampler_seed,
@@ -1205,7 +1203,7 @@ def _run_sequential_bisection(
         # Update the seed of the MDParams to ensure Local MD doesn't select the same sequence of reference atoms
         traj = sample_with_context(
             context,
-            replace(md_params, seed=rng.integers(np.iinfo(np.int32).max)),
+            replace(md_params, seed=int(rng.integers(np.iinfo(np.int32).max))),
             temperature,
             initial_state.ligand_idxs,
             max_buffer_frames=100,
@@ -1409,7 +1407,7 @@ def _run_batched_bisection(
         # TBD: Handle the ligand idxs in a more dynamic manner
         for frames, boxes, velos in sample_with_context_iter(
             context,
-            replace(md_params, seed=rng.integers(np.iinfo(np.int32).max)),
+            replace(md_params, seed=int(rng.integers(np.iinfo(np.int32).max))),
             temperature,
             ligand_idxs,
             batch_size=1,
@@ -1454,27 +1452,28 @@ def _run_batched_bisection(
 
     def get_next_lambda_batch(lambs: Sequence[float]) -> tuple[NDArray, list[float]]:
         overlaps = np.array([get_bar_result(lamb1, lamb2).overlap for lamb1, lamb2 in zip(lambs, lambs[1:])])
-        idxs_below_overlap = np.argsort(overlaps)
         target_overlap = min_overlap if min_overlap is not None else 1.0
 
-        num_gaps = np.sum(overlaps < target_overlap)
-        assert num_gaps >= 1
+        sorted_idxs = np.argsort(overlaps)
+
+        # Identify gaps below target, in ascending order of overlap
+        n_below = int(np.sum(overlaps[sorted_idxs] < target_overlap))
+        assert n_below >= 1, "At least one gap must be below target_overlap"
+        n_below = min(n_below, batch_size)
+
+        # The first n_below entries of sorted_idxs are the gap indices we care about
+        gap_idxs = sorted_idxs[:n_below]
+        overlap_deficit = target_overlap - overlaps[gap_idxs]
+
+        # Distribute batch_size windows proportionally to overlap deficit
+        windows_per_gap = apportion(overlap_deficit, batch_size)
 
         lambs_to_add = []
-
-        lambs_per_gaps = max(1, int(np.ceil(batch_size / num_gaps)))
-
-        for idx in idxs_below_overlap:
-            if overlaps[idx] >= target_overlap:
-                break
-            if len(lambs_to_add) == batch_size:
-                break
-            spots_left = batch_size - len(lambs_to_add)
-            assert spots_left > 0
-            to_add = min(spots_left, lambs_per_gaps)
-            delta = abs(lambs[idx + 1] - lambs[idx]) / (to_add + 1)
-
-            lambs_to_add.extend(np.linspace(lambs[idx] + delta, lambs[idx + 1], to_add, endpoint=False))
+        for gap_idx, n_windows in zip(gap_idxs, windows_per_gap):
+            lamb_start = lambs[int(gap_idx)]
+            lamb_end = lambs[int(gap_idx) + 1]
+            delta = (lamb_end - lamb_start) / (n_windows + 1)
+            lambs_to_add.extend(np.linspace(lamb_start + delta, lamb_end, n_windows, endpoint=False))
 
         assert len(lambs_to_add) == batch_size
         return overlaps, lambs_to_add
@@ -1647,7 +1646,7 @@ def compute_potential_matrix(
     return U_kl
 
 
-def batch_compute_potential_matrix(
+def compute_potential_matrix_streams(
     potentials: list[custom_ops.Potential_f32],
     hrex: HREX[CoordsVelBox],
     params_by_state_by_potential: list[NDArray],
@@ -1657,7 +1656,8 @@ def batch_compute_potential_matrix(
     computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
     set to `np.inf`.
 
-    A batched variant of `compute_potential_matrix` that parallelizes the computation of energies on the GPU using streams.
+    A batched variant of `compute_potential_matrix` that parallelizes the computation of energies on the GPU using streams. All potentials
+    must act on a single system
 
     Parameters
     ----------
@@ -1674,7 +1674,7 @@ def batch_compute_potential_matrix(
         If given, number of neighbor states on either side of a given replica's initial state for which to compute
         potentials. Otherwise, compute potentials for all (replica, state) pairs.
     """
-
+    assert all([pot.num_systems() == 1 for pot in potentials])
     potential_runner = custom_ops.PotentialExecutor_f32()
     coords = np.array([xvb.coords for xvb in hrex.replicas])
     boxes = np.array([xvb.box for xvb in hrex.replicas])
@@ -1713,6 +1713,104 @@ def batch_compute_potential_matrix(
     U_kl = compute_sparse(max_delta_states) if max_delta_states is not None else compute_dense()
 
     return U_kl
+
+
+def compute_potential_matrix_batched_system(
+    potentials: list[custom_ops.Potential_f32],
+    hrex: HREX[CoordsVelBox],
+    params_by_state_by_potential: list[NDArray],
+    max_delta_states: Optional[int] = None,
+) -> NDArray[np.float32]:
+    """Computes the (n_potentials, n_replicas, n_states) sparse matrix of potential energies, where a given element $(k, l)$ is
+    computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
+    set to `np.inf`.
+
+    A batched variant of `compute_potential_matrix` that parallelizes the computation of energies on the GPU by batching multiple simulations.
+    All potentials must act on the entire set of replicas.
+
+    Parameters
+    ----------
+    potentials : list[custom_ops.Potential_f32]
+        list of potentials to evaluate
+
+    hrex : HREX
+        HREX state (containing replica states and permutation)
+
+    params_by_state : NDArray
+        (n_states, ...) array of potential parameters for each state
+
+    max_delta_states : int or None, optional
+        If given, number of neighbor states on either side of a given replica's initial state for which to compute
+        potentials. Otherwise, compute potentials for all (replica, state) pairs.
+    """
+    assert all([pot.num_systems() == len(hrex.replicas) for pot in potentials])
+    coords = np.stack([xvb.coords for xvb in hrex.replicas])
+    boxes = np.stack([xvb.box for xvb in hrex.replicas])
+
+    n_states = len(hrex.replicas)
+    n_pots = len(potentials)
+    U_kl = np.full((n_pots, n_states, n_states), np.inf, dtype=np.float32)
+
+    coord_perm = np.arange(0, n_states)
+    param_permutation = np.argsort(hrex.replica_idx_by_state)
+    states = n_states
+    if max_delta_states is not None:
+        # Roll back by the number of delta states, if the values won't wrap around to states that are not monotonically increasing
+        # In the case that they would wrap, set the minimum state to sample that would be sampled
+        param_permutation -= max_delta_states
+        param_permutation = np.clip(param_permutation, 0, max(n_states - (2 * max_delta_states + 1), 0))
+        states = min(max_delta_states * 2 + 1, n_states)
+    for i in range(states):
+        for j in range(n_pots):
+            _, _, u = potentials[j].execute_dim(
+                coords,
+                params_by_state_by_potential[j][param_permutation],  # type: ignore
+                boxes,
+                False,
+                False,
+                True,
+            )
+            U_kl[j, coord_perm, param_permutation] = u
+        # Cycle the param permutation
+        param_permutation += 1
+        param_permutation = param_permutation % n_states
+    return U_kl
+
+
+def batch_compute_potential_matrix(
+    potentials: list[custom_ops.Potential_f32],
+    hrex: HREX[CoordsVelBox],
+    params_by_state_by_potential: list[NDArray],
+    max_delta_states: Optional[int] = None,
+) -> NDArray[np.float32]:
+    """Computes the (n_potentials, n_replicas, n_states) sparse matrix of potential energies, where a given element $(k, l)$ is
+    computed if and only if state $l$ is within `max_delta_states` of the current state of replica $k$, and is otherwise
+    set to `np.inf`.
+
+    A batched variant of `compute_potential_matrix` that parallelizes the computation of energies on the GPU. If the potentials are acting
+    on a single system, then streams will be used to parallelize results. If the potentials are acting on all states, parallelism comes
+    from the batched potentials.
+
+    Parameters
+    ----------
+    potentials : list[custom_ops.Potential_f32]
+        list of potentials to evaluate
+
+    hrex : HREX
+        HREX state (containing replica states and permutation)
+
+    params_by_state : NDArray
+        (n_states, ...) array of potential parameters for each state
+
+    max_delta_states : int or None, optional
+        If given, number of neighbor states on either side of a given replica's initial state for which to compute
+        potentials. Otherwise, compute potentials for all (replica, state) pairs. If batched, max delta states will
+        compute energies for states that wrap around. IE replica 0 will be evaluated against parameter from state len(states) - max_delta_states.
+    """
+    if any([pot.num_systems() == 1 for pot in potentials]):
+        return compute_potential_matrix_streams(potentials, hrex, params_by_state_by_potential, max_delta_states)
+    else:
+        return compute_potential_matrix_batched_system(potentials, hrex, params_by_state_by_potential, max_delta_states)
 
 
 def verify_and_sanitize_potential_matrix(
@@ -2134,13 +2232,9 @@ def run_sims_hrex(
     # Set up overall potential and context using the first state.
     if batch_simulations:
         context = get_batched_context(initial_states, md_params=md_params)
-
-        temp_ctxt = get_context(initial_states[0])
-        nrg_pots = [bp.get_potential() for bp in temp_ctxt.get_potentials()]
-        del temp_ctxt
     else:
         context = get_context(initial_states[0], md_params=md_params)
-        nrg_pots = [bp.get_potential() for bp in context.get_potentials()]
+    nrg_pots = [bp.get_potential() for bp in context.get_potentials()]
     assert len(context.get_potentials()) == len(initial_states[0].potentials)
     temperature = initial_states[0].integrator.temperature
     ligand_idxs = initial_states[0].ligand_idxs
@@ -2194,7 +2288,7 @@ def run_sims_hrex(
     for current_frame in range(md_params.n_frames):
         hrex, samples_by_state_iter, U_kl_raw, water_sampler_proposals_by_state = hrex_func(
             hrex,
-            nrg_pots,  # TBD: Use the batched potentials for computing the energy matrix
+            nrg_pots,
             params_by_state_by_pot,
             water_params_by_state,
             context,

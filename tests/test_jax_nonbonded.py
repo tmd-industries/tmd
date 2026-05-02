@@ -53,12 +53,11 @@ Params = Array
 Box = Array
 ExclusionIdxs = Array
 ScaleFactors = Array
-Beta = float
 Cutoff = float
 Energy = float
 
-NonbondedArgs = tuple[Conf, Params, Box, ExclusionIdxs, ScaleFactors, Beta, Cutoff]
-NonbondedFxn = Callable[[Conf, Params, Box, ExclusionIdxs, ScaleFactors, Beta, Cutoff], Energy]
+NonbondedArgs = tuple[Conf, Params, Box, ExclusionIdxs, ScaleFactors, Cutoff]
+NonbondedFxn = Callable[[Conf, Params, Box, ExclusionIdxs, ScaleFactors, Cutoff], Energy]
 
 pytestmark = [pytest.mark.nocuda]
 
@@ -118,7 +117,6 @@ easy_instance_flags = dict(
     randomize_charge_rescale_mask=False,
     randomize_lj_rescale_mask=False,
     randomize_w_coords=False,
-    randomize_beta=False,
     randomize_cutoff=False,
 )
 
@@ -131,7 +129,6 @@ def generate_waterbox_nb_args() -> NonbondedArgs:
     nb = host_config.host_system.nonbonded_all_pairs
     params = nb.params
 
-    beta = nb.potential.beta
     cutoff = nb.potential.cutoff
 
     exclusion_idxs = np.zeros((0,), dtype=np.int32)
@@ -144,7 +141,6 @@ def generate_waterbox_nb_args() -> NonbondedArgs:
         host_config.box.astype(np.float64),
         exclusion_idxs,
         scale_factors.astype(np.float64),
-        beta,
         cutoff,
     )
 
@@ -200,13 +196,9 @@ def generate_random_inputs(n_atoms, dim, instance_flags=difficult_instance_flags
             lj_scale_factor = 0.0
         scale_factors_.append((charge_scale_factor, lj_scale_factor))
 
-    beta = 2.0
-    if instance_flags["randomize_beta"]:
-        beta += rand()
-
     exclusion_idxs = np.array(exclusion_idxs_, dtype=np.int32)
     scale_factors = np.array(scale_factors_)
-    args = (conf, params, box, exclusion_idxs, scale_factors, beta, cutoff)
+    args = (conf, params, box, exclusion_idxs, scale_factors, cutoff)
 
     return args
 
@@ -228,7 +220,6 @@ def _nonbonded_clone(
     box,
     exclusion_idxs,
     scale_factors,
-    beta,
     cutoff,
 ):
     """See docstring of `nonbonded` for more details
@@ -244,7 +235,7 @@ def _nonbonded_clone(
     #   up into more manageable blocks if n_interactions is large
     pairs = get_all_pairs_indices(N)
 
-    lj, coulomb = nonbonded_on_specific_pairs(conf, params, box, pairs, beta, cutoff)
+    lj, coulomb = nonbonded_on_specific_pairs(conf, params, box, pairs, cutoff)
 
     # keep only eps > 0
     inds_i, inds_j = pairs.T
@@ -270,17 +261,17 @@ def run_randomized_tests_of_jax_nonbonded(instance_generator, n_instances=10):
 
     for n_atoms, dim in zip(random_sizes, dims):
         args = instance_generator(n_atoms, dim)
-        conf, params, box, exclusion_idxs, scale_factors, beta, cutoff = args
-        diff_args = conf, params, box, beta, cutoff
+        conf, params, box, exclusion_idxs, scale_factors, cutoff = args
+        diff_args = conf, params, box, cutoff
 
         # Need to differentiate between the args that can be traced
-        # and the args that are fixed. Otherwise we get a
+        # and the args that are     fixed. Otherwise we get a
         # TracerArrayConversionError for exclusion_idxs and scale_factors.
-        def jittable_nonbonded(conf, params, box, beta, cutoff):
-            return nonbonded(conf, params, box, exclusion_idxs, scale_factors, beta, cutoff, runtime_validate=False)
+        def jittable_nonbonded(conf, params, box, cutoff):
+            return nonbonded(conf, params, box, exclusion_idxs, scale_factors, cutoff, runtime_validate=False)
 
-        def jittable_nonbonded_clone(conf, params, box, beta, cutoff):
-            return _nonbonded_clone(conf, params, box, exclusion_idxs, scale_factors, beta, cutoff)
+        def jittable_nonbonded_clone(conf, params, box, cutoff):
+            return _nonbonded_clone(conf, params, box, exclusion_idxs, scale_factors, cutoff)
 
         u_a = jit(jittable_nonbonded)
         u_b = jit(jittable_nonbonded_clone)
@@ -310,7 +301,7 @@ def test_vmap():
     # # atoms in "ligand" vs. "environment"
     n_ligand, n_environment = 50, 100
     n_total = n_ligand + n_environment
-    conf, params, box, _, _, beta, cutoff = generate_random_inputs(n_total, 3)
+    conf, params, box, _, _, cutoff = generate_random_inputs(n_total, 3)
 
     ligand_indices = np.arange(n_ligand)
     environment_indices = np.arange(n_environment) + n_ligand
@@ -318,7 +309,7 @@ def test_vmap():
 
     n_interactions = len(pairs)
 
-    fixed_kwargs = dict(params=params, box=box, pairs=pairs, beta=beta, cutoff=cutoff)
+    fixed_kwargs = dict(params=params, box=box, pairs=pairs, cutoff=cutoff)
 
     # signature: conf -> ljs, coulombs, where ljs.shape == (n_interactions, )
     u_pairs = partial(nonbonded_on_specific_pairs, **fixed_kwargs)
@@ -347,7 +338,6 @@ def test_jax_nonbonded_block():
     params = nb.params
 
     N = conf.shape[0]
-    beta = nb.potential.beta
     cutoff = nb.potential.cutoff
 
     split = 70
@@ -357,7 +347,7 @@ def test_jax_nonbonded_block():
         xj = x[split:]
         pi = params[:split]
         pj = params[split:]
-        return nonbonded_block(xi, xj, box, pi, pj, beta, cutoff)
+        return nonbonded_block(xi, xj, box, pi, pj, cutoff)
 
     i_s, j_s = jnp.indices((split, N - split))
     indices_left = i_s.flatten()
@@ -365,7 +355,7 @@ def test_jax_nonbonded_block():
     pairs = jnp.array([indices_left, indices_right]).T
 
     def u_b(x, box, params):
-        vdw, es = nonbonded_on_specific_pairs(x, params, box, pairs, beta, cutoff)
+        vdw, es = nonbonded_on_specific_pairs(x, params, box, pairs, cutoff)
 
         return jnp.sum(vdw + es)
 
@@ -382,7 +372,6 @@ def test_jax_nonbonded_block_unsummed():
     params = nb.params
 
     N = conf.shape[0]
-    beta = nb.potential.beta
     cutoff = nb.potential.cutoff
 
     split = 70
@@ -392,7 +381,7 @@ def test_jax_nonbonded_block_unsummed():
         xj = x[split:]
         pi = params[:split]
         pj = params[split:]
-        return nonbonded_block_unsummed(xi, xj, box, pi, pj, beta, cutoff)
+        return nonbonded_block_unsummed(xi, xj, box, pi, pj, cutoff)
 
     i_s, j_s = jnp.indices((split, N - split))
     indices_left = i_s.flatten()
@@ -400,7 +389,7 @@ def test_jax_nonbonded_block_unsummed():
     pairs = jnp.array([indices_left, indices_right]).T
 
     def u_ref(x, box, params):
-        vdw, es = nonbonded_on_specific_pairs(x, params, box, pairs, beta, cutoff)
+        vdw, es = nonbonded_on_specific_pairs(x, params, box, pairs, cutoff)
         u_total_pairs = vdw + es
         n_rows = split
         n_cols = N - split
@@ -458,7 +447,6 @@ def test_precomputation(seed, test_full_path):
     params = nb.params.astype(np.float64)
 
     n_atoms = conf.shape[0]
-    beta = nb.potential.beta
     cutoff = nb.potential.cutoff
 
     # generate array in the shape of a "trajectory" by adding noise to an initial conformation
@@ -475,7 +463,7 @@ def test_precomputation(seed, test_full_path):
 
     # reference version: nonbonded_on_specific_pairs
     def u_ref(x, box, params):
-        vdw, es = nonbonded_on_specific_pairs(x, params, box, pairs, beta, cutoff)
+        vdw, es = nonbonded_on_specific_pairs(x, params, box, pairs, cutoff)
         return jnp.sum(vdw + es)
 
     @jit
@@ -493,7 +481,7 @@ def test_precomputation(seed, test_full_path):
     charges, sigmas, epsilons, _ = params.T
     lj_prefactors = lj_prefactors_on_traj(traj, boxes, sigmas, epsilons, ligand_idx, env_idx, cutoff)
     lj_eps_prefactors = lj_eps_prefactors_on_traj(traj, boxes, sigmas, epsilons, ligand_idx, env_idx, cutoff)
-    q_prefactors = coulomb_prefactors_on_traj(traj, boxes, charges, ligand_idx, env_idx, beta, cutoff)
+    q_prefactors = coulomb_prefactors_on_traj(traj, boxes, charges, ligand_idx, env_idx, cutoff)
 
     @jit
     def u_batch_test(sig_ligand, eps_ligand, q_ligand):

@@ -7,16 +7,17 @@ from tmd.potentials import NonbondedPairListPrecomputed
 pytestmark = [pytest.mark.memcheck]
 
 
+CUTOFF = 1.2
+
+
 def test_nonbonded_precomputed_pair_list_invalid_pair_idxs():
     with pytest.raises(RuntimeError, match=r"idxs dimensions must be 2"):
-        NonbondedPairListPrecomputed(1, [0], 2.0, 1.1).to_gpu(np.float32).unbound_impl
+        NonbondedPairListPrecomputed(1, [0], CUTOFF).to_gpu(np.float32).unbound_impl
 
     with pytest.raises(RuntimeError, match="illegal pair with src == dst: 0, 0"):
-        NonbondedPairListPrecomputed(1, [(0, 0)], 2.0, 1.1).to_gpu(np.float32).unbound_impl
+        NonbondedPairListPrecomputed(1, [(0, 0)], CUTOFF).to_gpu(np.float32).unbound_impl
 
 
-@pytest.mark.parametrize("beta", [2.0])
-@pytest.mark.parametrize("cutoff", [1.1, 10000.0])
 @pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
 @pytest.mark.parametrize("ixn_group_size", [4, 33, 231])
 @pytest.mark.parametrize("num_atoms", [10, 33, 25358])
@@ -25,8 +26,6 @@ def test_nonbonded_pair_list_precomputed_correctness(
     precision,
     rtol,
     atol,
-    cutoff,
-    beta,
     num_atoms,
     rng: np.random.Generator,
 ):
@@ -44,15 +43,13 @@ def test_nonbonded_pair_list_precomputed_correctness(
 
     conf = rng.uniform(0, 1, size=(num_atoms, 3)) * 3
 
-    box = np.diag(
-        1 + rng.uniform(0, 1, size=3) * 3
-    )  # box should be fully ignored tbh (just like all other bonded forces)
+    box = np.diag(1 + rng.uniform(0, 1, size=3) * 3)
 
-    potential = NonbondedPairListPrecomputed(num_atoms, pair_idxs, beta, cutoff)
+    potential = NonbondedPairListPrecomputed(num_atoms, pair_idxs, CUTOFF)
 
     # delta_w positive by convention
     test_impl = potential.to_gpu(precision)
-    for params in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff, w_min=0.0):
+    for params in gen_nonbonded_params_with_4d_offsets(rng, params, 1.0, w_min=0.0):
         conf = conf.astype(precision)
         params = params.astype(precision)
         box = box.astype(precision)
@@ -62,14 +59,14 @@ def test_nonbonded_pair_list_precomputed_correctness(
     # test bare charges
     params[:, 1] = 0
     params[:, 2] = 0
-    for params in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff, w_min=0.0):
+    for params in gen_nonbonded_params_with_4d_offsets(rng, params, 1.0, w_min=0.0):
         conf = conf.astype(precision)
         params = params.astype(precision)
         box = box.astype(precision)
         GradientTest().compare_forces(conf, params, box, potential, test_impl, rtol=rtol, atol=atol)
         GradientTest().assert_differentiable_interface_consistency(conf, params, box, test_impl)
 
-    seed = rng.integers(np.iinfo(np.int32).max)
+    seed = int(rng.integers(np.iinfo(np.int32).max))
     num_systems = 3
 
     coords = np.array(
@@ -84,7 +81,7 @@ def test_nonbonded_pair_list_precomputed_correctness(
     batch_params = [rng.choice(params, size=len(idxs), replace=True).astype(precision) for idxs in batch_pair_idxs]
     batch_boxes = [(np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)]
 
-    batch_pot = NonbondedPairListPrecomputed(num_atoms, batch_pair_idxs, beta, cutoff)
+    batch_pot = NonbondedPairListPrecomputed(num_atoms, batch_pair_idxs, CUTOFF)
 
     batch_impl = batch_pot.to_gpu(precision).unbound_impl
     assert batch_impl.num_systems() == num_systems
@@ -93,7 +90,7 @@ def test_nonbonded_pair_list_precomputed_correctness(
     assert batch_du_dx.shape[0] == num_systems
     assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
     for i, (idxs, x, box, params) in enumerate(zip(batch_pair_idxs, coords, batch_boxes, batch_params)):
-        potential = NonbondedPairListPrecomputed(num_atoms, idxs, beta, cutoff)
+        potential = NonbondedPairListPrecomputed(num_atoms, idxs, CUTOFF)
         ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x, params, box, 1, 1, 1)
         np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
         np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)

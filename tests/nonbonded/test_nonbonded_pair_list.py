@@ -9,22 +9,21 @@ pytestmark = [pytest.mark.memcheck]
 
 def test_nonbonded_pair_list_invalid_pair_idxs():
     with pytest.raises(RuntimeError, match=r"idxs dimensions must be 2"):
-        NonbondedPairList(4, np.array([0], dtype=np.int32), np.array([0], dtype=np.float32), 2.0, 1.1).to_gpu(
+        NonbondedPairList(4, np.array([0], dtype=np.int32), np.array([0], dtype=np.float32), 1.1).to_gpu(
             np.float32
         ).unbound_impl
 
     with pytest.raises(RuntimeError, match=r"illegal pair with src == dst: 0, 0"):
-        NonbondedPairList(4, np.array([(0, 0)], dtype=np.int32), np.array([(1, 1)], dtype=np.float32), 2.0, 1.1).to_gpu(
+        NonbondedPairList(4, np.array([(0, 0)], dtype=np.int32), np.array([(1, 1)], dtype=np.float32), 1.1).to_gpu(
             np.float32
         ).unbound_impl
 
     with pytest.raises(RuntimeError, match=r"expected same number of pairs and scale tuples, but got 1 != 2"):
         NonbondedPairList(
-            4, np.array([(0, 1)], dtype=np.int32), np.array([(1, 1), (2, 2)], dtype=np.float32), 2.0, 1.1
+            4, np.array([(0, 1)], dtype=np.int32), np.array([(1, 1), (2, 2)], dtype=np.float32), 1.1
         ).to_gpu(np.float32).unbound_impl
 
 
-@pytest.mark.parametrize("beta", [2.0])
 @pytest.mark.parametrize("cutoff", [1.1])
 @pytest.mark.parametrize("precision,rtol,atol", [(np.float64, 1e-8, 1e-8), (np.float32, 1e-4, 5e-4)])
 @pytest.mark.parametrize("ixn_group_size", [2, 33, 231])
@@ -34,14 +33,13 @@ def test_nonbonded_pair_list_correctness(
     rtol,
     atol,
     cutoff,
-    beta,
     example_nonbonded_potential,
     example_conf,
     example_box,
     rng: np.random.Generator,
 ):
     "Compares with jax reference implementation."
-    seed = rng.integers(np.iinfo(np.int32).max)
+    seed = int(rng.integers(np.iinfo(np.int32).max))
 
     num_atoms, _ = example_conf.shape
 
@@ -53,7 +51,7 @@ def test_nonbonded_pair_list_correctness(
 
     rescale_mask = rng.uniform(0, 1, size=(num_pairs, 2)).astype(precision)
 
-    ref_potential = NonbondedPairList(num_atoms, pair_idxs.astype(np.int32), rescale_mask, beta, cutoff)
+    ref_potential = NonbondedPairList(num_atoms, pair_idxs.astype(np.int32), rescale_mask, cutoff)
     params = example_nonbonded_potential.params
 
     for params_ in gen_nonbonded_params_with_4d_offsets(rng, params, cutoff):
@@ -84,7 +82,7 @@ def test_nonbonded_pair_list_correctness(
             (np.array(example_box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)
         ]
 
-        batch_pot = NonbondedPairList(num_atoms, batch_pair_idxs, batch_rescale_mask, beta, cutoff)
+        batch_pot = NonbondedPairList(num_atoms, batch_pair_idxs, batch_rescale_mask, cutoff)
 
         batch_impl = batch_pot.to_gpu(precision).unbound_impl
         assert batch_impl.num_systems() == num_systems
@@ -95,7 +93,7 @@ def test_nonbonded_pair_list_correctness(
         for i, (idxs, rescale_mask, batch_x, batch_box, params_batch) in enumerate(
             zip(batch_pair_idxs, batch_rescale_mask, coords, batch_boxes, batch_params)
         ):
-            potential = NonbondedPairList(num_atoms, idxs, rescale_mask, beta, cutoff)
+            potential = NonbondedPairList(num_atoms, idxs, rescale_mask, cutoff)
             ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(
                 batch_x, params_batch, batch_box, 1, 1, 1
             )

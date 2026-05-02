@@ -394,7 +394,7 @@ def plot_hrex_transition_matrix(
                 prob = transition_probability[to_state, from_state]
                 if prob > 0.0:
                     label = format_annotation(cast(float, prob))
-                    ax.text(from_state, to_state, label, ha="center", va="center", color="w", fontsize=8)
+                    ax.text(float(from_state), float(to_state), label, ha="center", va="center", color="w", fontsize=8)
 
     ax.set_xlabel("from state")
     ax.set_ylabel("to state")
@@ -454,7 +454,7 @@ def plot_hrex_replica_state_distribution_heatmap(
             for state in states:
                 fraction = fraction_by_replica_by_state[state, replica]
                 label = format_annotation(fraction)
-                ax.text(replica, state, label, ha="center", va="center", color="w", fontsize=8)
+                ax.text(float(replica), float(state), label, ha="center", va="center", color="w", fontsize=8)
 
     ax.set_xlabel("replica")
     ax.set_ylabel("state")

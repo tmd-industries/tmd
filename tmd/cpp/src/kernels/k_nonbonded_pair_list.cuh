@@ -41,8 +41,7 @@ void __global__ k_nonbonded_pair_list(
     const int *__restrict__ pair_idxs,   // [M, 2] pair-list of atoms
     const int *__restrict__ system_idxs, // [M]
     const RealType *__restrict__ scales, // [M]
-    const RealType beta, const RealType cutoff,
-    unsigned long long *__restrict__ du_dx,
+    const RealType cutoff, unsigned long long *__restrict__ du_dx,
     unsigned long long *__restrict__ du_dp, __int128 *__restrict__ u_buffer) {
   // (ytz): oddly enough the order of atom_i and atom_j
   // seem to not matter. I think this is because distance calculations
@@ -147,7 +146,7 @@ void __global__ k_nonbonded_pair_list(
     RealType inv_dij;
     RealType inv_d2ij;
     compute_electrostatics<RealType, COMPUTE_U>(charge_scale, qi, qj, d2ij,
-                                                beta, dij, inv_dij, inv_d2ij,
+                                                cutoff, dij, inv_dij, inv_d2ij,
                                                 ebd, delta_prefactor, u);
 
     // lennard jones force

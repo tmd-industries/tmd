@@ -152,7 +152,6 @@ class Nonbonded(Potential):
     num_atoms: int
     exclusion_idxs: NDArray[np.int32]
     scale_factors: NDArray[np.float64]
-    beta: float
     cutoff: float
     atom_idxs: Optional[NDArray[np.int32]] = None
     disable_hilbert_sort: bool = False
@@ -166,7 +165,6 @@ class Nonbonded(Potential):
             box,
             self.exclusion_idxs,
             self.scale_factors,
-            self.beta,
             self.cutoff,
             runtime_validate=False,  # needed for this to be JAX-transformable
             atom_idxs=self.atom_idxs,
@@ -195,7 +193,6 @@ class Nonbonded(Potential):
         all_pairs = NonbondedInteractionGroup(
             self.num_atoms,
             atom_idxs,
-            self.beta,
             self.cutoff,
             col_atom_idxs=atom_idxs,
             disable_hilbert_sort=self.disable_hilbert_sort,
@@ -217,7 +214,6 @@ class Nonbonded(Potential):
             self.num_atoms,
             exclusion_idxs,
             scale_factors,
-            precision(self.beta),
             precision(self.cutoff),
         )
         return FanoutSummedPotential([exclusions, all_pairs]).to_gpu(precision)
@@ -227,8 +223,6 @@ class Nonbonded(Potential):
             raise TypeError("Other potential does not match type")
         if self.num_atoms != other_pot.num_atoms:
             raise ValueError(f"Potentials must have same number of atoms: {self.num_atoms} != {other_pot.num_atoms}")
-        if self.beta != other_pot.beta:
-            raise ValueError(f"Nonbonded beta must match: {self.beta} != {other_pot.beta}")
         if self.cutoff != other_pot.cutoff:
             raise ValueError(f"Nonbonded cutoff must match: {self.cutoff} != {other_pot.cutoff}")
         if self.disable_hilbert_sort != other_pot.disable_hilbert_sort:
@@ -248,7 +242,6 @@ class Nonbonded(Potential):
             self.num_atoms,
             combine_pot_params(self.exclusion_idxs, other_pot.exclusion_idxs),
             combine_pot_params(self.scale_factors, other_pot.scale_factors),
-            self.beta,
             self.cutoff,
             atom_idxs,
             disable_hilbert_sort=self.disable_hilbert_sort,
@@ -260,7 +253,6 @@ class Nonbonded(Potential):
 class NonbondedInteractionGroup(Potential):
     num_atoms: int
     row_atom_idxs: NDArray[np.int32]
-    beta: float
     cutoff: float
     col_atom_idxs: Optional[NDArray[np.int32]] = None
     disable_hilbert_sort: bool = False
@@ -274,7 +266,6 @@ class NonbondedInteractionGroup(Potential):
             box,
             self.row_atom_idxs,
             self.col_atom_idxs,
-            self.beta,
             self.cutoff,
         )
         return jnp.sum(vdW) + jnp.sum(electrostatics)
@@ -284,8 +275,6 @@ class NonbondedInteractionGroup(Potential):
             raise TypeError("Other potential does not match type")
         if self.num_atoms != other_pot.num_atoms:
             raise ValueError(f"Potentials must have same number of atoms: {self.num_atoms} != {other_pot.num_atoms}")
-        if self.beta != other_pot.beta:
-            raise ValueError(f"NonbondedInteractionGroup beta must match: {self.beta} != {other_pot.beta}")
         if self.cutoff != other_pot.cutoff:
             raise ValueError(f"NonbondedInteractionGroup cutoff must match: {self.cutoff} != {other_pot.cutoff}")
         if self.disable_hilbert_sort != other_pot.disable_hilbert_sort:
@@ -304,7 +293,6 @@ class NonbondedInteractionGroup(Potential):
         return self.__class__(
             self.num_atoms,
             combine_pot_params(self.row_atom_idxs, other_pot.row_atom_idxs),
-            self.beta,
             self.cutoff,
             col_atom_idxs,
             disable_hilbert_sort=self.disable_hilbert_sort,
@@ -317,13 +305,12 @@ class NonbondedPairList(Potential):
     num_atoms: int
     idxs: NDArray[np.int32] | list[NDArray[np.int32]]
     rescale_mask: NDArray | list[NDArray]
-    beta: float
     cutoff: float
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
         assert isinstance(params, (np.ndarray, Array))
         vdW, electrostatics = nonbonded.nonbonded_on_specific_pairs(
-            conf, params, box, self.idxs, self.beta, self.cutoff, self.rescale_mask
+            conf, params, box, self.idxs, self.cutoff, self.rescale_mask
         )
         return jnp.sum(vdW) + jnp.sum(electrostatics)
 
@@ -332,15 +319,12 @@ class NonbondedPairList(Potential):
             raise TypeError("Other potential does not match type")
         if self.num_atoms != other_pot.num_atoms:
             raise ValueError(f"Potentials must have same number of atoms: {self.num_atoms} != {other_pot.num_atoms}")
-        if self.beta != other_pot.beta:
-            raise ValueError(f"NonbondedPairList beta must match: {self.beta} != {other_pot.beta}")
         if self.cutoff != other_pot.cutoff:
             raise ValueError(f"NonbondedPairList cutoff must match: {self.cutoff} != {other_pot.cutoff}")
         return self.__class__(
             self.num_atoms,
             combine_pot_params(self.idxs, other_pot.idxs),
             combine_pot_params(self.rescale_mask, other_pot.rescale_mask),
-            self.beta,
             self.cutoff,
         )
 
@@ -350,13 +334,12 @@ class NonbondedExclusions(Potential):
     num_atoms: int
     idxs: NDArray[np.int32] | list[NDArray[np.int32]]
     rescale_mask: NDArray[np.float64] | list[NDArray[np.float64]]
-    beta: float
     cutoff: float
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
         assert isinstance(params, (np.ndarray, Array))
         vdW, electrostatics = nonbonded.nonbonded_on_specific_pairs(
-            conf, params, box, self.idxs, self.beta, self.cutoff, self.rescale_mask
+            conf, params, box, self.idxs, self.cutoff, self.rescale_mask
         )
         U = jnp.sum(vdW) + jnp.sum(electrostatics)
         return -U
@@ -366,15 +349,12 @@ class NonbondedExclusions(Potential):
             raise TypeError("Other potential does not match type")
         if self.num_atoms != other_pot.num_atoms:
             raise ValueError(f"Potentials must have same number of atoms: {self.num_atoms} != {other_pot.num_atoms}")
-        if self.beta != other_pot.beta:
-            raise ValueError(f"NonbondedExclusions beta must match: {self.beta} != {other_pot.beta}")
         if self.cutoff != other_pot.cutoff:
             raise ValueError(f"NonbondedExclusions cutoff must match: {self.cutoff} != {other_pot.cutoff}")
         return self.__class__(
             self.num_atoms,
             combine_pot_params(self.idxs, other_pot.idxs),
             combine_pot_params(self.rescale_mask, other_pot.rescale_mask),
-            self.beta,
             self.cutoff,
         )
 
@@ -392,14 +372,11 @@ class NonbondedPairListPrecomputed(Potential):
 
     num_atoms: int
     idxs: NDArray[np.int32] | list[NDArray[np.int32]]
-    beta: float
     cutoff: float
 
     def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
         assert isinstance(params, (np.ndarray, Array))
-        vdW, electrostatics = nonbonded.nonbonded_on_precomputed_pairs(
-            conf, params, box, self.idxs, self.beta, self.cutoff
-        )
+        vdW, electrostatics = nonbonded.nonbonded_on_precomputed_pairs(conf, params, box, self.idxs, cutoff=self.cutoff)
         return jnp.sum(vdW) + jnp.sum(electrostatics)
 
     def combine(self, other_pot):
@@ -407,14 +384,11 @@ class NonbondedPairListPrecomputed(Potential):
             raise TypeError("Other potential does not match type")
         if self.num_atoms != other_pot.num_atoms:
             raise ValueError(f"Potentials must have same number of atoms: {self.num_atoms} != {other_pot.num_atoms}")
-        if self.beta != other_pot.beta:
-            raise ValueError(f"NonbondedExclusions beta must match: {self.beta} != {other_pot.beta}")
         if self.cutoff != other_pot.cutoff:
-            raise ValueError(f"NonbondedExclusions cutoff must match: {self.cutoff} != {other_pot.cutoff}")
+            raise ValueError(f"Potentials must have same cutoff: {self.cutoff} != {other_pot.cutoff}")
         return self.__class__(
             self.num_atoms,
             combine_pot_params(self.idxs, other_pot.idxs),
-            self.beta,
             self.cutoff,
         )
 

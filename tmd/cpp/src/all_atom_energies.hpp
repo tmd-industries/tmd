@@ -22,6 +22,6 @@ template <typename RealType>
 std::vector<RealType> compute_atom_by_atom_energies(
     const int N, const std::vector<int> &target_atoms,
     const std::vector<RealType> &coords, const std::vector<RealType> &params,
-    std::vector<RealType> &box, const RealType nb_beta, const RealType cutoff);
+    std::vector<RealType> &box, const RealType cutoff);
 
 } // namespace tmd

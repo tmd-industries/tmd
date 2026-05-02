@@ -114,7 +114,7 @@ def verify_targeted_moves(
         if num_moved == 1:
             # The molecules should all be imaged in the home box
             np.testing.assert_allclose(image_frame(mol_groups, x_move, x_box), x_move)
-            vol_inner = (4 / 3) * np.pi * ref_bdem.radius**3
+            vol_inner = np.float64((4 / 3) * np.pi * ref_bdem.radius**3)
             vol_outer = np.prod(np.diag(box)) - vol_inner
 
             center = np.mean(last_conf[ref_bdem.ligand_idxs], axis=0)
@@ -264,7 +264,6 @@ def test_translations_inside_and_outside_sphere(seed, n_translations, radius, pr
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 def test_tibd_exchange_validation(precision):
     N = 10
-    beta = 1.2
     cutoff = 1.2
     seed = 2023
     klass = custom_ops.TIBDExchangeMove_f32
@@ -281,33 +280,33 @@ def test_tibd_exchange_validation(precision):
     # Test group indices verification
     group_idxs = []
     with pytest.raises(RuntimeError, match="must provide at least one molecule"):
-        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, beta, cutoff, radius, seed, proposals_per_move, 1)
+        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, cutoff, radius, seed, proposals_per_move, 1)
 
     # Second molecule is not contiguous with first
     group_idxs = [[0, 1, 2], [4, 5]]
     with pytest.raises(RuntimeError, match="Molecules are not contiguous: mol 1"):
-        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, beta, cutoff, radius, seed, proposals_per_move, 1)
+        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, cutoff, radius, seed, proposals_per_move, 1)
 
     group_idxs = [[0, 1, 2], [3, 4]]
     with pytest.raises(RuntimeError, match="only support running with mols with constant size, got mixed sizes"):
-        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, beta, cutoff, radius, seed, proposals_per_move, 1)
+        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, cutoff, radius, seed, proposals_per_move, 1)
 
     group_idxs = [[]]
     with pytest.raises(RuntimeError, match="must provide non-empty molecule indices"):
-        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, beta, cutoff, radius, seed, proposals_per_move, 1)
+        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, cutoff, radius, seed, proposals_per_move, 1)
 
     # Proposals must be non-zero
     with pytest.raises(RuntimeError, match="proposals per move must be greater than 0"):
-        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, beta, cutoff, radius, seed, 0, 1)
+        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, cutoff, radius, seed, 0, 1)
 
     group_idxs = [[0]]
     # Radius must be non-zero
     with pytest.raises(RuntimeError, match="radius must be greater than 0.0"):
-        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, beta, cutoff, 0.0, seed, proposals_per_move, 1)
+        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, cutoff, 0.0, seed, proposals_per_move, 1)
 
     # Interval must be greater than zero
     with pytest.raises(RuntimeError, match="must provide interval greater than 0"):
-        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, beta, cutoff, radius, seed, proposals_per_move, 0)
+        klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, cutoff, radius, seed, proposals_per_move, 0)
 
     with pytest.raises(RuntimeError, match="must provide batch size greater than 0"):
         klass(
@@ -316,7 +315,6 @@ def test_tibd_exchange_validation(precision):
             group_idxs,
             params,
             DEFAULT_TEMP,
-            beta,
             cutoff,
             radius,
             seed,
@@ -332,7 +330,6 @@ def test_tibd_exchange_validation(precision):
             group_idxs,
             params,
             DEFAULT_TEMP,
-            beta,
             cutoff,
             radius,
             seed,
@@ -346,7 +343,7 @@ def test_tibd_exchange_validation(precision):
     box = np.eye(3) * 0.1
     radius = 1
     coords = rng.random((N, 3))
-    mover = klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, beta, cutoff, radius, seed, proposals_per_move, 1)
+    mover = klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, cutoff, radius, seed, proposals_per_move, 1)
 
     coords = coords.astype(precision)
     box = box.astype(precision)
@@ -358,7 +355,6 @@ def test_tibd_exchange_validation(precision):
 @pytest.mark.parametrize("precision", [np.float64, np.float32])
 def test_tibd_exchange_get_set_params(precision):
     N = 10
-    beta = 1.2
     cutoff = 1.2
     seed = 2023
     klass = custom_ops.TIBDExchangeMove_f32
@@ -373,9 +369,7 @@ def test_tibd_exchange_get_set_params(precision):
     radius = 1.0
     group_idxs = [[0]]
 
-    exchange_move = klass(
-        N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, beta, cutoff, radius, seed, proposals_per_move, 1
-    )
+    exchange_move = klass(N, ligand_idxs, group_idxs, params, DEFAULT_TEMP, cutoff, radius, seed, proposals_per_move, 1)
 
     np.testing.assert_array_equal(params, exchange_move.get_params())
 
@@ -486,7 +480,6 @@ def test_targeted_insertion_buckyball_edge_cases(
         water_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         radius,
         seed,
@@ -496,7 +489,7 @@ def test_targeted_insertion_buckyball_edge_cases(
     )
     assert bdem.last_log_probability() == 0.0, "First log probability expected to be zero"
 
-    ref_bdem = RefTIBDExchangeMove(nb.potential.beta, cutoff, params, water_idxs, DEFAULT_TEMP, ligand_idxs, radius)
+    ref_bdem = RefTIBDExchangeMove(cutoff, params, water_idxs, DEFAULT_TEMP, ligand_idxs, radius)
 
     verify_targeted_moves(all_group_idxs, bdem, ref_bdem, conf, box, moves, proposals_per_move, rtol, atol)
     assert all(x == moves for x in bdem.n_proposed())
@@ -561,7 +554,6 @@ def test_targeted_insertion_brd4_rbfe_with_context(
         water_idxs,
         np.array([water_params] * num_systems, dtype=precision),
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         radius,
         seed,
@@ -641,7 +633,6 @@ def test_tibd_exchange_deterministic_batch_moves(radius, proposals_per_move, bat
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         radius,
         seed,
@@ -655,7 +646,6 @@ def test_tibd_exchange_deterministic_batch_moves(radius, proposals_per_move, bat
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         radius,
         seed,
@@ -735,7 +725,6 @@ def test_targeted_insertion_buckyball_determinism(radius, proposals_per_move, ba
         water_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         radius,
         seed,
@@ -749,7 +738,6 @@ def test_targeted_insertion_buckyball_determinism(radius, proposals_per_move, ba
         water_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         radius,
         seed,
@@ -810,7 +798,6 @@ def test_tibd_exchange_deterministic_moves(radius, proposals_per_move, batch_siz
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         radius,
         seed,
@@ -824,7 +811,6 @@ def test_tibd_exchange_deterministic_moves(radius, proposals_per_move, batch_siz
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         radius,
         seed,
@@ -897,7 +883,6 @@ def test_targeted_moves_in_bulk_water(
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         radius,
         seed,
@@ -907,7 +892,7 @@ def test_targeted_moves_in_bulk_water(
     )
     assert bdem.last_log_probability() == 0.0, "First log probability expected to be zero"
 
-    ref_bdem = RefTIBDExchangeMove(nb.potential.beta, cutoff, params, group_idxs, DEFAULT_TEMP, center_group, radius)
+    ref_bdem = RefTIBDExchangeMove(cutoff, params, group_idxs, DEFAULT_TEMP, center_group, radius)
     verify_targeted_moves(
         all_group_idxs, bdem, ref_bdem, conf, box, total_num_proposals, proposals_per_move, rtol, atol
     )
@@ -962,7 +947,6 @@ def test_moves_with_three_waters(
         group_idxs,
         params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         cutoff,
         radius,
         seed,
@@ -972,7 +956,7 @@ def test_moves_with_three_waters(
     )
     assert bdem.last_log_probability() == 0.0, "First log probability expected to be zero"
 
-    ref_bdem = RefTIBDExchangeMove(nb.potential.beta, cutoff, params, group_idxs, DEFAULT_TEMP, center_group, radius)
+    ref_bdem = RefTIBDExchangeMove(cutoff, params, group_idxs, DEFAULT_TEMP, center_group, radius)
 
     verify_targeted_moves(
         all_group_idxs, bdem, ref_bdem, conf, box, total_num_proposals, proposals_per_move, rtol, atol
@@ -1024,7 +1008,6 @@ def test_targeted_moves_with_complex_and_ligand_in_brd4(
         klass = custom_ops.TIBDExchangeMove_f64
 
     ref_bdem = RefTIBDExchangeMove(
-        nb.potential.beta,
         nb.potential.cutoff,
         water_params,
         water_idxs,
@@ -1038,7 +1021,6 @@ def test_targeted_moves_with_complex_and_ligand_in_brd4(
         water_idxs,
         water_params,
         DEFAULT_TEMP,
-        nb.potential.beta,
         nb.potential.cutoff,
         radius,
         seed,
