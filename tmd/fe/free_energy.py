@@ -105,9 +105,6 @@ class HREXParams:
     n_frames_bisection: int
         Number of frames to sample using MD during the initial bisection phase used to determine lambda spacing
 
-    n_frames_per_iter: int
-        DEPRECATED, must be set to 1. Number of frames to sample using MD per HREX iteration.
-
     max_delta_states: int or None
         If given, number of neighbor states on either side of a given replica's initial state for which to compute
         potentials. This determines the maximum number of states that a replica can move from its initial state during
@@ -116,6 +113,9 @@ class HREXParams:
     optimize_target_overlap: float or None
         If given, optimize the lambda schedule out of the initial bisection phase to target a specific minimum overlap
         between all adjacent windows. Must be in the interval (0.0, 1.0) if provided.
+
+    rest_params: RESTParams or None
+       Parameters that control REST. Only compatible with SingleTopologyREST, will be ignored otherwise. 
     """
 
     n_frames_bisection: int = 100
