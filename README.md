@@ -39,6 +39,7 @@ pip install -r requirements.txt
 # If you are using the OpenEye AM1BCC charges additionally install OpenEye
 pip install --extra-index-url https://pypi.anaconda.org/OpenEye/simple openeye-toolkits
 
+# Add [mdtraj] if the goal is to run the ABFE code
 pip install .
 ```
 
@@ -48,7 +49,7 @@ pip install .
 
 ```shell
 pip install -r requirements.txt  # Install the pinned requirements
-pip install -e .[dev,test]
+pip install -e .[dev,test,mdtraj]
 ```
 
 ### Building Wheels

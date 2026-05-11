@@ -25,7 +25,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from tmd._vendored.pymbar.utils import kln_to_kn
-from tmd.constants import BOLTZ
+from tmd.constants import BOLTZ, NBParamIdx
 from tmd.fe import model_utils, topology
 from tmd.fe.bar import (
     bar_with_pessimistic_uncertainty,
@@ -35,6 +35,7 @@ from tmd.fe.bar import (
     sanitize_energies_for_bar,
     works_from_ukln,
 )
+from tmd.fe.interpolate import linear_interpolation, pad
 from tmd.fe.lambda_schedule import interpolate_pre_optimized_protocol
 from tmd.fe.plots import (
     plot_as_png_fxn,
@@ -567,7 +568,7 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
             HostConfig containing openmm System object to be deserialized.
 
         lamb: float
-            alchemical parameter controlling 4D decoupling
+            alchemical parameter controlling 4D decoupling and the ligand intermolecular charge
 
         Returns
         -------
@@ -582,8 +583,25 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
         )
 
         combined_params, combined_potentials = self._get_system_params_and_potentials(ff_params, hgt, lamb)
+        combined_params = list(combined_params)
+        if lamb > 0.0:
+            # Linearly decharge the ligand from lamb 0.0 -> 0.25
+            nb_params_idx = next(i for i, pot in enumerate(combined_potentials) if isinstance(pot, Nonbonded))
+            nb_params = combined_params[nb_params_idx]
+            nb_params = nb_params.at[len(host_config.conf) :, NBParamIdx.Q_IDX].set(
+                pad(
+                    linear_interpolation,
+                    nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX],
+                    np.zeros_like(nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX]),
+                    lamb,
+                    0.0,
+                    0.25,
+                )
+            )
+            combined_params[nb_params_idx] = nb_params  # type: ignore
+
         combined_masses = self._combine(ligand_masses, np.array(host_config.masses))
-        return combined_potentials, combined_params, combined_masses
+        return combined_potentials, tuple(combined_params), combined_masses
 
     def prepare_vacuum_edge(self, ff: Forcefield) -> tuple[tuple[Potential, ...], tuple, NDArray]:
         """

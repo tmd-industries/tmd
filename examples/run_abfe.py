@@ -33,21 +33,15 @@ from rdkit import Chem
 # This is needed for pickled mols to preserve their properties
 Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 
-from dataclasses import dataclass, replace
-from typing import Any, Self
+from dataclasses import replace
+from typing import Any
 
-import mdtraj
-from numpy.typing import NDArray
 from rbfe_common import COMPLEX_LEG, SOLVENT_LEG, compute_total_ns
 
 from tmd import potentials
-from tmd.constants import BOLTZ, DEFAULT_FF, DEFAULT_PRESSURE, DEFAULT_TEMP, KCAL_TO_KJ, NBParamIdx
+from tmd.constants import DEFAULT_FF, DEFAULT_PRESSURE, DEFAULT_TEMP, KCAL_TO_KJ
 from tmd.fe import model_utils
-from tmd.fe.absolute.restraints import (
-    select_ligand_atoms_baumann,
-    select_receptor_atoms_baumann,
-)
-from tmd.fe.cif_writer import build_openmm_topology
+from tmd.fe.absolute.topology import AbsoluteBindingFreeEnergy, RestraintParams
 from tmd.fe.free_energy import (
     AbsoluteFreeEnergy,
     HREXParams,
@@ -64,7 +58,6 @@ from tmd.fe.free_energy import (
     run_sims_bisection,
     sample_with_context_iter,
 )
-from tmd.fe.interpolate import linear_interpolation, pad
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_forward_and_reverse_dg,
@@ -93,204 +86,7 @@ from tmd.parallel.client import (
     iterate_completed_futures,
 )
 from tmd.parallel.utils import get_gpu_count
-from tmd.potentials import HarmonicAngle, HarmonicBond, Nonbonded, PeriodicTorsion
-from tmd.potentials.bonded import kahan_angle, signed_torsion_angle
-from tmd.potentials.jax_utils import delta_r
 from tmd.potentials.potential import get_potential_by_type
-
-Snapshot = tuple[NDArray, NDArray]
-
-
-def get_abfe_endstate_trajectory(topology, mol, snapshots: Snapshot):
-    combined_top = build_openmm_topology([topology, mol])
-    top = mdtraj.Topology.from_openmm(combined_top)
-    frames, boxes = snapshots
-    angles = [[90.0] * 3] * len(boxes)
-    lengths = [np.diag(box) for box in boxes]
-    traj = mdtraj.Trajectory(frames, top, unitcell_lengths=lengths, unitcell_angles=angles)
-    return traj
-
-
-@dataclass(frozen=True)
-class RestraintParams:
-    kb: float = 500  # bond restraint strength
-    ka: float = 200  # angle restraint
-    kd: float = 10  # dihedral restraint
-    on: float = 0.0625  # where in lambda schedule the restraints go to full strength
-
-
-class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
-    def __init__(self, rec_atoms, lig_atoms, cpx_coords, box, params, *args, **kwds):
-        super().__init__(*args, **kwds)
-        self.rec_atoms = rec_atoms
-        self.lig_atoms = lig_atoms
-        self.cpx_coords = cpx_coords
-        self.box = box
-        self.params = params
-
-    @classmethod
-    def create(cls, bt, host_config, tmtrj, rst_params) -> Self:
-        mol = bt.mol
-
-        # construct trajectory from snapshots aligned to final frame
-        # TODO: toss out initial 20% of frames?
-        snapshots = (tmtrj.frames, np.array(tmtrj.boxes))
-        trj = get_abfe_endstate_trajectory(host_config.omm_topology, mol, snapshots)
-        trj.image_molecules(inplace=True)
-        ref = trj[-1]
-        """
-        In the original implementation, rmsf was computed after aligning the
-        ligand-only trajectory to the initial ligand coordinates.  Here we
-        instead align the protein backbone using the final frame of the trajectory.
-        The motivation here is that we want ligand restraint points which are stable
-        relative to the protein starting point.
-        """
-        trj.superpose(ref, atom_indices=trj.topology.select("backbone"))
-        # use rmsf to filter restraint atoms
-        rmsf = mdtraj.rmsf(trj, ref)
-
-        # select ligand atoms
-        ligand_offset = trj.n_atoms - mol.GetNumAtoms()
-        lig_ids = select_ligand_atoms_baumann(mol, rmsf[ligand_offset:])
-        lig_ids = [i + ligand_offset for i in lig_ids]
-
-        # select receptor atoms
-        # FIXME: reuse the rmsf calculation instead of redoing it in this routine
-        rec_ids = select_receptor_atoms_baumann(trj, lig_ids)
-
-        pos = tmtrj.frames[-1]
-        box = tmtrj.boxes[-1]
-        return cls(rec_ids, lig_ids, pos, box, rst_params, mol, bt)
-
-    def get_bond_geometry(self):
-        """Get atom1, atom2, distance."""
-        i0 = [self.rec_atoms[0], self.lig_atoms[0]]
-        a0, b0 = self.cpx_coords[i0]
-        r0 = np.linalg.norm(delta_r(a0, b0, self.box))
-        return (i0, r0)
-
-    def get_bond_restraint(self, scale: float) -> tuple[HarmonicBond, NDArray]:
-        i0, r0 = self.get_bond_geometry()
-        fc = self.params.kb * scale
-
-        idxs = np.array([i0], dtype=np.int32)
-        params = np.array([[fc, r0]], dtype=np.float32)
-
-        return HarmonicBond(self.cpx_coords.shape[0], idxs), params
-
-    def get_angle_geometry(self):
-        """Get atom1, atom2, atom3, angle."""
-        rec = self.rec_atoms
-        lig = self.lig_atoms
-        i0 = [rec[1], rec[0], lig[0]]
-        i1 = [rec[0], lig[0], lig[1]]
-
-        pos = self.cpx_coords
-        t0 = kahan_angle(*pos[i0], 0, self.box)
-        t1 = kahan_angle(*pos[i1], 0, self.box)
-        return [(i0, t0), (i1, t1)]
-
-    def get_angle_restraint(self, scale: float) -> tuple[HarmonicAngle, NDArray]:
-        ((i0, t0), (i1, t1)) = self.get_angle_geometry()
-        fc = self.params.ka * scale
-
-        idxs = np.array([i0, i1], dtype=np.int32)
-        params = np.array([[fc, t0, 0], [fc, t1, 0]], dtype=np.float32)
-        return HarmonicAngle(self.cpx_coords.shape[0], idxs), params
-
-    def get_dihedral_geometry(self):
-        """Get atom1, atom2, atom3, atom4, angle."""
-        rec = self.rec_atoms
-        lig = self.lig_atoms
-        i0 = [rec[2], rec[1], rec[0], lig[0]]
-        i1 = [rec[1], rec[0], lig[0], lig[1]]
-        i2 = [rec[0], lig[0], lig[1], lig[2]]
-
-        pos = self.cpx_coords
-        p0 = signed_torsion_angle(*pos[i0], self.box)
-        p1 = signed_torsion_angle(*pos[i1], self.box)
-        p2 = signed_torsion_angle(*pos[i2], self.box)
-        return [(i0, p0), (i1, p1), (i2, p2)]
-
-    def get_dihedral_restraint(self, scale: float) -> tuple[PeriodicTorsion, NDArray]:
-        idxs_ = []
-        params_ = []
-        k = self.params.kd * scale
-        const = 0
-        for ids, phi in self.get_dihedral_geometry():
-            for period in range(1, 6 + 1):
-                phase = period * phi
-                fc = -k / period
-                params_.append([fc, phase, period])
-                idxs_.append(ids)
-                const += fc
-        # add a constant term to make restraint minimum have E=0
-        params_.append([-const, 0, 0])
-        idxs_.append(ids)
-
-        idxs = np.array(idxs_, dtype=np.int32)
-        params = np.array(params_, dtype=np.float32)
-        return PeriodicTorsion(self.cpx_coords.shape[0], idxs), params
-
-    def get_restraint_correction(self, temperature: float) -> float:
-        """Compute correction to FE from restraint.
-
-        https://pubs.acs.org/doi/10.1021/jp0217839
-        Equation 32
-        """
-        _, r0 = self.get_bond_geometry()
-        ((_, t0), (_, t1)) = self.get_angle_geometry()
-        s0 = np.sin(t0)
-        s1 = np.sin(t1)
-        V0 = 1660 * (0.1**3)  # 1M standard state in nm^3
-        kT = BOLTZ * temperature
-
-        kb = self.params.kb * 0.5  # TMD applies a factor of 0.5
-        ka = self.params.ka * 0.5  # TMD applies a factor of 0.5
-        kd = self.params.kd  # no prefactor I think
-
-        return -kT * np.log(8 * np.pi**2 * V0 * (kb * ka**2 * kd**3) ** 0.5 / (r0**2 * s0 * s1 * (2 * np.pi * kT) ** 3))
-
-    def prepare_host_edge(self, ff: Forcefield, host_config: HostConfig, lamb: float):
-        """Construct alchemical schedule.
-
-        lambda=0 -> fully coupled, no restraint
-        lambda=restraint_on: fully coupled, full restraint
-        lambda=1: decoupled, full restraint.
-        """
-        restraint_on = self.params.on
-        m = 1 / (1 - restraint_on)
-        b = 1 - m
-        hglamb = max(0, m * lamb + b)
-        ubps, params, masses = super().prepare_host_edge(ff, host_config, hglamb)
-        params = list(params)  # type: ignore
-
-        if hglamb > 0.0:
-            # Linearly decharge the ligand from lamb 0.0 -> 0.4
-            nb_params_idx = next(i for i, pot in enumerate(ubps) if isinstance(pot, Nonbonded))
-            nb_params = params[nb_params_idx]
-            nb_params = nb_params.at[len(host_config.conf) :, NBParamIdx.Q_IDX].set(
-                pad(
-                    linear_interpolation,
-                    nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX],
-                    np.zeros_like(nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX]),
-                    hglamb,
-                    0.0,
-                    0.25,
-                )
-            )
-            params[nb_params_idx] = nb_params  # type: ignore
-
-        scale = min(1, lamb / restraint_on)
-        # must use the same set of potentials in all windows, even if scale is zero
-        hb, hbp = self.get_bond_restraint(scale)
-        ha, hap = self.get_angle_restraint(scale)
-        dr, drp = self.get_dihedral_restraint(scale)
-
-        ubps = (*list(ubps), hb, ha, dr)
-        params = (*params, hbp, hap, drp)
-
-        return ubps, params, masses
 
 
 def write_result_csv(
@@ -525,9 +321,9 @@ def estimate_abfe_leg(
             ofs.write(generate_restraint_plot(mol, host_config, afe.lig_atoms, afe.rec_atoms))
 
         # get equilibrated coordinates and box
-        host_conf = afe.cpx_coords[: len(host_conf)]
-        set_romol_conf(afe.mol, afe.cpx_coords[len(host_conf) :])
-        host_config = replace(host_config, conf=host_conf, box=afe.box)
+        host_conf = afe.x0[: len(host_conf)]
+        set_romol_conf(afe.mol, afe.x0[len(host_conf) :])
+        host_config = replace(host_config, conf=host_conf, box=afe.box0)
     else:
         # Disable water sampling
         md_params = replace(md_params, water_sampling_params=None)
