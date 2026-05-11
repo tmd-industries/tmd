@@ -115,7 +115,7 @@ class HREXParams:
         between all adjacent windows. Must be in the interval (0.0, 1.0) if provided.
 
     rest_params: RESTParams or None
-       Parameters that control REST. Only compatible with SingleTopologyREST, will be ignored otherwise. 
+       Parameters that control REST. Only compatible with SingleTopologyREST, will be ignored otherwise.
     """
 
     n_frames_bisection: int = 100
