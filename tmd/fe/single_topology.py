@@ -41,7 +41,7 @@ from tmd.fe.dummy import (
     generate_dummy_group_assignments,
 )
 from tmd.fe.interpolate import pad
-from tmd.fe.lambda_schedule import construct_pre_optimized_relative_lambda_schedule
+from tmd.fe.lambda_schedule import construct_pre_optimized_w_coord_lambda_schedule
 from tmd.fe.system import GuestSystem, HostGuestSystem, HostSystem
 from tmd.fe.topology import exclude_all_ligand_ligand_ixns
 from tmd.ff import Forcefield
@@ -956,7 +956,7 @@ def interpolate_w_coord(w0: float | jax.Array, w1: float | jax.Array, lamb: floa
     lamb : float
         alchemical parameter
     """
-    lambdas = construct_pre_optimized_relative_lambda_schedule(None)
+    lambdas = construct_pre_optimized_w_coord_lambda_schedule(None)
     x = jnp.linspace(0.0, 1.0, len(lambdas))
     return jnp.where(
         w0 < w1,

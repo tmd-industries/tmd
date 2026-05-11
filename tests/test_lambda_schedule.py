@@ -17,6 +17,7 @@ import pytest
 
 from tmd.fe.lambda_schedule import (
     bisection_lambda_schedule,
+    construct_pre_optimized_relative_lambda_schedule,
     interpolate_pre_optimized_protocol,
     validate_lambda_schedule,
 )
@@ -77,3 +78,11 @@ def test_bisection_lambda_schedule(interval, n_windows):
         assert np.any(np.isclose(schedule, mid_point))
     differences = np.diff(schedule)
     assert np.allclose(differences, differences[0])
+
+
+def test_construct_pre_optimized_relative_lambda_schedule():
+    schedule = construct_pre_optimized_relative_lambda_schedule(None)
+    validate_lambda_schedule(schedule, 48)
+
+    schedule = construct_pre_optimized_relative_lambda_schedule(32)
+    validate_lambda_schedule(schedule, 32)
