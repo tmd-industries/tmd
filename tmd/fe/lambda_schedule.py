@@ -19,21 +19,28 @@ import numpy as np
 from numpy.typing import NDArray
 
 
-def validate_lambda_schedule(lambda_schedule: NDArray, num_windows: int):
-    """Must go monotonically from 0 to 1 in num_windows steps"""
-    assert lambda_schedule[0] == 0.0
-    assert lambda_schedule[-1] == 1.0
+def validate_lambda_schedule(lambda_schedule: NDArray, num_windows: int, min_lamb: float = 0.0, max_lamb: float = 1.0):
+    """Must go monotonically from min_lamb to max_lamb in num_windows steps"""
+    assert lambda_schedule[0] == min_lamb
+    assert lambda_schedule[-1] == max_lamb
     assert len(lambda_schedule) == num_windows
     assert ((lambda_schedule[1:] - lambda_schedule[:-1]) > 0).all()
 
 
-def interpolate_pre_optimized_protocol(pre_optimized_protocol: NDArray, num_windows: int, validate: bool = True):
-    xp = np.linspace(0, 1, len(pre_optimized_protocol))
-    x_interp = np.linspace(0, 1, num_windows)
-    lambda_schedule = np.interp(x_interp, xp, pre_optimized_protocol)
+def interpolate_pre_optimized_protocol(
+    pre_optimized_protocol: NDArray,
+    num_windows: int,
+    validate: bool = True,
+    min_lamb: float = 0.0,
+    max_lamb: float = 1.0,
+):
+    protocol_rescaled = min_lamb + pre_optimized_protocol * (max_lamb - min_lamb)
+    xp = np.linspace(min_lamb, max_lamb, len(pre_optimized_protocol))
+    x_interp = np.linspace(min_lamb, max_lamb, num_windows)
+    lambda_schedule = np.interp(x_interp, xp, protocol_rescaled)
 
     if validate:
-        validate_lambda_schedule(lambda_schedule, num_windows)
+        validate_lambda_schedule(lambda_schedule, num_windows, min_lamb, max_lamb)
 
     return lambda_schedule
 

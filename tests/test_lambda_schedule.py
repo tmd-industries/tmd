@@ -46,6 +46,31 @@ def test_validate_lambda_schedule():
             validate_lambda_schedule(truncated_schedule, K)
 
 
+@pytest.mark.parametrize("min_lamb, max_lamb", [(0.0, 1.0), (0.25, 0.75), (0.1, 0.9), (0.5, 1.0)])
+def test_validate_lambda_schedule_custom_bounds(min_lamb: float, max_lamb: float):
+    """check validate_lambda_schedule works with custom min/max lambda bounds"""
+
+    for K in [50, 64]:
+        good_lambda_schedule = np.linspace(min_lamb, max_lamb, K)
+        validate_lambda_schedule(good_lambda_schedule, K, min_lamb, max_lamb)
+
+        reversed_schedule = good_lambda_schedule[::-1]
+        with pytest.raises(AssertionError):
+            validate_lambda_schedule(reversed_schedule, K, min_lamb, max_lamb)
+
+        truncated_schedule = good_lambda_schedule[1:]
+        with pytest.raises(AssertionError):
+            validate_lambda_schedule(truncated_schedule, K, min_lamb, max_lamb)
+
+
+def test_validate_lambda_schedule_default_bounds():
+    """check that default bounds still work (backwards compatibility)"""
+    for K in [50, 64]:
+        good_lambda_schedule = np.linspace(0, 1, K)
+        validate_lambda_schedule(good_lambda_schedule, K)
+        validate_lambda_schedule(good_lambda_schedule, K, 0.0, 1.0)
+
+
 def test_interpolate_pre_optimized_protocol():
     linear = np.linspace(0, 1, 50)
     nonlinear = np.linspace(0, 1, 64) ** 2
@@ -59,6 +84,31 @@ def test_interpolate_pre_optimized_protocol():
         # produce valid protocols when downsampling
         reduced = interpolate_pre_optimized_protocol(sched, K // 2)
         validate_lambda_schedule(reduced, K // 2)
+
+
+@pytest.mark.parametrize("min_lamb, max_lamb", [(0.25, 0.75), (0.1, 0.9)])
+def test_interpolate_pre_optimized_protocol_custom_bounds(min_lamb: float, max_lamb: float):
+    """check interpolate_pre_optimized_protocol works with custom lambda bounds"""
+    linear = np.linspace(0, 1, 50)
+    nonlinear = np.linspace(0, 1, 64) ** 2
+
+    # linear schedule should produce linear output in target range
+    K = len(linear)
+    sched_prime = interpolate_pre_optimized_protocol(linear, K, min_lamb=min_lamb, max_lamb=max_lamb)
+    expected = np.linspace(min_lamb, max_lamb, K)
+    assert np.allclose(sched_prime, expected)
+
+    reduced = interpolate_pre_optimized_protocol(linear, K // 2, min_lamb=min_lamb, max_lamb=max_lamb)
+    validate_lambda_schedule(reduced, K // 2, min_lamb, max_lamb)
+
+    # nonlinear schedule should produce valid (nonlinear) output
+    K = len(nonlinear)
+    sched_prime = interpolate_pre_optimized_protocol(nonlinear, K, min_lamb=min_lamb, max_lamb=max_lamb)
+    validate_lambda_schedule(sched_prime, K, min_lamb, max_lamb)
+    assert not np.allclose(sched_prime, np.linspace(min_lamb, max_lamb, K))
+
+    reduced = interpolate_pre_optimized_protocol(nonlinear, K // 2, min_lamb=min_lamb, max_lamb=max_lamb)
+    validate_lambda_schedule(reduced, K // 2, min_lamb, max_lamb)
 
 
 @pytest.mark.parametrize("interval", [(0.0, 1.0), [0.25, 0.5]])
