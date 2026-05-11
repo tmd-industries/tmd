@@ -44,7 +44,11 @@ from tmd.fe.free_energy import (
     run_sims_hrex,
     run_sims_sequential,
 )
-from tmd.fe.lambda_schedule import bisection_lambda_schedule
+from tmd.fe.lambda_schedule import (
+    bisection_lambda_schedule,
+    construct_pre_optimized_relative_lambda_schedule,
+    interpolate_pre_optimized_protocol,
+)
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_hrex_replica_state_distribution_heatmap,
@@ -890,6 +894,7 @@ def estimate_relative_free_energy_bisection_hrex_impl(
     optimize_initial_state_fn: Callable[[InitialState], InitialState],
     combined_prefix: str,
     min_overlap: Optional[float] = None,
+    preoptimized_schedule: Sequence[float] | None = None,
 ) -> HREXSimulationResult:
     """
     Parameters
@@ -922,6 +927,9 @@ def estimate_relative_free_energy_bisection_hrex_impl(
     min_overlap: float or None, optional
         If not None, terminate bisection early when the BAR overlap between all neighboring pairs of states exceeds this
         value. When given, the final number of windows may be less than or equal to n_windows.
+
+    preoptimized_schedule: sequence of floats or None
+        A pre optimized lambda schedule to use when generating new windows. If none, will use linspace.
 
     Returns
     -------
@@ -961,8 +969,14 @@ def estimate_relative_free_energy_bisection_hrex_impl(
         # Always optimize during bisection
         make_optimized_initial_state_fn = lambda lamb: optimize_initial_state_fn(make_initial_state_fn(lamb))
 
+        initial_lambs = [lambda_min, lambda_max]
+        if batch_simulations and preoptimized_schedule is not None:
+            initial_lambs = interpolate_pre_optimized_protocol(
+                np.asarray(preoptimized_schedule), batch_size, min_lamb=lambda_min, max_lamb=lambda_max
+            )
+
         results, trajectories_by_state = run_sims_bisection(
-            [lambda_min, lambda_max],
+            initial_lambs,
             make_optimized_initial_state_fn,
             md_params_bisection,
             n_bisections=n_windows - 2,
@@ -1205,6 +1219,9 @@ def estimate_relative_free_energy_bisection_hrex(
     # TODO: rename prefix to postfix, or move to beginning of combined_prefix?
     combined_prefix = get_mol_name(mol_a) + "_" + get_mol_name(mol_b) + "_" + prefix
 
+    # Seed the bisection step with a lambda schedule fit to existing relative binding free energy runs
+    preoptimized_schedule = construct_pre_optimized_relative_lambda_schedule(None)
+
     return estimate_relative_free_energy_bisection_hrex_impl(
         temperature,
         lambda_min,
@@ -1215,6 +1232,7 @@ def estimate_relative_free_energy_bisection_hrex(
         make_optimized_initial_state_fn,
         combined_prefix,
         min_overlap,
+        preoptimized_schedule,
     )
 
 

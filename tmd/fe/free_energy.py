@@ -1347,7 +1347,9 @@ def _run_batched_bisection(
         lambdas_ = np.linspace(initial_lambdas[0], initial_lambdas[-1], batch_size)
     else:
         # if the user has provided initial lambdas, replace the nearest linear lambda with the provided lambda
-        lambdas_ = interpolate_pre_optimized_protocol(np.asarray(initial_lambdas), batch_size, validate=False)
+        lambdas_ = interpolate_pre_optimized_protocol(
+            np.asarray(initial_lambdas), batch_size, min_lamb=initial_lambdas[0], max_lamb=initial_lambdas[-1]
+        )
 
         def find_nearest_lamb(lamb: float):
             abs_delta = np.abs(lambdas_ - lamb)
