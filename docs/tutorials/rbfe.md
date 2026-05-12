@@ -13,7 +13,7 @@ For guidance on optimizing TMD performance with MPS or experimental batched MD, 
 RBFE requires defining a series of edges connecting different compounds. This example builds a graph with a k min cut of 3, providing a robust estimate of node predictions at the cost of increased runtime.
 
 ```
-python examples/build_rbfe_graph.py ../rbfe-datasets/jacs/tyk2/ligands.sdf tyk2_map.json --greedy_k_min_cut 3 --verbose
+python examples/build_rbfe_graph.py ../rbfe-datasets/datasets/jacs_set/tyk2/ligands.sdf tyk2_map.json --greedy_k_min_cut 3 --verbose
 ```
 
 > [!IMPORTANT]
@@ -51,7 +51,7 @@ Now, you can run the RBFE graph. This example uses 390 local MD steps followed b
 > Ensure you set `--mps_workers` to the appropriate value. 6 may be too low for larger GPUs and too high for smaller GPUs.
 
 ```
-python examples/run_rbfe_graph.py --sdf_path ../rbfe-datasets/jacs/tyk2/ligands.sdf --graph_json tyk2_map.json --pdb_path ../rbfe-datasets/jacs/tyk2/tyk2_structure.pdb --local_md_steps 390 --mps_workers 6 --forcefield smirnoff_2_0_0_amber_am1bcc.py --output_dir tyk2_rbfe_tutorial --legs complex solvent
+python examples/run_rbfe_graph.py --sdf_path ../rbfe-datasets/datasets/jacs_set/tyk2/ligands.sdf --graph_json tyk2_map.json --pdb_path ../rbfe-datasets/datasets/jacs_set/tyk2/tyk2_structure.pdb --local_md_steps 390 --mps_workers 6 --forcefield smirnoff_2_0_0_amber_am1bcc.py --output_dir tyk2_rbfe_tutorial --legs complex solvent
 ```
 
 On an RTX 4090, a typical Tyk2 graph should take approximately 6 hours, though this may take a day or two depending on the GPU.
