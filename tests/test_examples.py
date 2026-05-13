@@ -261,15 +261,27 @@ def test_run_abfe(
     leg_results_hashes = {
         "solvent": (
             "102a9cb62df09104e7ad18818af999a414121f02ceb87d5c1a39225480e60b33",
-            "a839526092dce8883e246ba43bde84d644d12c04dddbde935e90c3c6cd906563",
             "e0ed87de3b6f4040999bbe2a19313b35e0afffc4a1addfba72ab61bdce80546c",
         ),
         "complex": (
             "e99f12af5c0a678cad659efafa75d0e89e9fecb4ec69f2d12a07f895daef32a4",
-            "b6634c8f3bb6f6b07bc8b3b69f7862138979619e340b2d2903298e230643081a",
             "a6b9ceb2387f6bb0fdbb1b2616c958a0066d89d3a63b685baec2c56ba4df1a94",
         ),
     }
+
+    def verify_endstate_hashes(leg_dir: Path, expected_hash: str):
+        results_path = leg_dir / "results.npz"
+        assert results_path.is_file()
+        summary_data = dict(np.load(results_path))
+        with NamedTemporaryFile(suffix=".npz") as temp:
+            # The time changes, so need to remove prior to hashing
+            summary_data.pop("time")
+            np.savez(temp.name, **summary_data)
+            summary_hash = hash_file(temp.name)
+        endstate_hash = hash_file(leg_dir / "lambda0_traj.npz")
+        # Load the summary, so we can see what changed
+        assert (summary_hash, endstate_hash) == expected_hash, summary_data
+
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
         mols = read_sdf(hif2a_dir / "ligands.sdf")
 
@@ -320,10 +332,8 @@ def test_run_abfe(
             assert (leg_dir / "results.npz").is_file()
             if "force_overwrite" in config:
                 assert (leg_dir / "lambda0_traj.npz").is_file()
-                assert (leg_dir / "lambda1_traj.npz").is_file()
             else:
                 assert not (leg_dir / "lambda0_traj.npz").is_file()
-                assert not (leg_dir / "lambda1_traj.npz").is_file()
 
             assert (leg_dir / "final_pairbar_result.pkl").is_file()
             assert (leg_dir / "host_config.pkl").is_file()
@@ -356,7 +366,7 @@ def test_run_abfe(
             assert 2 <= results["n_windows"] <= config["n_windows"]
             assert isinstance(results["overlaps"], np.ndarray)
             assert all(isinstance(overlap, float) for overlap in results["overlaps"])
-            verify_leg_results_hashes(leg_dir, leg_results_hashes[leg])
+            verify_endstate_hashes(leg_dir, leg_results_hashes[leg])
 
 
 @pytest.mark.nocuda

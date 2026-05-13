@@ -270,7 +270,7 @@ def test_absolute_vacuum():
 
     unbound_potentials, sys_params, masses = afe.prepare_vacuum_edge(ff)
     assert np.all(masses == utils.get_mol_masses(mol))
-    np.testing.assert_array_almost_equal(afe.prepare_combined_coords(), utils.get_romol_conf(mol))
+    np.testing.assert_array_equal(afe.prepare_combined_coords(), utils.get_romol_conf(mol))
     assert set(type(pot) for pot in unbound_potentials) == {
         HarmonicBond,
         HarmonicAngle,
@@ -293,7 +293,7 @@ def test_absolute_solvent():
 
     host_config = builders.build_water_system(3.0, ff.water_ff, mols=[mol])
 
-    for lamb in [0.0, 0.25, 1.0]:
+    for lamb in [0.0, 0.25, 0.5, 1.0]:
         unbound_potentials, sys_params, masses = afe.prepare_host_edge(ff, host_config, lamb)
 
         assert np.all(masses == np.concatenate([host_config.masses, utils.get_mol_masses(mol)]))
@@ -310,7 +310,7 @@ def test_absolute_solvent():
         if lamb == 0.0:
             # In the 0.0 endstate, the intermolecular charge should be non-zero
             assert np.any(nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX] != 0.0)
-        elif lamb >= 0.25:
+        elif lamb >= 0.4:
             # Partially through the lambda schedule the intermolecular ligand charge is zeroed out
             assert np.all(nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX] == 0.0)
 

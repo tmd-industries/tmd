@@ -596,7 +596,7 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
                     np.zeros_like(nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX]),
                     lamb,
                     0.0,
-                    0.25,
+                    0.4,
                 )
             )
             combined_params[nb_params_idx] = nb_params  # type: ignore
