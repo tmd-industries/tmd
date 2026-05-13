@@ -1,7 +1,9 @@
+import numpy as np
 from rdkit import Chem
 from rdkit.Chem import Draw, rdDepictor
+
 from tmd.fe.utils import get_mol_name
-import numpy as np
+
 
 def generate_restraint_plot(
     mol: Chem.Mol, host_config, lig_atoms, rec_atoms, size: tuple[int, int] = (400, 400)
@@ -10,7 +12,6 @@ def generate_restraint_plot(
 
     Based off of https://greglandrum.github.io/rdkit-blog/posts/2025-09-26-drawing-interactions-1.html
     """
-    
 
     lig_with_interactions = Chem.RWMol(mol)
 
