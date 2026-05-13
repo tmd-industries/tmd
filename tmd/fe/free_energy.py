@@ -536,6 +536,7 @@ class BaseFreeEnergy:
 
 
 # this class is serializable.
+# DEBOGGLE: Move this to tmd.fe.absolute.free_energy
 class AbsoluteFreeEnergy(BaseFreeEnergy):
     def __init__(self, mol, top):
         """

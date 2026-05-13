@@ -41,7 +41,7 @@ from rbfe_common import COMPLEX_LEG, SOLVENT_LEG, compute_total_ns
 from tmd import potentials
 from tmd.constants import DEFAULT_FF, DEFAULT_PRESSURE, DEFAULT_TEMP, KCAL_TO_KJ
 from tmd.fe import model_utils
-from tmd.fe.absolute.topology import AbsoluteBindingFreeEnergy, RestraintParams
+from tmd.fe.absolute.free_energy import AbsoluteBindingFreeEnergy, RestraintParams
 from tmd.fe.absolute.plots import generate_restraint_plot
 from tmd.fe.free_energy import (
     AbsoluteFreeEnergy,
