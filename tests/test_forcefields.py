@@ -50,7 +50,10 @@ def test_serialization_of_ffs():
     for path in glob("tmd/ff/params/smirnoff_*.py"):
         handlers, protein_ff, water_ff = deserialize_handlers(open(path).read())
         ff = Forcefield.from_handlers(handlers, protein_ff=protein_ff, water_ff=water_ff)
-        assert ff.protein_ff == constants.DEFAULT_PROTEIN_FF
+        if "amber14" in path:
+            assert ff.protein_ff == "amber14/protein.ff14SB"
+        else:
+            assert ff.protein_ff == constants.DEFAULT_PROTEIN_FF
         assert ff.water_ff == constants.DEFAULT_WATER_FF
         for handler_name, handler in dataclasses.asdict(ff).items():
             if handler_name == "env_bcc_handle":
