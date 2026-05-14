@@ -839,6 +839,40 @@ def _find_fused_atoms(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> set[in
     return fused_atoms
 
 
+def _rings_remaped_to_c(mol_a: Chem.Mol, mol_b: Chem.Mol, mixin: AtomMapMixin) -> tuple[list[set[int]], list[set[int]]]:
+    rings_a = [set([int(mixin.a_to_c[idx]) for idx in ring_atoms]) for ring_atoms in mol_a.GetRingInfo().AtomRings()]
+    rings_b = [set([int(mixin.b_to_c[idx]) for idx in ring_atoms]) for ring_atoms in mol_b.GetRingInfo().AtomRings()]
+    return rings_a, rings_b
+
+
+def ring_aromaticity_changes(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> int:
+    """Counts the number of rings that go from being Aromatic to Non Aromatic or vice versa.
+
+    Returns
+    -------
+    int
+        The number of rings that change aromaticity
+    """
+    map_mixin = AtomMapMixin(mol_a, mol_b, core)
+
+    fused_atoms = _find_fused_atoms(mol_a, mol_b, core)
+    rings_a, rings_b = _rings_remaped_to_c(mol_a, mol_b, map_mixin)
+    rings_a = [ring_atoms.difference(fused_atoms) for ring_atoms in rings_a]
+    bonds_a = [bonds for bonds in mol_a.GetRingInfo().BondRings()]
+    rings_b = [ring_atoms.difference(fused_atoms) for ring_atoms in rings_b]
+    bonds_b = [bonds for bonds in mol_b.GetRingInfo().BondRings()]
+
+    aromaticity_changes = 0
+    for ring, bonds in zip(rings_a, bonds_a):
+        aromatic_ring_a = all([mol_a.GetBondWithIdx(bond).GetIsAromatic() for bond in bonds])
+        for comp_ring, comp_bonds in zip(rings_b, bonds_b):
+            if len(ring.intersection(comp_ring)) >= 1:
+                aromatic_ring_b = all([mol_b.GetBondWithIdx(bond).GetIsAromatic() for bond in comp_bonds])
+                if aromatic_ring_a != aromatic_ring_b:
+                    aromaticity_changes += 1
+    return aromaticity_changes
+
+
 def ring_size_changes(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> int:
     """Counts the number of ring size change transformation between two molecules given a core.
 
@@ -850,14 +884,9 @@ def ring_size_changes(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> int:
     map_mixin = AtomMapMixin(mol_a, mol_b, core)
 
     fused_atoms = _find_fused_atoms(mol_a, mol_b, core)
-    rings_a = [
-        set([int(map_mixin.a_to_c[idx]) for idx in ring_atoms]).difference(fused_atoms)
-        for ring_atoms in mol_a.GetRingInfo().AtomRings()
-    ]
-    rings_b = [
-        set([int(map_mixin.b_to_c[idx]) for idx in ring_atoms]).difference(fused_atoms)
-        for ring_atoms in mol_b.GetRingInfo().AtomRings()
-    ]
+    rings_a, rings_b = _rings_remaped_to_c(mol_a, mol_b, map_mixin)
+    rings_a = [ring_atoms.difference(fused_atoms) for ring_atoms in rings_a]
+    rings_b = [ring_atoms.difference(fused_atoms) for ring_atoms in rings_b]
 
     ring_size_changes = 0
     for ring in rings_a:
@@ -882,12 +911,7 @@ def ring_breaking_count(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> tupl
         The rings broken going from mol_a to mol_b and from mol_b to mol_a
     """
     map_mixin = AtomMapMixin(mol_a, mol_b, core)
-    rings_a = [
-        set([int(map_mixin.a_to_c[idx]) for idx in ring_atoms]) for ring_atoms in mol_a.GetRingInfo().AtomRings()
-    ]
-    rings_b = [
-        set([int(map_mixin.b_to_c[idx]) for idx in ring_atoms]) for ring_atoms in mol_b.GetRingInfo().AtomRings()
-    ]
+    rings_a, rings_b = _rings_remaped_to_c(mol_a, mol_b, map_mixin)
 
     candidates = []
     if len(rings_a) > 0 and len(rings_b) > 0:

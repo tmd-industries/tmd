@@ -1974,6 +1974,20 @@ def ref_ring_breaking_count(mol_a, mol_b, core) -> tuple[int, int]:
     return len(cycles_0 - cycles_1), len(cycles_1 - cycles_0)
 
 
+def test_ring_aromaticity_changes(hif2a_ligands):
+    mol_a = hif2a_ligands[0]
+    for mol_b in hif2a_ligands[1:]:
+        cores = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
+        core = cores[0]
+        assert atom_mapping.ring_aromaticity_changes(mol_a, mol_b, core) == 0
+
+    mol_a = ligand_from_smiles("C1CCCCC1")  # benzene
+    mol_b = ligand_from_smiles("c1ccccc1")  # cyclohexane
+    cores = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
+    core = cores[0]
+    assert atom_mapping.ring_aromaticity_changes(mol_a, mol_b, core) == 1
+
+
 def test_ring_size_changes(hif2a_ligands):
     mols_by_name = {get_mol_name(m): m for m in hif2a_ligands}
     mol_a = mols_by_name["224"]
