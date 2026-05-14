@@ -1974,6 +1974,33 @@ def ref_ring_breaking_count(mol_a, mol_b, core) -> tuple[int, int]:
     return len(cycles_0 - cycles_1), len(cycles_1 - cycles_0)
 
 
+def test_ring_size_changes(hif2a_ligands):
+    mols_by_name = {get_mol_name(m): m for m in hif2a_ligands}
+    mol_a = mols_by_name["224"]
+    mol_b = mols_by_name["84"]
+    cores = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
+    core = cores[0]
+
+    assert atom_mapping.ring_size_changes(mol_a, mol_b, core) == 1
+    assert atom_mapping.ring_size_changes(mol_b, mol_a, core[:, [1, 0]]) == 1
+
+    mol_a = mols_by_name["251"]
+    cores = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
+    core = cores[0]
+
+    assert atom_mapping.ring_size_changes(mol_a, mol_b, core) == 0
+    assert atom_mapping.ring_size_changes(mol_b, mol_a, core[:, [1, 0]]) == 0
+
+    napthelene = ligand_from_smiles("c1c2ccccc2ccc1")
+    indole = ligand_from_smiles("C12=C(C=CN2)C=CC=C1")
+
+    cores = atom_mapping.get_cores(napthelene, indole, **DEFAULT_ATOM_MAPPING_KWARGS)
+    core = cores[0]
+
+    assert atom_mapping.ring_size_changes(napthelene, indole, core) == 1
+    assert atom_mapping.ring_size_changes(indole, napthelene, core[:, [1, 0]]) == 1
+
+
 def test_ring_breaking_count(hif2a_ligands):
     mol_a = ligand_from_smiles("C1=CC=CC=C1")  # benzene
     mol_b = ligand_from_smiles("CC1=CC=CC=C1")  # benzene with a methyl

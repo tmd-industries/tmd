@@ -830,6 +830,43 @@ def get_num_dummy_atoms(mol_a, mol_b, core):
     return mol_a.GetNumAtoms() + mol_b.GetNumAtoms() - (2 * len(core))
 
 
+def _find_fused_atoms(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> set[int]:
+    pat = Chem.MolFromSmarts("[R&!R1]")
+    map_mixin = AtomMapMixin(mol_a, mol_b, core)
+    fused_atoms_a = set([map_mixin.a_to_c[atoms[0]] for atoms in mol_a.GetSubstructMatches(pat)])
+    fused_atoms_b = set([map_mixin.b_to_c[atoms[0]] for atoms in mol_b.GetSubstructMatches(pat)])
+    fused_atoms = fused_atoms_a.union(fused_atoms_b)
+    return fused_atoms
+
+
+def ring_size_changes(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> int:
+    """Counts the number of ring size change transformation between two molecules given a core.
+
+    Returns
+    -------
+    int
+        The number of ring size change transformation are taking place in the ligand
+    """
+    map_mixin = AtomMapMixin(mol_a, mol_b, core)
+
+    fused_atoms = _find_fused_atoms(mol_a, mol_b, core)
+    rings_a = [
+        set([int(map_mixin.a_to_c[idx]) for idx in ring_atoms]).difference(fused_atoms)
+        for ring_atoms in mol_a.GetRingInfo().AtomRings()
+    ]
+    rings_b = [
+        set([int(map_mixin.b_to_c[idx]) for idx in ring_atoms]).difference(fused_atoms)
+        for ring_atoms in mol_b.GetRingInfo().AtomRings()
+    ]
+
+    ring_size_changes = 0
+    for ring in rings_a:
+        for comp_ring in rings_b:
+            if len(ring.intersection(comp_ring)) >= 1 and len(ring) != len(comp_ring):
+                ring_size_changes += 1
+    return ring_size_changes
+
+
 def ring_breaking_count(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> tuple[int, int]:
     """Counts the number of rings broken going forward and reverse given a core. Does not count ring insertion/deletions.
 
