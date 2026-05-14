@@ -1,0 +1,50 @@
+# Development Related
+**/__pycache__/
+**/.Python/
+**/build/
+**/dist/
+**/*.egg-info/
+**/.coverage**
+**/coverage/
+**/.ipynb_checkpoints*/
+**/tests/
+**/.pytest*
+**/.mypy*
+**/.clang*
+**/.ruff*
+**/.github*
+**/.hypothesis/
+Dockerfile
+.dockerignore
+.gitlab-ci.yml
+pytest-artifacts/
+pytest.ini
+.pre-commit-config.yaml
+Makefile
+
+# Git Files
+**/.git*
+
+# Swap files
+**/*.swp
+**/*.swo
+
+# C extensions
+**/*.so
+
+# OS Files
+**/*.DS_Store
+
+# Licensing
+# If these files need to be in the final build, suggested to bind mount them in
+**/oe_license.txt
+
+# Files from tests
+**/*.svg
+**/*.pkl
+**/*.png
+**/*.npz
+
+# nsys files
+**/*.nsys-rep
+**/*.sqlite

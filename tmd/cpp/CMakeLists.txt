@@ -20,7 +20,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 project(tmd LANGUAGES CXX CUDA)
 
-find_package(Python 3.12...<4 COMPONENTS Interpreter Development REQUIRED)
+find_package(Python 3.12...<4 COMPONENTS Interpreter Development.Module REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 
 set(PYBIND11_PYTHON_VERSION ${Python_VERSION} CACHE STRING "Which version of python we're building wrappers against")
@@ -94,7 +94,7 @@ set_source_files_properties(
 
 
 # NO_EXTRAS is needed since cuda doesn't use flto
-pybind11_add_module(${LIBRARY_NAME} SHARED NO_EXTRAS
+pybind11_add_module(${LIBRARY_NAME} MODULE NO_EXTRAS
   src/fixed_point.hpp
   src/wrap_kernels.cpp
   src/mover.cu
