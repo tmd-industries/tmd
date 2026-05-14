@@ -586,7 +586,7 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
         combined_params, combined_potentials = self._get_system_params_and_potentials(ff_params, hgt, lamb)
         combined_params = list(combined_params)
         if lamb > 0.0:
-            # Linearly decharge the ligand from lamb 0.0 -> 0.4
+            # Linearly decharge the ligand from lamb 0.0 -> 0.15
             nb_params_idx = next(i for i, pot in enumerate(combined_potentials) if isinstance(pot, Nonbonded))
             nb_params = combined_params[nb_params_idx]
             nb_params = nb_params.at[len(host_config.conf) :, NBParamIdx.Q_IDX].set(
@@ -596,7 +596,18 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
                     np.zeros_like(nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX]),
                     lamb,
                     0.0,
-                    0.4,
+                    0.15,
+                )
+            )
+            dst_eps = nb_params[len(host_config.conf) :, NBParamIdx.LJ_EPS_IDX] / 3
+            nb_params = nb_params.at[len(host_config.conf) :, NBParamIdx.LJ_EPS_IDX].set(
+                pad(
+                    linear_interpolation,
+                    nb_params[len(host_config.conf) :, NBParamIdx.LJ_EPS_IDX],
+                    np.where(dst_eps > 0.02, dst_eps, 0.02),
+                    lamb,
+                    0.0,
+                    0.25,
                 )
             )
             combined_params[nb_params_idx] = nb_params  # type: ignore
