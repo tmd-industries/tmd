@@ -121,6 +121,11 @@ def main():
     parser.add_argument(
         "--solvent_padding", default=1.0, type=float, help="Padding to add to solvent boxes, defaults to 1.0 nanometer."
     )
+    parser.add_argument(
+        "--add_membrane",
+        action="store_true",
+        help="Add a POPC membrane to the protein. Refer to OpenMM for preparing proteins for adding Membranes",
+    )
     args = parser.parse_args()
 
     if COMPLEX_LEG in args.legs:
@@ -202,6 +207,7 @@ def main():
             True,  # Always write out the trajectories
             args.force_overwrite,
             water_box_size=water_box_size,
+            add_membrane=args.add_membrane,
         )
         futures.append(fut)
     leg_results = defaultdict(dict)
