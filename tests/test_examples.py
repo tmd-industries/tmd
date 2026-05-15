@@ -375,7 +375,7 @@ def test_run_abfe(
             "40260a127f1b2c5bbba09297245440d699e7220485618220d99a27407c1fefa8",
         ),
         "complex": (
-            "b2303038cf4607315e24fee802171a44e5e85a12528b64aba7dd852ccd4c916c",
+            "b406a8d1dde016ba2039969f018d348fb94f8e2383617e5f241fd04565847e15",
             "3becf5e6d398d2c2599ba03e024a33c9e43b19397acb0f01234173cd34f4aee2",
         ),
     }
