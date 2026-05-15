@@ -386,9 +386,10 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
         V0 = 1660 * (0.1**3)  # 1M standard state in nm^3
         kT = BOLTZ * temperature
 
-        kb = self.params.kb * 0.5  # TMD applies a factor of 0.5
-        ka = self.params.ka * 0.5  # TMD applies a factor of 0.5
-        kd = self.params.kd
+        kb = self.params.kb
+        ka = self.params.ka
+        # Account for multiple terms in the dihedral restraint
+        kd = self.params.kd * sum(range(1, 7))
 
         return -kT * np.log(8 * np.pi**2 * V0 * (kb * ka**2 * kd**3) ** 0.5 / (r0**2 * s0 * s1 * (2 * np.pi * kT) ** 3))
 
