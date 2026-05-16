@@ -1000,3 +1000,69 @@ def ring_breaking_count(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> tupl
             except nx.exception.NetworkXNoCycle:
                 pass
     return breaking_count[0], breaking_count[1]
+
+
+def filter_incomplete_rings(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> NDArray:
+    """Remove rings that are not completely mapped in the provided atom mapping"""
+    rings_a = [set([idx for idx in ring_atoms]) for ring_atoms in mol_a.GetRingInfo().AtomRings()]
+    rings_b = [set([idx for idx in ring_atoms]) for ring_atoms in mol_b.GetRingInfo().AtomRings()]
+
+    core_a = {int(a): idx for idx, a in enumerate(core[:, 0])}
+    core_b = {int(b): idx for idx, b in enumerate(core[:, 1])}
+
+    set_a = set(core_a.keys())
+    set_b = set(core_b.keys())
+
+    idxs_to_remove = set()
+
+    for ring in rings_a:
+        if len(ring.intersection(set_a)) != len(ring):
+            for core_atom in ring:
+                if core_atom in core_a:
+                    idxs_to_remove.add(core_a[core_atom])
+
+    for ring in rings_b:
+        if len(ring.intersection(set_b)) != len(ring):
+            for core_atom in ring:
+                if core_atom in core_b:
+                    idxs_to_remove.add(core_b[core_atom])
+
+    def construct_nx(mol: Chem.Mol, core_atoms: NDArray) -> nx.Graph:
+        g = nx.Graph()
+        for atom in core_atoms:
+            g.add_node(atom)
+        for bond in mol.GetBonds():
+            begin = bond.GetBeginAtomIdx()
+            end = bond.GetEndAtomIdx()
+            if begin in g.nodes and end in g.nodes:
+                g.add_edge(begin, end)
+        return g
+
+    if len(idxs_to_remove) > 0:
+
+        def remove_newly_disconnected(mol, core_atoms, core_to_idx):
+            graph = construct_nx(mol, core_atoms)
+            ref_cc = list(nx.connected_components(graph))
+            for idx in idxs_to_remove:
+                try:
+                    graph.remove_node(core_atoms[idx])
+                except nx.exception.NetworkXError:
+                    pass
+            new_cc = list(nx.connected_components(graph))
+            for cc in ref_cc:
+                # Remove all the newly generated connected components besides the largest
+                new_subsets = list(
+                    sorted([sub_cc for sub_cc in new_cc if sub_cc.issubset(cc)], key=lambda x: len(x), reverse=True)
+                )
+                offset = 1
+                if len(new_subsets[0]) == 1:
+                    offset = 0
+                for sub_cc in new_subsets[offset:]:
+                    for atom in sub_cc:
+                        idxs_to_remove.add(core_to_idx[atom])
+
+        remove_newly_disconnected(mol_a, core[:, 0], core_a)
+        remove_newly_disconnected(mol_b, core[:, 1], core_b)
+
+    idxs_to_keep = [i for i in range(len(core)) if i not in idxs_to_remove]
+    return core[idxs_to_keep]
