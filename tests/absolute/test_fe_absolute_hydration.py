@@ -23,7 +23,7 @@ from scipy.optimize import minimize
 
 from tmd import testsystems
 from tmd.constants import BOLTZ, KCAL_TO_KJ
-from tmd.fe import absolute_hydration
+from tmd.fe.absolute import hydration as absolute_hydration
 from tmd.fe.free_energy import LocalMDParams, MDParams
 from tmd.fe.reweighting import one_sided_exp
 from tmd.ff import Forcefield
