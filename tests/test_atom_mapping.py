@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import time
 from functools import partial
 from pathlib import Path
 
+import networkx as nx
 import numpy as np
 import pytest
 from common import ligand_from_smiles, make_polyphenylene
@@ -33,12 +34,16 @@ from tmd.fe.chiral_utils import (
     find_atom_map_chiral_conflicts,
 )
 from tmd.fe.mcgregor import MaxVisitsWarning, NoMappingError
+from tmd.fe.single_topology import SingleTopology
 from tmd.fe.utils import (
     get_mol_name,
     get_romol_conf,
     read_sdf,
+    set_mol_name,
     set_romol_conf,
 )
+from tmd.ff import Forcefield
+from tmd.graph_utils import convert_to_nx
 
 pytestmark = [pytest.mark.nocuda]
 
@@ -1949,3 +1954,188 @@ def test_heavy_matches_heavy_only_speed_up_hydrogen_matching():
 
     # The search space should be at least 10x larger for heavy_matches_heavy_only=False
     assert slow_diagnostics.total_nodes_visited > hmh_diagnostics.total_nodes_visited * 10.0
+
+
+def ref_ring_breaking_count(mol_a, mol_b, core) -> tuple[int, int]:
+    """Reference implementation of the ring_breaking_count function that uses the full intermediate
+    molecules.
+    """
+
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    st = SingleTopology(mol_a, mol_b, core, ff)
+
+    def get_cycle_basis(mol):
+        g = convert_to_nx(mol)
+        return {frozenset(cycle) for cycle in nx.minimum_cycle_basis(g)}
+
+    cycles_0 = get_cycle_basis(st.mol(0.0))
+    cycles_1 = get_cycle_basis(st.mol(1.0))
+
+    return len(cycles_0 - cycles_1), len(cycles_1 - cycles_0)
+
+
+def test_ring_aromaticity_changes(hif2a_ligands):
+    mol_a = hif2a_ligands[0]
+    for mol_b in hif2a_ligands[1:]:
+        cores = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
+        core = cores[0]
+        assert atom_mapping.ring_aromaticity_changes(mol_a, mol_b, core) == 0
+
+    mol_a = ligand_from_smiles("C1CCCCC1")  # benzene
+    mol_b = ligand_from_smiles("c1ccccc1")  # cyclohexane
+    cores = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
+    core = cores[0]
+    assert atom_mapping.ring_aromaticity_changes(mol_a, mol_b, core) == 1
+
+
+def test_ring_size_changes(hif2a_ligands):
+    mols_by_name = {get_mol_name(m): m for m in hif2a_ligands}
+    mol_a = mols_by_name["224"]
+    mol_b = mols_by_name["84"]
+    cores = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
+    core = cores[0]
+
+    assert atom_mapping.ring_size_changes(mol_a, mol_b, core) == 1
+    assert atom_mapping.ring_size_changes(mol_b, mol_a, core[:, [1, 0]]) == 1
+
+    mol_a = mols_by_name["251"]
+    cores = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
+    core = cores[0]
+
+    assert atom_mapping.ring_size_changes(mol_a, mol_b, core) == 0
+    assert atom_mapping.ring_size_changes(mol_b, mol_a, core[:, [1, 0]]) == 0
+
+    napthelene = ligand_from_smiles("c1c2ccccc2ccc1")
+    indole = ligand_from_smiles("C12=C(C=CN2)C=CC=C1")
+
+    cores = atom_mapping.get_cores(napthelene, indole, **DEFAULT_ATOM_MAPPING_KWARGS)
+    core = cores[0]
+
+    assert atom_mapping.ring_size_changes(napthelene, indole, core) == 1
+    assert atom_mapping.ring_size_changes(indole, napthelene, core[:, [1, 0]]) == 1
+
+
+def test_ring_breaking_count(hif2a_ligands):
+    mol_a = ligand_from_smiles("C1=CC=CC=C1")  # benzene
+    mol_b = ligand_from_smiles("CC1=CC=CC=C1")  # benzene with a methyl
+    AllChem.AlignMol(mol_b, mol_a, atomMap=[(0, 0), (4, 3)])
+
+    # Verify that with identity there are no ring breaks
+    identity_core = np.tile(np.arange(mol_a.GetNumAtoms())[:, None], (1, 2))  # identity
+    assert atom_mapping.ring_breaking_count(mol_a, mol_a, identity_core) == (0, 0)
+    assert atom_mapping.ring_breaking_count(mol_a, mol_a, identity_core[:, [1, 0]]) == (0, 0)
+    assert atom_mapping.ring_breaking_count(mol_a, mol_a, identity_core) == ref_ring_breaking_count(
+        mol_a, mol_a, identity_core
+    )
+
+    # Construct core over an incomplete ring, resulting in a ring forming in both endstates
+    core = np.array(
+        [
+            [3, 3],
+            [4, 4],
+            [5, 5],
+        ]
+    )
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == (1, 1)
+    assert atom_mapping.ring_breaking_count(mol_b, mol_a, core[:, [1, 0]]) == (1, 1)
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == ref_ring_breaking_count(mol_a, mol_b, core)
+
+    napthelene = ligand_from_smiles("c1c2ccccc2ccc1")
+    AllChem.AlignMol(napthelene, mol_a, atomMap=[(1, 1), (6, 0)])
+
+    core = np.array(
+        [
+            [1, 1],
+            [2, 2],
+            [3, 3],
+            [4, 4],
+            [5, 5],
+            [0, 6],
+        ]
+    )
+
+    assert atom_mapping.ring_breaking_count(mol_a, napthelene, core) == ref_ring_breaking_count(mol_a, napthelene, core)
+    assert atom_mapping.ring_breaking_count(mol_a, napthelene, core) == (0, 1)
+    assert atom_mapping.ring_breaking_count(napthelene, mol_a, core[:, [1, 0]]) == (1, 0)
+
+    mols_by_name = {get_mol_name(m): m for m in hif2a_ligands}
+    # This transformation will always form a ring
+    mol_a = mols_by_name["15"]
+    mol_b = mols_by_name["30"]
+    cores = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
+    core = cores[0]
+
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == (1, 0)
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == ref_ring_breaking_count(mol_a, mol_b, core)
+    assert atom_mapping.ring_breaking_count(mol_b, mol_a, core[:, [1, 0]]) == (0, 1)
+    assert atom_mapping.ring_breaking_count(mol_b, mol_a, core[:, [1, 0]]) == ref_ring_breaking_count(
+        mol_b, mol_a, core[:, [1, 0]]
+    )
+
+    # Will construct two pair of 3 ring systems of which only a single ring can be mapped
+    # with one atom in the second ring mapped. This means that the second ring is formed/broken (in both endstates)
+    # while the third ring is simply an insertion, which this function doesn't consider.
+    mol_a = make_polyphenylene(3, 0.0)
+    mol_b = make_polyphenylene(3, 90.0)
+
+    cores = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)
+    core = cores[0]
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == (0, 0)
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == ref_ring_breaking_count(mol_a, mol_b, core)
+
+    cores = atom_mapping.get_cores(mol_a, mol_b, **{**DEFAULT_ATOM_MAPPING_KWARGS, "max_connected_components": 2})
+    core = cores[0]
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == (1, 1)
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == ref_ring_breaking_count(mol_a, mol_b, core)
+
+    mol_a = Chem.MolFromMolBlock(
+        """bridgehead system
+  MJ240300
+
+  5  6  0  0  0  0  0  0  0  0999 V2000
+    1.2868    0.3797   -0.0018 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5802   -0.3964   -0.0438 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7505   -0.3790    0.0024 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7069    0.2170   -0.5741 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7711    0.1787    0.6173 C   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+  3  4  1  0  0  0  0
+  4  1  1  0  0  0  0
+  3  5  1  0  0  0  0
+  5  1  1  0  0  0  0
+M  END
+"""
+    )
+    mol_a = Chem.AddHs(mol_a)
+    mol_b = ligand_from_smiles("CCC")
+    set_mol_name(mol_b, "chain")
+    AllChem.EmbedMolecule(mol_a, randomSeed=2024)
+    AllChem.AlignMol(mol_b, mol_a, atomMap=[(0, 0), (1, 1), (2, 2)])
+
+    core = np.array(
+        [
+            [0, 0],
+            [1, 1],
+            [2, 2],
+        ]
+    )
+
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == ref_ring_breaking_count(mol_a, mol_b, core)
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == (2, 0)
+
+    mol_a = ligand_from_smiles("C1CC2=C(C1)C=CC=C2")
+    mol_b = ligand_from_smiles("C1=CC2=C(C=C1)C=CC=C2")
+
+    core = np.array(
+        [
+            [5, 1],
+            [6, 0],
+            [7, 5],
+            [8, 4],
+        ]
+    )
+    AllChem.AlignMol(mol_a, mol_b, atomMap=[(6, 0), (7, 5)])
+
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == (1, 1)
+    assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == ref_ring_breaking_count(mol_a, mol_b, core)
