@@ -223,8 +223,16 @@ def run_rbfe_leg(
     if core is None:
         core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
 
-    # Store top level data
+    from tmd.fe.atom_mapping import filter_incomplete_rings
+
     file_client.store(edge_path / "atom_mapping.svg", plot_atom_mapping_grid(mol_a, mol_b, core).encode("utf-8"))
+    core = filter_incomplete_rings(mol_a, mol_b, core)
+
+    # Store top level data
+    file_client.store(
+        edge_path / "atom_mapping_filtered.svg", plot_atom_mapping_grid(mol_a, mol_b, core).encode("utf-8")
+    )
+    # return {}
     with open(file_client.full_path(edge_path / "md_params.pkl"), "wb") as ofs:
         pickle.dump(md_params, ofs)
     with open(file_client.full_path(edge_path / "core.pkl"), "wb") as ofs:
