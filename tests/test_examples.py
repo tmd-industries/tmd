@@ -32,8 +32,9 @@ from rdkit import Chem
 
 from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF, KCAL_TO_KJ
 from tmd.fe.free_energy import assert_deep_eq
-from tmd.fe.utils import get_mol_experimental_value, read_sdf, read_sdf_mols_by_name
+from tmd.fe.utils import get_mol_experimental_value, get_mol_name, read_sdf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
+from tmd.utils import path_to_internal_file
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
@@ -97,8 +98,305 @@ def test_run_rbfe_graph_local(
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
         mols = read_sdf(hif2a_dir / "ligands.sdf")
 
+    config = dict(
+        pdb_path=hif2a_dir / "5tbm_prepared.pdb",
+        seed=seed,
+        n_eq_steps=n_eq_steps,
+        n_frames=n_frames,
+        n_windows=n_windows,
+        steps_per_frame=n_steps,
+        local_md_steps=n_steps,
+        forcefield=DEFAULT_FF,
+        mps_workers=mps_workers,
+        output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_graph_local_{seed}",
+        experimental_field="IC50[uM](SPA)",
+        experimental_units="uM",
+        force_overwrite=None,  # Force overwrite any existing data
+    )
+
+    temp_mols = NamedTemporaryFile(suffix=".sdf")
+    writer = Chem.SDWriter(temp_mols.name)
+    rng = np.random.default_rng(seed)
+    num_mols = 3
+    for i, mol in enumerate(rng.choice(mols, replace=False, size=num_mols)):
+        if i == num_mols - 1:
+            # One mol should not have an experimental field
+            mol.ClearProp(config["experimental_field"])
+        writer.write(mol)
+
+    writer.close()
+
+    mols_by_name = read_sdf_mols_by_name(temp_mols.name)
+
+    def verify_run(edges: Sequence[dict], output_dir: Path):
+        assert output_dir.is_dir()
+        leg_names = ["vacuum", "solvent", "complex"]
+        for edge in edges:
+            mol_a = edge["mol_a"]
+            mol_b = edge["mol_b"]
+            mol_dir = f"{mol_a}_{mol_b}"
+            edge_dir = output_dir / mol_dir
+            pair_by_name = read_sdf_mols_by_name(edge_dir / "mols.sdf")
+
+            assert len(pair_by_name) == 2
+            assert mol_a in pair_by_name
+            assert mol_b in pair_by_name
+            assert (edge_dir / "md_params.pkl").is_file()
+            assert (edge_dir / "atom_mapping.svg").is_file()
+            assert (edge_dir / "core.pkl").is_file()
+            assert (edge_dir / "ff.py").is_file()
+            assert (edge_dir / "rest_region.svg").is_file()
+
+            assert Forcefield.load_from_file(edge_dir / "ff.py") is not None
+
+            for leg in leg_names:
+                leg_dir = edge_dir / leg
+                assert leg_dir.is_dir()
+                assert (leg_dir / "results.npz").is_file()
+                if config.get("write_trajectories", False):
+                    assert (leg_dir / "lambda0_traj.npz").is_file()
+                    assert (leg_dir / "lambda1_traj.npz").is_file()
+                else:
+                    assert not (leg_dir / "lambda0_traj.npz").is_file()
+                    assert not (leg_dir / "lambda1_traj.npz").is_file()
+
+                assert (leg_dir / "final_pairbar_result.pkl").is_file()
+                if leg in ["solvent", "complex"]:
+                    assert (leg_dir / "host_config.pkl").is_file()
+                else:
+                    assert not (leg_dir / "host_config.pkl").is_file()
+                assert (leg_dir / "hrex_transition_matrix.png").is_file()
+                assert (leg_dir / "hrex_replica_state_distribution_heatmap.png").is_file()
+                assert (leg_dir / "dg_errors.png").is_file()
+                assert (leg_dir / "overlap_summary.png").is_file()
+                assert (leg_dir / "forward_and_reverse_dg.png").is_file()
+                if leg == "complex":
+                    assert (leg_dir / "water_sampling_acceptances.png").is_file()
+
+                results = np.load(str(leg_dir / "results.npz"))
+                assert results["pred_dg"].size == 1
+                assert results["pred_dg"].dtype == np.float64
+                assert results["pred_dg"] != 0.0
+
+                assert results["pred_dg_err"].size == 1
+                assert results["pred_dg_err"].dtype == np.float64
+                assert results["pred_dg_err"] != 0.0
+
+                assert results["n_windows"].size == 1
+                assert results["n_windows"].dtype == np.intp
+                assert 2 <= results["n_windows"] <= config["n_windows"]
+                assert isinstance(results["overlaps"], np.ndarray)
+                assert all(isinstance(overlap, float) for overlap in results["overlaps"])
+        assert (output_dir / "dg_results.csv").is_file()
+        dg_rows = list(DictReader(open(output_dir / "dg_results.csv")))
+        assert len(dg_rows) == num_mols
+        expected_dg_keys = {"mol", "smiles", "pred_dg (kcal/mol)", "pred_dg_err (kcal/mol)", "exp_dg (kcal/mol)"}
+        for row in dg_rows:
+            assert set(row.keys()) == expected_dg_keys
+            assert len(row["mol"]) > 0
+            assert len(row["smiles"]) > 0
+            exp_dg = row["exp_dg (kcal/mol)"]
+            if exp_dg != "":
+                assert np.isfinite(float(exp_dg))
+                mol = mols_by_name[row["mol"]]
+                ref_exp = (
+                    get_mol_experimental_value(mol, config["experimental_field"], config["experimental_units"])
+                    / KCAL_TO_KJ
+                )
+                np.testing.assert_almost_equal(float(exp_dg), ref_exp)
+
+        assert (output_dir / "ddg_results.csv").is_file()
+        ddg_rows = list(DictReader(open(output_dir / "ddg_results.csv")))
+        expected_ddg_keys = {
+            "mol_a",
+            "mol_b",
+            "pred_ddg (kcal/mol)",
+            "pred_ddg_err (kcal/mol)",
+            "exp_ddg (kcal/mol)",
+            "mle_ddg (kcal/mol)",
+            "mle_ddg_err (kcal/mol)",
+        }
+        for leg in leg_names:
+            expected_ddg_keys.add(f"{leg}_pred_dg (kcal/mol)")
+            expected_ddg_keys.add(f"{leg}_pred_dg_err (kcal/mol)")
+        for row in ddg_rows:
+            assert set(row.keys()) == expected_ddg_keys
+            assert len(row["mol_a"]) > 0
+            assert len(row["mol_b"]) > 0
+            exp_ddg = row["exp_ddg (kcal/mol)"]
+            if exp_ddg != "":
+                assert np.isfinite(float(exp_ddg))
+
+    with NamedTemporaryFile(suffix=".json") as temp:
+        # Build a graph
+        proc = run_example("build_rbfe_graph.py", [temp_mols.name, temp.name])
+        assert proc.returncode == 0
+        with open(temp.name) as ifs:
+            edges = json.load(ifs)
+            assert len(edges) == 3
+            assert all(isinstance(edge, dict) for edge in edges)
+            for expected_key in ["mol_a", "mol_b", "core"]:
+                assert all(expected_key in edge for edge in edges)
+        config["sdf_path"] = temp_mols.name
+        config["graph_json"] = temp.name
+        proc = run_example("run_rbfe_graph.py", get_cli_args(config))
+        assert proc.returncode == 0
+        verify_run(edges, Path(config["output_dir"]))
+
+
+@pytest.mark.parametrize(
+    "n_steps, n_windows, n_frames, n_eq_steps, mps_workers",
+    [(100, 4, 50, 0, 3)],
+)
+@pytest.mark.parametrize("seed", [2026])
+def test_run_rbfe_graph_gpcr_with_membrane_local(
+    n_steps,
+    n_windows,
+    n_frames,
+    n_eq_steps,
+    mps_workers,
+    seed,
+):
+    """Note that this is not bitwise deterministic because building the membrane system is not deterministic"""
+    with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "ligands.sdf") as sdf_path:
+        mols = read_sdf(sdf_path)
+
+    with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "a2a_hip278.pdb") as pdb_path:
         config = dict(
-            pdb_path=hif2a_dir / "5tbm_prepared.pdb",
+            pdb_path=str(pdb_path),
+            seed=seed,
+            n_eq_steps=n_eq_steps,
+            n_frames=n_frames,
+            n_windows=n_windows,
+            steps_per_frame=n_steps,
+            local_md_steps=n_steps,
+            forcefield="smirnoff_2_0_0_amber_am1ccc_amber14.py",
+            mps_workers=mps_workers,
+            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_graph_local_gpcr_{seed}",
+            experimental_field="r_exp_dg",
+            experimental_units="kcal/mol",
+            add_membrane=None,  # Add a membrane to the protein
+            legs="complex",
+            force_overwrite=None,  # Force overwrite any existing data
+        )
+
+    temp_mols = NamedTemporaryFile(suffix=".sdf")
+    writer = Chem.SDWriter(temp_mols.name)
+    rng = np.random.default_rng(seed)
+    num_mols = 3
+    for i, mol in enumerate(rng.choice(mols, replace=False, size=num_mols)):
+        if i == num_mols - 1:
+            # One mol should not have an experimental field
+            mol.ClearProp(config["experimental_field"])
+        writer.write(mol)
+
+    writer.close()
+
+    def verify_run(edges: Sequence[dict], output_dir: Path):
+        assert output_dir.is_dir()
+        leg_names = ["complex"]
+        for edge in edges:
+            mol_a = edge["mol_a"]
+            mol_b = edge["mol_b"]
+            mol_dir = f"{mol_a}_{mol_b}"
+            edge_dir = output_dir / mol_dir
+            pair_by_name = read_sdf_mols_by_name(edge_dir / "mols.sdf")
+
+            assert len(pair_by_name) == 2
+            assert mol_a in pair_by_name
+            assert mol_b in pair_by_name
+            assert (edge_dir / "md_params.pkl").is_file()
+            assert (edge_dir / "atom_mapping.svg").is_file()
+            assert (edge_dir / "core.pkl").is_file()
+            assert (edge_dir / "ff.py").is_file()
+            assert (edge_dir / "rest_region.svg").is_file()
+
+            assert Forcefield.load_from_file(edge_dir / "ff.py") is not None
+
+            for leg in leg_names:
+                leg_dir = edge_dir / leg
+                with open(leg_dir / "host_config.pkl", "rb") as ifs:
+                    host_config = pickle.load(ifs)
+                assert host_config.num_membrane_atoms > 20000
+
+        assert (output_dir / "ddg_results.csv").is_file()
+        ddg_rows = list(DictReader(open(output_dir / "ddg_results.csv")))
+        expected_ddg_keys = {
+            "mol_a",
+            "mol_b",
+            "exp_ddg (kcal/mol)",
+        }
+        for leg in leg_names:
+            expected_ddg_keys.add(f"{leg}_pred_dg (kcal/mol)")
+            expected_ddg_keys.add(f"{leg}_pred_dg_err (kcal/mol)")
+        for row in ddg_rows:
+            assert set(row.keys()) == expected_ddg_keys
+            assert len(row["mol_a"]) > 0
+            assert len(row["mol_b"]) > 0
+            exp_ddg = row["exp_ddg (kcal/mol)"]
+            if exp_ddg != "":
+                assert np.isfinite(float(exp_ddg))
+
+    with NamedTemporaryFile(suffix=".json") as temp:
+        # Build a graph
+        proc = run_example("build_rbfe_graph.py", [temp_mols.name, temp.name])
+        assert proc.returncode == 0
+        with open(temp.name) as ifs:
+            edges = json.load(ifs)
+            assert len(edges) == 3
+            assert all(isinstance(edge, dict) for edge in edges)
+            for expected_key in ["mol_a", "mol_b", "core"]:
+                assert all(expected_key in edge for edge in edges)
+        config["sdf_path"] = temp_mols.name
+        config["graph_json"] = temp.name
+        proc = run_example("run_rbfe_graph.py", get_cli_args(config))
+        assert proc.returncode == 0
+        verify_run(edges, Path(config["output_dir"]))
+
+
+@pytest.mark.fixed_output
+@pytest.mark.parametrize(
+    "leg, n_steps, n_windows, n_frames, n_eq_steps, mps_workers",
+    [("solvent", 100, 4, 50, 0, 2), ("complex", 100, 4, 50, 0, 2)],
+)
+@pytest.mark.parametrize("seed", [2025])
+def test_run_abfe(
+    leg,
+    n_steps,
+    n_windows,
+    n_frames,
+    n_eq_steps,
+    mps_workers,
+    seed,
+):
+    leg_results_hashes = {
+        "solvent": (
+            "e759e03ef2c0f77bce80c69efe8115f498b538b08770bb743a112979e269014b",
+            "40260a127f1b2c5bbba09297245440d699e7220485618220d99a27407c1fefa8",
+        ),
+        "complex": (
+            "b406a8d1dde016ba2039969f018d348fb94f8e2383617e5f241fd04565847e15",
+            "3becf5e6d398d2c2599ba03e024a33c9e43b19397acb0f01234173cd34f4aee2",
+        ),
+    }
+
+    def verify_endstate_hashes(leg_dir: Path, expected_hash: str):
+        results_path = leg_dir / "results.npz"
+        assert results_path.is_file()
+        summary_data = dict(np.load(results_path))
+        with NamedTemporaryFile(suffix=".npz") as temp:
+            # The time changes, so need to remove prior to hashing
+            summary_data.pop("time")
+            np.savez(temp.name, **summary_data)
+            summary_hash = hash_file(temp.name)
+        endstate_hash = hash_file(leg_dir / "lambda0_traj.npz")
+        # Load the summary, so we can see what changed
+        assert (summary_hash, endstate_hash) == expected_hash, summary_data
+
+    with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
+        mols = read_sdf(hif2a_dir / "ligands.sdf")
+
+        config = dict(
             seed=seed,
             n_eq_steps=n_eq_steps,
             n_frames=n_frames,
@@ -107,140 +405,79 @@ def test_run_rbfe_graph_local(
             local_md_steps=n_steps,
             forcefield=DEFAULT_FF,
             mps_workers=mps_workers,
-            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_graph_local_{seed}",
+            output_dir=f"{ARTIFACT_DIR_NAME}/abfe_graph_local_{seed}",
             experimental_field="IC50[uM](SPA)",
             experimental_units="uM",
-            force_overwrite=None,  # Force overwrite any existing data
+            legs=leg,
+            force_overwrite=None,
+            store_trajectories=None,
+            target_overlap=0.1,
+            min_overlap=0.1,
         )
 
-        temp_mols = NamedTemporaryFile(suffix=".sdf")
-        writer = Chem.SDWriter(temp_mols.name)
+        if leg == "complex":
+            config["pdb_path"] = hif2a_dir / "5tbm_prepared.pdb"
+
         rng = np.random.default_rng(seed)
-        num_mols = 3
-        for i, mol in enumerate(rng.choice(mols, replace=False, size=num_mols)):
-            if i == num_mols - 1:
-                # One mol should not have an experimental field
-                mol.ClearProp(config["experimental_field"])
-            writer.write(mol)
+        mols_to_run = rng.choice(mols, replace=False, size=1)
+        with NamedTemporaryFile(suffix=".sdf") as temp_mols:
+            with Chem.SDWriter(temp_mols.name) as writer:
+                for mol in mols_to_run:
+                    writer.write(mol)
 
-        writer.close()
-
-        mols_by_name = read_sdf_mols_by_name(temp_mols.name)
-
-        def verify_run(edges: Sequence[dict], output_dir: Path):
-            assert output_dir.is_dir()
-            leg_names = ["vacuum", "solvent", "complex"]
-            for edge in edges:
-                mol_a = edge["mol_a"]
-                mol_b = edge["mol_b"]
-                mol_dir = f"{mol_a}_{mol_b}"
-                edge_dir = output_dir / mol_dir
-                pair_by_name = read_sdf_mols_by_name(edge_dir / "mols.sdf")
-
-                assert len(pair_by_name) == 2
-                assert mol_a in pair_by_name
-                assert mol_b in pair_by_name
-                assert (edge_dir / "md_params.pkl").is_file()
-                assert (edge_dir / "atom_mapping.svg").is_file()
-                assert (edge_dir / "core.pkl").is_file()
-                assert (edge_dir / "ff.py").is_file()
-                assert (edge_dir / "rest_region.svg").is_file()
-
-                assert Forcefield.load_from_file(edge_dir / "ff.py") is not None
-
-                for leg in leg_names:
-                    leg_dir = edge_dir / leg
-                    assert leg_dir.is_dir()
-                    assert (leg_dir / "results.npz").is_file()
-                    if config.get("write_trajectories", False):
-                        assert (leg_dir / "lambda0_traj.npz").is_file()
-                        assert (leg_dir / "lambda1_traj.npz").is_file()
-                    else:
-                        assert not (leg_dir / "lambda0_traj.npz").is_file()
-                        assert not (leg_dir / "lambda1_traj.npz").is_file()
-
-                    assert (leg_dir / "final_pairbar_result.pkl").is_file()
-                    if leg in ["solvent", "complex"]:
-                        assert (leg_dir / "host_config.pkl").is_file()
-                    else:
-                        assert not (leg_dir / "host_config.pkl").is_file()
-                    assert (leg_dir / "hrex_transition_matrix.png").is_file()
-                    assert (leg_dir / "hrex_replica_state_distribution_heatmap.png").is_file()
-                    assert (leg_dir / "dg_errors.png").is_file()
-                    assert (leg_dir / "overlap_summary.png").is_file()
-                    assert (leg_dir / "forward_and_reverse_dg.png").is_file()
-                    if leg == "complex":
-                        assert (leg_dir / "water_sampling_acceptances.png").is_file()
-
-                    results = np.load(str(leg_dir / "results.npz"))
-                    assert results["pred_dg"].size == 1
-                    assert results["pred_dg"].dtype == np.float64
-                    assert results["pred_dg"] != 0.0
-
-                    assert results["pred_dg_err"].size == 1
-                    assert results["pred_dg_err"].dtype == np.float64
-                    assert results["pred_dg_err"] != 0.0
-
-                    assert results["n_windows"].size == 1
-                    assert results["n_windows"].dtype == np.intp
-                    assert 2 <= results["n_windows"] <= config["n_windows"]
-                    assert isinstance(results["overlaps"], np.ndarray)
-                    assert all(isinstance(overlap, float) for overlap in results["overlaps"])
-            assert (output_dir / "dg_results.csv").is_file()
-            dg_rows = list(DictReader(open(output_dir / "dg_results.csv")))
-            assert len(dg_rows) == num_mols
-            expected_dg_keys = {"mol", "smiles", "pred_dg (kcal/mol)", "pred_dg_err (kcal/mol)", "exp_dg (kcal/mol)"}
-            for row in dg_rows:
-                assert set(row.keys()) == expected_dg_keys
-                assert len(row["mol"]) > 0
-                assert len(row["smiles"]) > 0
-                exp_dg = row["exp_dg (kcal/mol)"]
-                if exp_dg != "":
-                    assert np.isfinite(float(exp_dg))
-                    mol = mols_by_name[row["mol"]]
-                    ref_exp = (
-                        get_mol_experimental_value(mol, config["experimental_field"], config["experimental_units"])
-                        / KCAL_TO_KJ
-                    )
-                    np.testing.assert_almost_equal(float(exp_dg), ref_exp)
-
-            assert (output_dir / "ddg_results.csv").is_file()
-            ddg_rows = list(DictReader(open(output_dir / "ddg_results.csv")))
-            expected_ddg_keys = {
-                "mol_a",
-                "mol_b",
-                "pred_ddg (kcal/mol)",
-                "pred_ddg_err (kcal/mol)",
-                "exp_ddg (kcal/mol)",
-                "mle_ddg (kcal/mol)",
-                "mle_ddg_err (kcal/mol)",
-            }
-            for leg in leg_names:
-                expected_ddg_keys.add(f"{leg}_pred_dg (kcal/mol)")
-                expected_ddg_keys.add(f"{leg}_pred_dg_err (kcal/mol)")
-            for row in ddg_rows:
-                assert set(row.keys()) == expected_ddg_keys
-                assert len(row["mol_a"]) > 0
-                assert len(row["mol_b"]) > 0
-                exp_ddg = row["exp_ddg (kcal/mol)"]
-                if exp_ddg != "":
-                    assert np.isfinite(float(exp_ddg))
-
-        with NamedTemporaryFile(suffix=".json") as temp:
-            # Build a graph
-            proc = run_example("build_rbfe_graph.py", [temp_mols.name, temp.name])
-            assert proc.returncode == 0
-            with open(temp.name) as ifs:
-                edges = json.load(ifs)
-                assert len(edges) == 3
-                assert all(isinstance(edge, dict) for edge in edges)
-                for expected_key in ["mol_a", "mol_b", "core"]:
-                    assert all(expected_key in edge for edge in edges)
             config["sdf_path"] = temp_mols.name
-            config["graph_json"] = temp.name
-            proc = run_example("run_rbfe_graph.py", get_cli_args(config))
+            proc = run_example("run_abfe.py", get_cli_args(config))
             assert proc.returncode == 0
-            verify_run(edges, Path(config["output_dir"]))
+
+        output_dir = Path(config["output_dir"])
+        assert Forcefield.load_from_file(output_dir / "ff.py") is not None
+        assert output_dir.is_dir()
+        assert len(mols_to_run) == 1
+        for mol in mols_to_run:
+            mol_dir = output_dir / get_mol_name(mol)
+            mols_by_name = read_sdf_mols_by_name(mol_dir / "mol.sdf")
+            assert len(mols_by_name) == 1
+            assert (mol_dir / "md_params.pkl").is_file()
+            leg_dir = mol_dir / leg
+
+            assert (leg_dir / "results.npz").is_file()
+            if "force_overwrite" in config:
+                assert (leg_dir / "lambda0_traj.npz").is_file()
+            else:
+                assert not (leg_dir / "lambda0_traj.npz").is_file()
+
+            assert (leg_dir / "final_pairbar_result.pkl").is_file()
+            assert (leg_dir / "host_config.pkl").is_file()
+            assert (leg_dir / "hrex_transition_matrix.png").is_file()
+            assert (leg_dir / "hrex_replica_state_distribution_heatmap.png").is_file()
+            assert (leg_dir / "dg_errors.png").is_file()
+            assert (leg_dir / "overlap_summary.png").is_file()
+            assert (leg_dir / "forward_and_reverse_dg.png").is_file()
+            if leg == "complex":
+                assert (leg_dir / "water_sampling_acceptances.png").is_file()
+
+            results = np.load(str(leg_dir / "results.npz"))
+            assert results["pred_dg"].size == 1
+            assert results["pred_dg"].dtype in (np.float64, np.float32)
+            assert results["pred_dg"] != 0.0
+
+            assert results["pred_dg_err"].size == 1
+            assert results["pred_dg_err"].dtype in (np.float64, np.float32)
+            assert results["pred_dg_err"] != 0.0
+
+            if leg == "complex":
+                assert results["correction"].size == 1
+                assert results["correction"].dtype in (np.float64, np.float32)
+                assert results["correction"] != 0.0
+            else:
+                assert "correction" not in results
+
+            assert results["n_windows"].size == 1
+            assert results["n_windows"].dtype == np.intp
+            assert 2 <= results["n_windows"] <= config["n_windows"]
+            assert isinstance(results["overlaps"], np.ndarray)
+            assert all(isinstance(overlap, float) for overlap in results["overlaps"])
+            verify_endstate_hashes(leg_dir, leg_results_hashes[leg])
 
 
 @pytest.mark.nocuda
