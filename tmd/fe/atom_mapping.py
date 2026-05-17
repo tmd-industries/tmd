@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ from functools import partial
 from itertools import combinations, permutations
 from typing import Optional
 
+import networkx as nx
 import numpy as np
 from numpy.typing import NDArray
 from rdkit import Chem
@@ -29,6 +30,7 @@ from tmd.fe.chiral_utils import (
     has_chiral_atom_flips,
     setup_find_flipped_planar_torsions,
 )
+from tmd.fe.single_topology import AtomMapFlags, AtomMapMixin
 from tmd.fe.utils import get_romol_bonds, get_romol_conf
 
 # (ytz): Just like how one should never re-write an MD engine, one should never rewrite an MCS library.
@@ -826,3 +828,175 @@ def remove_cores_smaller_than_largest(cores):
 
 def get_num_dummy_atoms(mol_a, mol_b, core):
     return mol_a.GetNumAtoms() + mol_b.GetNumAtoms() - (2 * len(core))
+
+
+def _find_fused_atoms(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> set[int]:
+    pat = Chem.MolFromSmarts("[R&!R1]")
+    map_mixin = AtomMapMixin(mol_a, mol_b, core)
+    fused_atoms_a = set([map_mixin.a_to_c[atoms[0]] for atoms in mol_a.GetSubstructMatches(pat)])
+    fused_atoms_b = set([map_mixin.b_to_c[atoms[0]] for atoms in mol_b.GetSubstructMatches(pat)])
+    fused_atoms = fused_atoms_a.union(fused_atoms_b)
+    return fused_atoms
+
+
+def _rings_remaped_to_c(mol_a: Chem.Mol, mol_b: Chem.Mol, mixin: AtomMapMixin) -> tuple[list[set[int]], list[set[int]]]:
+    rings_a = [set([int(mixin.a_to_c[idx]) for idx in ring_atoms]) for ring_atoms in mol_a.GetRingInfo().AtomRings()]
+    rings_b = [set([int(mixin.b_to_c[idx]) for idx in ring_atoms]) for ring_atoms in mol_b.GetRingInfo().AtomRings()]
+    return rings_a, rings_b
+
+
+def ring_aromaticity_changes(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> int:
+    """Counts the number of rings that go from being Aromatic to Non Aromatic or vice versa.
+
+    Returns
+    -------
+    int
+        The number of rings that change aromaticity
+    """
+    map_mixin = AtomMapMixin(mol_a, mol_b, core)
+
+    fused_atoms = _find_fused_atoms(mol_a, mol_b, core)
+    rings_a, rings_b = _rings_remaped_to_c(mol_a, mol_b, map_mixin)
+    rings_a = [ring_atoms.difference(fused_atoms) for ring_atoms in rings_a]
+    bonds_a = [bonds for bonds in mol_a.GetRingInfo().BondRings()]
+    rings_b = [ring_atoms.difference(fused_atoms) for ring_atoms in rings_b]
+    bonds_b = [bonds for bonds in mol_b.GetRingInfo().BondRings()]
+
+    aromaticity_changes = 0
+    for ring, bonds in zip(rings_a, bonds_a):
+        aromatic_ring_a = all([mol_a.GetBondWithIdx(bond).GetIsAromatic() for bond in bonds])
+        for comp_ring, comp_bonds in zip(rings_b, bonds_b):
+            if len(ring.intersection(comp_ring)) >= 1:
+                aromatic_ring_b = all([mol_b.GetBondWithIdx(bond).GetIsAromatic() for bond in comp_bonds])
+                if aromatic_ring_a != aromatic_ring_b:
+                    aromaticity_changes += 1
+    return aromaticity_changes
+
+
+def ring_size_changes(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> int:
+    """Counts the number of ring size change transformation between two molecules given a core.
+
+    Returns
+    -------
+    int
+        The number of ring size change transformation are taking place in the ligand
+    """
+    map_mixin = AtomMapMixin(mol_a, mol_b, core)
+
+    fused_atoms = _find_fused_atoms(mol_a, mol_b, core)
+    rings_a, rings_b = _rings_remaped_to_c(mol_a, mol_b, map_mixin)
+    rings_a = [ring_atoms.difference(fused_atoms) for ring_atoms in rings_a]
+    rings_b = [ring_atoms.difference(fused_atoms) for ring_atoms in rings_b]
+
+    ring_size_changes = 0
+    for ring in rings_a:
+        for comp_ring in rings_b:
+            if len(ring.intersection(comp_ring)) >= 1 and len(ring) != len(comp_ring):
+                ring_size_changes += 1
+    return ring_size_changes
+
+
+def ring_breaking_count(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray) -> tuple[int, int]:
+    """Counts the number of rings broken going forward and reverse given a core. Does not count ring insertion/deletions.
+
+    This is a fast implementation that does not account for dummy group anchor points which can change the true number of
+    ring breaks.
+
+    The algorithm is to add all ring atoms/bonds to a graph, and count the cycles that contain both core and mol a or
+    mol b atoms.
+
+    Returns
+    -------
+    2-tuple
+        The rings broken going from mol_a to mol_b and from mol_b to mol_a
+    """
+    map_mixin = AtomMapMixin(mol_a, mol_b, core)
+    rings_a, rings_b = _rings_remaped_to_c(mol_a, mol_b, map_mixin)
+
+    candidates = []
+    if len(rings_a) > 0 and len(rings_b) > 0:
+        for ring in rings_a:
+            for comp_ring in rings_b:
+                if len(ring.difference(comp_ring)) >= 1:
+                    candidates.append(ring)
+                    candidates.append(comp_ring)
+    else:
+        candidates.extend(rings_a)
+        candidates.extend(rings_b)
+
+    if len(candidates) == 0:
+        return (0, 0)
+
+    g = nx.Graph()
+
+    for ring in candidates:
+        for atom_idx in ring:
+            g.add_node(atom_idx, atom_type=map_mixin.c_flags[atom_idx])
+
+    # if there are no ring atoms, return 0
+    if len(g.nodes) == 0:
+        return (0, 0)
+
+    for bond in mol_a.GetBonds():
+        if bond.IsInRing():
+            src, dst = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+            if src in g.nodes and dst in g.nodes:
+                g.add_edge(src, dst)
+
+    for bond in mol_b.GetBonds():
+        if bond.IsInRing():
+            src, dst = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+            src = map_mixin.b_to_c[src]
+            dst = map_mixin.b_to_c[dst]
+            if src in g.nodes and dst in g.nodes:
+                g.add_edge(src, dst)
+
+    # Need at least three edges to make a cycle
+    if len(g.edges) < 3:
+        return (0, 0)
+
+    def core_dummy_bond(graph: nx.Graph, e: tuple[int, int]) -> bool:
+        """Determine if a bond is between two nodes of the same type. If not it is a core-dummy bond. Expects that one
+        of the atom types is AtomMapFlags.CORE and the other is AtomMapFlags.MOL_A or AtomMapFlags.MOL_B
+        """
+        a, b = e
+        return graph.nodes[a]["atom_type"] != graph.nodes[b]["atom_type"]
+
+    breaking_count = [0, 0]
+    for i, comp in enumerate(nx.connected_components(g)):
+        subgraph = g.subgraph(comp)
+        # If the nodes are all core atoms, not a ring breaking transformation.
+        if all([data["atom_type"] == AtomMapFlags.CORE for _, data in subgraph.nodes(data=True)]):
+            continue
+
+        for endstate_idx, atom_type in enumerate((AtomMapFlags.MOL_A, AtomMapFlags.MOL_B)):
+            ring_atoms = subgraph.subgraph(
+                [n for n, data in subgraph.nodes(data=True) if data["atom_type"] in (AtomMapFlags.CORE, atom_type)]
+            )
+            core_ring_atom_count = np.sum(
+                [data["atom_type"] == AtomMapFlags.CORE for _, data in ring_atoms.nodes(data=True)], dtype=np.int32
+            )
+            # If is only one or fewer core atoms, it is not a ring forming/breaking transformation and just an insertion
+            if core_ring_atom_count <= 1:
+                continue
+            # If the ring atoms are all core atoms, no ring break has occurred
+            elif core_ring_atom_count == len(ring_atoms):
+                continue
+            try:
+                # Make a copy of the ring_atoms graph so that it can be modified
+                ring_atoms = nx.Graph(ring_atoms)
+                while len(ring_atoms.edges) >= 3:
+                    cycle_edges = nx.find_cycle(ring_atoms)
+                    core_dummy_bond_mask = [core_dummy_bond(ring_atoms, e) for e in cycle_edges]
+                    # Only interested in cycles constructed with a core-dummy bond
+                    if any(core_dummy_bond_mask):
+                        breaking_count[endstate_idx] += 1
+                        edge_to_remove = core_dummy_bond_mask.index(True)
+                    else:
+                        # Pick an arbitrary edge to delete to break the cycle
+                        edge_to_remove = 0
+                    # Delete an edge to break the existing cycle
+                    ring_atoms.remove_edge(*cycle_edges[edge_to_remove])
+            except nx.exception.NetworkXNoCycle:
+                pass
+    return breaking_count[0], breaking_count[1]
