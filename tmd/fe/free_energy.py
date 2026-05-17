@@ -36,7 +36,7 @@ from tmd.fe.bar import (
     works_from_ukln,
 )
 from tmd.fe.interpolate import linear_interpolation, pad
-from tmd.fe.lambda_schedule import interpolate_pre_optimized_protocol
+from tmd.fe.lambda_schedule import construct_pre_optimized_relative_lambda_schedule, interpolate_pre_optimized_protocol
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_dG_errs_figure,
@@ -596,7 +596,7 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
                     np.zeros_like(nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX]),
                     lamb,
                     0.0,
-                    0.15,
+                    0.2,
                 )
             )
             dst_eps = nb_params[len(host_config.conf) :, NBParamIdx.LJ_EPS_IDX] / 3
@@ -606,9 +606,16 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
                     nb_params[len(host_config.conf) :, NBParamIdx.LJ_EPS_IDX],
                     np.where(dst_eps > 0.02, dst_eps, 0.02),
                     lamb,
-                    0.0,
-                    0.25,
+                    0.2,
+                    0.4,
                 )
+            )
+
+            # Shift the W coordinate to improve efficiency
+            lambdas = construct_pre_optimized_relative_lambda_schedule(None)
+            x = np.linspace(0.0, 1.0, len(lambdas))
+            nb_params = nb_params.at[len(host_config.conf) :, NBParamIdx.W_IDX].set(
+                linear_interpolation(0.0, hgt.host_nonbonded.potential.cutoff, np.interp(lamb, x, lambdas))
             )
             combined_params[nb_params_idx] = nb_params  # type: ignore
 
