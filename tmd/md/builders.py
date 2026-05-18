@@ -91,7 +91,7 @@ def compute_solvent_box_size(mols: list[Chem.Mol], padding: float = 1.0, min_box
     box_size = max_dimension + (2 * padding)
     if box_size < min_box_size:
         warn(
-            "Box size estimated to be {box_size:.1f}, below minimum size of {min_box_size:.1f}. Setting to minimum size"
+            f"Box size estimated to be {box_size:.1f}, below minimum size of {min_box_size:.1f}. Setting to minimum size"
         )
         box_size = min_box_size
     return box_size
