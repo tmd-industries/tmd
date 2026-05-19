@@ -371,12 +371,12 @@ def test_run_abfe(
 ):
     leg_results_hashes = {
         "solvent": (
-            "e759e03ef2c0f77bce80c69efe8115f498b538b08770bb743a112979e269014b",
-            "40260a127f1b2c5bbba09297245440d699e7220485618220d99a27407c1fefa8",
+            "220a0ddf08d3677c028d6ab12bb210bc7e6825e0fbeb575824b9b0f3044c1bcf",
+            "90846a75884a668c5de0ddf14776b3266a037988c9cc049a8fbb011db810e40b",
         ),
         "complex": (
-            "b406a8d1dde016ba2039969f018d348fb94f8e2383617e5f241fd04565847e15",
-            "3becf5e6d398d2c2599ba03e024a33c9e43b19397acb0f01234173cd34f4aee2",
+            "e1dc85cb2cf22fecfdbd403e57144f9a9e0e6146bc5f78bd5eba826d25fff9c0",
+            "2e8ce51a4f0c99c0c2eb13500a9f64809a355917a76eb91b08e7eb918143be1a",
         ),
     }
 
