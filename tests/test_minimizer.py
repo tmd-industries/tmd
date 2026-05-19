@@ -419,7 +419,7 @@ def test_local_minimize_restrained_waters_trigger_failure(seed, minimizer_config
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
     # Use non-zero lambda to ensure forces are large to start
-    lamb = 0.1
+    lamb = 0.15
 
     # Setup a water box without a void for the mol
     host_config = builders.build_water_system(4.0, ff.water_ff, box_margin=0.1)
