@@ -664,6 +664,11 @@ def test_compute_solvent_box_size():
     water_system = build_water_system(box_size, DEFAULT_WATER_FF, mols=mols, box_margin=0.0)
     np.testing.assert_allclose(np.diag(water_system.box), box_size, atol=0.45)
 
+    with catch_warnings(record=True) as w:
+        box_size = compute_solvent_box_size(mols, min_box_size=100.0)
+    assert len(w) == 1
+    assert any("below minimum size of 100.0. Setting to minimum size" in str(warn.message) for warn in w)
+
 
 @pytest.mark.nogpu
 def test_compute_solvent_box_size_methane():
