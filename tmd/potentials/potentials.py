@@ -148,6 +148,13 @@ class PeriodicTorsion(_BondBase):
 
 
 @dataclass
+class HarmonicTorsion(_BondBase):
+    def __call__(self, conf: Conf, params: Params, box: Box) -> float | Array:
+        assert isinstance(params, (np.ndarray, Array))
+        return bonded.harmonic_torsion(conf, params, box, self.idxs)
+
+
+@dataclass
 class Nonbonded(Potential):
     num_atoms: int
     exclusion_idxs: NDArray[np.int32]

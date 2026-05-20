@@ -229,6 +229,53 @@ def periodic_torsion(conf, params, box, torsion_idxs):
     return jnp.sum(nrg, axis=-1)
 
 
+def harmonic_torsion(conf, params, box, torsion_idxs):
+    r"""
+    Compute a harmonic dihedral energy:
+
+        V(conf) = 0.5 \sum_d ks[d] * delta[d]**2
+
+    where ``delta`` is the signed dihedral ``phi - phi0`` wrapped into
+    ``(-pi, pi]``.
+
+    Parameters:
+    -----------
+    conf: shape [num_atoms, 3] np.ndarray
+        atomic coordinates
+
+    params: shape [num_torsions, 2] np.ndarray
+        per-dihedral parameters ``(k, phi0)``
+
+    box: shape [3, 3] np.ndarray
+        periodic boundary vectors, if not None
+
+    torsion_idxs: shape [num_torsions, 4] np.ndarray
+        indices denoting the four atoms that define a dihedral
+
+    Notes
+    -----
+    * if conf has more than 3 dimensions, this function only depends on the first 3
+    """
+    if torsion_idxs.shape[0] == 0:
+        return 0.0
+
+    conf = conf[:, :3]
+
+    ci = conf[torsion_idxs[:, 0]]
+    cj = conf[torsion_idxs[:, 1]]
+    ck = conf[torsion_idxs[:, 2]]
+    cl = conf[torsion_idxs[:, 3]]
+
+    ks = params[:, 0]
+    phi0 = params[:, 1]
+    angle = signed_torsion_angle(ci, cj, ck, cl, box)
+    diff = angle - phi0
+    # wrap delta to (-pi, pi]
+    delta = jnp.arctan2(jnp.sin(diff), jnp.cos(diff))
+
+    return jnp.sum(0.5 * ks * delta * delta, axis=-1)
+
+
 def _flat_bottom_bond_impl(r, params, box):
     """
     U(r; k, r_min, r_max) =

@@ -26,6 +26,7 @@ from tmd.potentials import (
     FlatBottomRestraint,
     HarmonicAngle,
     HarmonicBond,
+    HarmonicTorsion,
     LogFlatBottomBond,
     PeriodicTorsion,
 )
@@ -648,9 +649,144 @@ def test_periodic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3)
 
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
+def test_harmonic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3):
+    """Randomly connect quadruples of particles, then validate the resulting HarmonicTorsion force"""
+    seed = 125
+    np.random.seed(seed)
+
+    box = np.eye(3) * 10
+    x = GradientTest().get_random_coords(n_particles, dim)
+
+    atom_idxs = np.arange(n_particles)
+    ks = np.random.rand(n_torsions)
+    phi0 = np.random.uniform(-np.pi, np.pi, size=n_torsions)
+    params = np.stack([ks, phi0], axis=-1)
+
+    torsion_idxs = []
+    for _ in range(n_torsions):
+        torsion_idxs.append(np.random.choice(atom_idxs, size=4, replace=False))
+
+    torsion_idxs = np.array(torsion_idxs, dtype=np.int32) if n_torsions else np.zeros((0, 4), dtype=np.int32)
+
+    # Shift coordinates corresponding to the right hand side of the torsion indices by a single box dimension to ensure testing PBCs
+    x[torsion_idxs[:, 2:].reshape(-1)[: n_torsions // 2]] += np.diagonal(box)
+
+    x = x.astype(precision)
+    params = params.astype(precision)
+    box = box.astype(precision)
+
+    potential = HarmonicTorsion(n_particles, torsion_idxs)
+    test_impl = potential.to_gpu(precision)
+    np.testing.assert_array_equal(potential.idxs, test_impl.unbound_impl.get_idxs())
+    GradientTest().compare_forces(x, params, box, potential, test_impl, rtol)
+    GradientTest().assert_differentiable_interface_consistency(x, params, box, test_impl)
+
+    # With phi0 == 0, reversing the torsion quad sends phi -> -phi, but
+    # delta**2 is invariant, so the potential should be bitwise symmetric.
+    if n_torsions > 0:
+        sym_params = np.stack([ks, np.zeros_like(ks)], axis=-1).astype(precision)
+        impl_fwd = HarmonicTorsion(n_particles, torsion_idxs).to_gpu(precision).unbound_impl
+        impl_rev = HarmonicTorsion(n_particles, torsion_idxs[:, ::-1]).to_gpu(precision).unbound_impl
+
+        du_dx_fwd, du_dp_fwd, u_fwd = impl_fwd.execute(x, sym_params, box, 1, 1, 1)
+        du_dx_rev, du_dp_rev, u_rev = impl_rev.execute(x, sym_params, box, 1, 1, 1)
+
+        np.testing.assert_array_equal(u_fwd, u_rev)
+        np.testing.assert_array_equal(du_dx_fwd, du_dx_rev)
+        np.testing.assert_array_equal(du_dp_fwd, du_dp_rev)
+
+    if n_torsions > 0:
+        # Testing batching across multiple coords/params
+        num_systems = 3
+
+        coords = np.array(
+            [
+                shift_random_coordinates_by_box(GradientTest().get_random_coords(n_particles, dim), box, seed=seed + i)
+                for i in range(num_systems)
+            ],
+            dtype=precision,
+        )
+        rng = np.random.default_rng(seed)
+        batch_torsion_idxs = [
+            rng.choice(torsion_idxs, size=rng.integers(1, n_torsions), axis=0) for _ in range(num_systems)
+        ]
+        batch_params = [
+            np.stack(
+                [
+                    rng.uniform(0.0, 1.0, size=len(idxs)),
+                    rng.uniform(-np.pi, np.pi, size=len(idxs)),
+                ],
+                axis=-1,
+            ).astype(precision)
+            for idxs in batch_torsion_idxs
+        ]
+        batch_boxes = [
+            (np.array(box) + np.eye(3) * rng.uniform(-0.5, 1.0)).astype(precision) for _ in range(num_systems)
+        ]
+
+        batch_pot = HarmonicTorsion(n_particles, batch_torsion_idxs)
+
+        batch_impl = batch_pot.to_gpu(precision).unbound_impl
+        assert batch_impl.num_systems() == num_systems
+        batch_du_dx, batch_du_dp, batch_u = batch_impl.execute_dim(coords, batch_params, batch_boxes, 1, 1, 1)
+
+        assert batch_du_dx.shape[0] == num_systems
+        assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
+        for i, (idxs, x_i, box_i, params_i) in enumerate(zip(batch_torsion_idxs, coords, batch_boxes, batch_params)):
+            potential = HarmonicTorsion(n_particles, idxs)
+            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x_i, params_i, box_i, 1, 1, 1)
+            np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
+            np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
+            np.testing.assert_array_equal(batch_u[i], ref_u)
+
+
+def test_harmonic_torsion_wrap_around():
+    """delta should wrap into (-pi, pi]: when |phi - phi0| ~ 2*pi - eps, |delta| ~ eps."""
+    from tmd.potentials.bonded import signed_torsion_angle
+
+    eps = 1e-3
+
+    # Arbitrary 4-atom configuration; the precise dihedral phi is determined
+    # empirically from the JAX reference and used to construct phi0.
+    conf = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.3, 1.0, 0.7],
+        ],
+        dtype=np.float64,
+    )
+    box = np.eye(3, dtype=np.float64) * 100.0
+    idxs = np.array([[0, 1, 2, 3]], dtype=np.int32)
+    k = 7.0
+
+    phi = float(
+        signed_torsion_angle(
+            conf[idxs[:, 0]],
+            conf[idxs[:, 1]],
+            conf[idxs[:, 2]],
+            conf[idxs[:, 3]],
+            box,
+        )[0]
+    )
+
+    # Choose phi0 so the unwrapped diff is -(2*pi - eps); wrap-around delta is ~eps.
+    phi0_val = phi + (2.0 * np.pi - eps)
+    params = np.array([[k, phi0_val]], dtype=np.float64)
+
+    pot = HarmonicTorsion(4, idxs)
+    _, _, u = pot.to_gpu(np.float64).unbound_impl.execute(conf, params, box, 1, 1, 1)
+
+    expected = 0.5 * k * eps**2
+    np.testing.assert_allclose(float(np.asarray(u).reshape(())), expected, rtol=1e-6)
+
+
+@pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
 def test_empty_potentials(precision, rtol):
     # Check that no error is given if the terms are empty
     test_periodic_torsion(precision=precision, rtol=rtol, n_torsions=0)
+    test_harmonic_torsion(precision=precision, rtol=rtol, n_torsions=0)
     test_harmonic_angle(precision=precision, rtol=rtol, n_angles=0)
     test_harmonic_bond(precision=precision, rtol=rtol, n_bonds=0)
 
