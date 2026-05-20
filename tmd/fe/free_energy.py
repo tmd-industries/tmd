@@ -23,6 +23,7 @@ from warnings import warn
 import jax
 import numpy as np
 from numpy.typing import NDArray
+from rdkit import Chem
 
 from tmd._vendored.pymbar.utils import kln_to_kn
 from tmd.constants import BOLTZ, NBParamIdx
@@ -538,7 +539,13 @@ class BaseFreeEnergy:
 # this class is serializable.
 # DEBOGGLE: Move this to tmd.fe.absolute.free_energy
 class AbsoluteFreeEnergy(BaseFreeEnergy):
-    def __init__(self, mol, top):
+    def __init__(
+        self,
+        mol: Chem.Mol,
+        top,
+        decharge_interval: tuple[float, float] = (0.0, 0.2),
+        eps_scale_interval: tuple[float, float] = (0.2, 0.4),
+    ):
         """
         Compute the absolute free energy of a molecule via 4D decoupling.
 
@@ -550,9 +557,26 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
         top: Topology
             topology.Topology to use
 
+        decharge_interval: tuple[float, float]
+            Interval over which the ligand intermolecular charge is decharged over. Only intended for testing, suggested not to edge.
+        eps_scale_interval: tuple[float, float]
+            Interval over which the ligand intermolecular epsilon is scaled down over. Only intended for testing, suggested not to edge.
+
         """
         self.mol = mol
         self.top = top
+
+        def verify_interval(interval):
+            assert len(interval) == 2
+            assert interval[0] < interval[1]
+            assert interval[0] >= 0.0
+            assert interval[1] <= 1.0
+
+        verify_interval(decharge_interval)
+        verify_interval(eps_scale_interval)
+
+        self.decharge_interval = decharge_interval
+        self.eps_scale_interval = eps_scale_interval
 
     def prepare_host_edge(
         self, ff: Forcefield, host_config: HostConfig, lamb: float
@@ -595,8 +619,8 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
                     nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX],
                     np.zeros_like(nb_params[len(host_config.conf) :, NBParamIdx.Q_IDX]),
                     lamb,
-                    0.0,
-                    0.2,
+                    self.decharge_interval[0],
+                    self.decharge_interval[1],
                 )
             )
             # Scale down the epsilon term
@@ -607,8 +631,8 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
                     nb_params[len(host_config.conf) :, NBParamIdx.LJ_EPS_IDX],
                     np.where(dst_eps > 0.02, dst_eps, 0.02),
                     lamb,
-                    0.2,
-                    0.4,
+                    self.eps_scale_interval[0],
+                    self.eps_scale_interval[1],
                 )
             )
 
