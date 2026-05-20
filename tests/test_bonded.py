@@ -734,7 +734,9 @@ def test_harmonic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3)
         assert batch_du_dx.shape[0] == len(batch_du_dp) == batch_u.size
         for i, (idxs, x_i, box_i, params_i) in enumerate(zip(batch_torsion_idxs, coords, batch_boxes, batch_params)):
             potential = HarmonicTorsion(n_particles, idxs)
-            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(x_i, params_i, box_i, 1, 1, 1)
+            ref_du_dx, ref_du_dp, ref_u = potential.to_gpu(precision).unbound_impl.execute(
+                x_i, params_i, box_i, 1, 1, 1
+            )
             np.testing.assert_array_equal(batch_du_dx[i], ref_du_dx)
             np.testing.assert_array_equal(batch_du_dp[i], ref_du_dp)
             np.testing.assert_array_equal(batch_u[i], ref_u)
