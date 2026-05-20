@@ -74,7 +74,7 @@ class Forcefield:
             nonbonded.AmberAM1BCCHandler,
             nonbonded.AmberAM1CCCHandler,
             nonbonded.PrecomputedChargeHandler,
-            nonbonded.PrecomputedChargeCCCHandler,
+            nonbonded.PrecomputedCCCHandler,
             nonbonded.NNHandler,
         ]
     ]
@@ -87,7 +87,7 @@ class Forcefield:
             nonbonded.AmberAM1BCCIntraHandler,
             nonbonded.AmberAM1CCCIntraHandler,
             nonbonded.PrecomputedChargeHandler,
-            nonbonded.PrecomputedChargeCCCIntraHandler,
+            nonbonded.PrecomputedCCCIntraHandler,
             nonbonded.NNHandler,
         ]
     ]
@@ -210,7 +210,7 @@ class Forcefield:
                     nonbonded.AmberAM1CCCIntraHandler,
                     nonbonded.SimpleChargeIntraHandler,
                     nonbonded.PrecomputedChargeIntraHandler,
-                    nonbonded.PrecomputedChargeCCCIntraHandler,
+                    nonbonded.PrecomputedCCCIntraHandler,
                 ),
             ):
                 # Need to be checked first since they are also subclasses
@@ -225,7 +225,7 @@ class Forcefield:
                     nonbonded.AmberAM1BCCSolventHandler,
                     nonbonded.AmberAM1CCCSolventHandler,
                     nonbonded.SimpleChargeSolventHandler,
-                    nonbonded.PrecomputedChargeCCCSolventHandler,
+                    nonbonded.PrecomputedCCCSolventHandler,
                 ),
             ):
                 assert q_handle_solv is None
@@ -240,7 +240,7 @@ class Forcefield:
                     nonbonded.AmberAM1CCCHandler,
                     nonbonded.SimpleChargeHandler,
                     nonbonded.PrecomputedChargeHandler,
-                    nonbonded.PrecomputedChargeCCCHandler,
+                    nonbonded.PrecomputedCCCHandler,
                     nonbonded.NNHandler,
                 ),
             ):
@@ -275,10 +275,8 @@ class Forcefield:
                 q_handle_intra = nonbonded.AmberAM1BCCIntraHandler(q_handle.smirks, q_handle.params, q_handle.props)
             elif isinstance(q_handle, nonbonded.AmberAM1CCCHandler):
                 q_handle_intra = nonbonded.AmberAM1CCCIntraHandler(q_handle.smirks, q_handle.params, q_handle.props)
-            elif isinstance(q_handle, nonbonded.PrecomputedChargeCCCHandler):
-                q_handle_intra = nonbonded.PrecomputedChargeCCCIntraHandler(
-                    q_handle.smirks, q_handle.params, q_handle.props
-                )
+            elif isinstance(q_handle, nonbonded.PrecomputedCCCHandler):
+                q_handle_intra = nonbonded.PrecomputedCCCIntraHandler(q_handle.smirks, q_handle.params, q_handle.props)
             elif isinstance(q_handle, nonbonded.SimpleChargeHandler):
                 q_handle_intra = nonbonded.SimpleChargeIntraHandler(q_handle.smirks, q_handle.params, q_handle.props)
             elif isinstance(q_handle, nonbonded.PrecomputedChargeHandler):

@@ -918,8 +918,8 @@ class AmberAM1CCCSolventHandler(AmberAM1CCCHandler):
     pass
 
 
-class PrecomputedChargeCCCHandler(SerializableMixIn):
-    """The PrecomputedChargeCCCHandler reads per-atom partial charges directly from the input mol
+class PrecomputedCCCHandler(SerializableMixIn):
+    """The PrecomputedCCCHandler reads per-atom partial charges directly from the input mol
     (as in PrecomputedChargeHandler) and then applies Correctable Charge Corrections (CCCs) defined
     by SMIRKS bond patterns, analogous to AmberAM1CCCHandler.
     """
@@ -974,11 +974,11 @@ class PrecomputedChargeCCCHandler(SerializableMixIn):
         return q_params
 
 
-class PrecomputedChargeCCCIntraHandler(PrecomputedChargeCCCHandler):
+class PrecomputedCCCIntraHandler(PrecomputedCCCHandler):
     pass
 
 
-class PrecomputedChargeCCCSolventHandler(PrecomputedChargeCCCHandler):
+class PrecomputedCCCSolventHandler(PrecomputedCCCHandler):
     pass
 
 
