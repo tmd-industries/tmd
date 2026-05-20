@@ -918,6 +918,70 @@ class AmberAM1CCCSolventHandler(AmberAM1CCCHandler):
     pass
 
 
+class PrecomputedChargeCCCHandler(SerializableMixIn):
+    """The PrecomputedChargeCCCHandler reads per-atom partial charges directly from the input mol
+    (as in PrecomputedChargeHandler) and then applies Correctable Charge Corrections (CCCs) defined
+    by SMIRKS bond patterns, analogous to AmberAM1CCCHandler.
+    """
+
+    def __init__(self, smirks, params, props):
+        assert len(smirks) == len(params)
+        assert props is None
+        self.smirks = smirks
+        self.params = np.asarray(params, dtype=np.float64)
+        self.props = None
+
+    def partial_parameterize(self, params, mol):
+        return self.static_parameterize(params, self.smirks, mol)
+
+    def parameterize(self, mol):
+        return self.static_parameterize(self.params, self.smirks, mol)
+
+    @staticmethod
+    def static_parameterize(params, smirks, mol):
+        """
+        Parameters
+        ----------
+
+        params: NDArray
+            Parameters associated with each smirks pattern
+
+        smirks: list[str]
+            List of smirks to match
+
+        mol: Chem.Mol
+            molecule to be parameterized. Each atom must have a 'PartialCharge' property.
+
+        """
+        base_charges = []
+        for atom in mol.GetAtoms():
+            q = float(atom.GetProp("PartialCharge"))
+            base_charges.append(q * np.sqrt(constants.ONE_4PI_EPS0))
+        base_charges = np.array(base_charges)
+
+        bond_idxs, type_idxs = compute_or_load_rdkit_bond_smirks_matches(mol, smirks)
+
+        deltas = params[type_idxs]
+        q_params = apply_bond_charge_corrections(
+            base_charges,
+            bond_idxs,
+            deltas,
+            runtime_validate=False,  # required for jit
+        )
+
+        assert q_params.shape[0] == mol.GetNumAtoms()  # check that return shape is consistent with input mol
+
+        return q_params
+
+
+class PrecomputedChargeCCCIntraHandler(PrecomputedChargeCCCHandler):
+    pass
+
+
+class PrecomputedChargeCCCSolventHandler(PrecomputedChargeCCCHandler):
+    pass
+
+
 class EnvironmentBCCHandler(SerializableMixIn):
     """
     Applies BCCs to residues in a protein. Needs a concrete openmm topology to use.
