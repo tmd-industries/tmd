@@ -1,5 +1,5 @@
 # Copyright 2025 Justin Gullingsrud
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -68,7 +68,7 @@ from tmd.fe.rbfe import (
 from tmd.fe.topology import BaseTopology
 from tmd.fe.utils import get_mol_experimental_value, get_mol_name, read_sdf_mols_by_name, set_romol_conf
 from tmd.ff import Forcefield
-from tmd.md.builders import build_protein_system, build_water_system
+from tmd.md.builders import build_membrane_system, build_protein_system, build_water_system
 from tmd.md.exchange.utils import get_radius_of_mol_pair
 from tmd.parallel.client import (
     AbstractFileClient,
@@ -253,6 +253,7 @@ def run_abfe(
     min_overlap: float,
     write_trajectories: bool,
     force_overwrite: bool,
+    add_membrane: bool,
 ) -> dict[str, Any]:
     """Run an ABFE calculation.
 
@@ -295,6 +296,8 @@ def run_abfe(
         Whether or not to write trajectories
     force_overwrite: bool
         If results already exist, overwrite the results
+    add_membrane: bool
+        Build the protein with a POPC membrane
 
     Returns
     -------
@@ -322,7 +325,10 @@ def run_abfe(
 
     start = time.perf_counter()
     if leg == COMPLEX_LEG:
-        host_config = build_protein_system(pdb_path, ff.protein_ff, ff.water_ff, mols=[mol], box_margin=0.1)
+        if not add_membrane:
+            host_config = build_protein_system(pdb_path, ff.protein_ff, ff.water_ff, mols=[mol], box_margin=0.1)
+        else:
+            host_config = build_membrane_system(pdb_path, ff.protein_ff, ff.water_ff, mols=[mol], box_margin=0.1)
     else:
         host_config = build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
     # TBD: Expose restraint params?
@@ -454,6 +460,11 @@ def main():
         choices=["kcal/mol", "kJ/mol", "uM", "nM"],
         help="Units of the experimental label.",
     )
+    parser.add_argument(
+        "--add_membrane",
+        action="store_true",
+        help="Add a POPC membrane to the protein. Refer to OpenMM for preparing proteins for adding Membranes",
+    )
     args = parser.parse_args()
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
     np.random.seed(args.seed)
@@ -529,6 +540,7 @@ def main():
                 args.min_overlap,
                 args.store_trajectories,
                 args.force_overwrite,
+                args.add_membrane,
             )
             future_id_to_leg[fut.id] = (name, leg)
             futures.append(fut)
