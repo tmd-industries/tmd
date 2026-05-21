@@ -91,6 +91,28 @@ def test_amber_am1bcc_and_am1ccc_forcefields_have_identical_parameters():
         np.testing.assert_array_equal(params_bcc, params_ccc)
 
 
+@pytest.mark.parametrize(
+    "ffname",
+    [
+        "smirnoff_2_0_0_precomputed.py",
+        "smirnoff_2_0_0_precomputed_ccc.py",
+        "smirnoff_2_2_1_precomputed.py",
+    ],
+)
+def test_precomputed_ff_preserves_user_charges(ffname: str) -> None:
+    ff = Forcefield.load_from_file(ffname)
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as ligand_path:
+        mol = read_sdf(ligand_path)[0]
+
+    for i, atm in enumerate(mol.GetAtoms()):
+        atm.SetDoubleProp("PartialCharge", i / 100)
+
+    assert ff.q_handle is not None and not isinstance(ff.q_handle, nonbonded.NNHandler)
+    qs = ff.q_handle.parameterize(mol)
+    for i, q in enumerate(qs):
+        assert q == (i / 100) * np.sqrt(constants.ONE_4PI_EPS0)
+
+
 def test_loading_forcefield_from_file():
     builtin_ffs = glob("tmd/ff/params/smirnoff_*.py")
     for path in builtin_ffs:
