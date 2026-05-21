@@ -61,7 +61,7 @@ HarmonicTorsion<RealType>::HarmonicTorsion(
     auto k = torsion_idxs[a * IDXS_DIM + 2];
     auto l = torsion_idxs[a * IDXS_DIM + 3];
     if (i == j || i == k || i == l || j == k || j == l || k == l) {
-      throw std::runtime_error("torsion quads must be unique");
+      throw std::runtime_error("torsion idxs must be unique");
     }
   }
 
