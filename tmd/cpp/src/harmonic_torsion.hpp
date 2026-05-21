@@ -1,5 +1,4 @@
-// Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Copyright 2025 Forrest York
 // Modifications Copyright 2026 Justin Gullingsrud
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
