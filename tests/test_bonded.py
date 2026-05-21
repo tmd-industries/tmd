@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025, Forrest York, Justin Gullingsrud
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -742,7 +742,8 @@ def test_harmonic_torsion(precision, rtol, n_particles=64, n_torsions=25, dim=3)
             np.testing.assert_array_equal(batch_u[i], ref_u)
 
 
-def test_harmonic_torsion_wrap_around():
+@pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-6), (np.float32, 1e-3)])
+def test_harmonic_torsion_wrap_around(precision, rtol):
     """delta should wrap into (-pi, pi]: when |phi - phi0| ~ 2*pi - eps, |delta| ~ eps."""
     from tmd.potentials.bonded import signed_torsion_angle
 
@@ -757,9 +758,9 @@ def test_harmonic_torsion_wrap_around():
             [0.0, 1.0, 0.0],
             [0.3, 1.0, 0.7],
         ],
-        dtype=np.float64,
+        dtype=precision,
     )
-    box = np.eye(3, dtype=np.float64) * 100.0
+    box = np.eye(3, dtype=precision) * 100.0
     idxs = np.array([[0, 1, 2, 3]], dtype=np.int32)
     k = 7.0
 
@@ -775,13 +776,13 @@ def test_harmonic_torsion_wrap_around():
 
     # Choose phi0 so the unwrapped diff is -(2*pi - eps); wrap-around delta is ~eps.
     phi0_val = phi + (2.0 * np.pi - eps)
-    params = np.array([[k, phi0_val]], dtype=np.float64)
+    params = np.array([[k, phi0_val]], dtype=precision)
 
     pot = HarmonicTorsion(4, idxs)
-    _, _, u = pot.to_gpu(np.float64).unbound_impl.execute(conf, params, box, 1, 1, 1)
+    _, _, u = pot.to_gpu(precision).unbound_impl.execute(conf, params, box, 1, 1, 1)
 
     expected = 0.5 * k * eps**2
-    np.testing.assert_allclose(float(np.asarray(u).reshape(())), expected, rtol=1e-6)
+    np.testing.assert_allclose(float(np.asarray(u).reshape(())), expected, rtol=rtol)
 
 
 @pytest.mark.parametrize("precision,rtol", [(np.float64, 1e-9), (np.float32, 2e-5)])
