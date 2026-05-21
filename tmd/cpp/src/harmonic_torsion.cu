@@ -1,0 +1,180 @@
+// Copyright 2026 Justin Gullingsrud
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "assert.h"
+#include "gpu_utils.cuh"
+#include "harmonic_torsion.hpp"
+#include "k_harmonic_torsion.cuh"
+#include "kernel_utils.cuh"
+#include "math_utils.cuh"
+#include <vector>
+
+namespace tmd {
+
+template <typename RealType>
+HarmonicTorsion<RealType>::HarmonicTorsion(
+    const int num_systems, const int num_atoms,
+    const std::vector<int> &torsion_idxs, // [T, 4]
+    const std::vector<int> &system_idxs   // [T]
+    )
+    : num_systems_(num_systems), num_atoms_(num_atoms),
+      max_idxs_(torsion_idxs.size() / IDXS_DIM), cur_num_idxs_(max_idxs_),
+      nrg_accum_(num_systems_, cur_num_idxs_),
+      kernel_ptrs_({// U: Compute U
+                    // X: Compute DU_DX
+                    // P: Compute DU_DP           U  X  P
+                    &k_harmonic_torsion<RealType, 0, 0, 0>,
+                    &k_harmonic_torsion<RealType, 0, 0, 1>,
+                    &k_harmonic_torsion<RealType, 0, 1, 0>,
+                    &k_harmonic_torsion<RealType, 0, 1, 1>,
+                    &k_harmonic_torsion<RealType, 1, 0, 0>,
+                    &k_harmonic_torsion<RealType, 1, 0, 1>,
+                    &k_harmonic_torsion<RealType, 1, 1, 0>,
+                    &k_harmonic_torsion<RealType, 1, 1, 1>}) {
+
+  if (torsion_idxs.size() % IDXS_DIM != 0) {
+    throw std::runtime_error("torsion_idxs.size() must be exactly " +
+                             std::to_string(IDXS_DIM) + "*k");
+  }
+  if (system_idxs.size() != max_idxs_) {
+    throw std::runtime_error("system_idxs.size() != (torsion_idxs.size() / " +
+                             std::to_string(IDXS_DIM) + "), got " +
+                             std::to_string(system_idxs.size()) + " and " +
+                             std::to_string(max_idxs_));
+  }
+
+  for (int a = 0; a < cur_num_idxs_; a++) {
+    auto i = torsion_idxs[a * IDXS_DIM + 0];
+    auto j = torsion_idxs[a * IDXS_DIM + 1];
+    auto k = torsion_idxs[a * IDXS_DIM + 2];
+    auto l = torsion_idxs[a * IDXS_DIM + 3];
+    if (i == j || i == k || i == l || j == k || j == l || k == l) {
+      throw std::runtime_error("torsion idxs must be unique");
+    }
+  }
+
+  cudaSafeMalloc(&d_torsion_idxs_,
+                 cur_num_idxs_ * IDXS_DIM * sizeof(*d_torsion_idxs_));
+  gpuErrchk(cudaMemcpy(d_torsion_idxs_, &torsion_idxs[0],
+                       cur_num_idxs_ * IDXS_DIM * sizeof(*d_torsion_idxs_),
+                       cudaMemcpyHostToDevice));
+
+  cudaSafeMalloc(&d_u_buffer_, cur_num_idxs_ * sizeof(*d_u_buffer_));
+
+  cudaSafeMalloc(&d_system_idxs_, cur_num_idxs_ * sizeof(*d_system_idxs_));
+  gpuErrchk(cudaMemcpy(d_system_idxs_, &system_idxs[0],
+                       cur_num_idxs_ * sizeof(*d_system_idxs_),
+                       cudaMemcpyHostToDevice));
+};
+
+template <typename RealType> HarmonicTorsion<RealType>::~HarmonicTorsion() {
+  gpuErrchk(cudaFree(d_torsion_idxs_));
+  gpuErrchk(cudaFree(d_u_buffer_));
+  gpuErrchk(cudaFree(d_system_idxs_));
+};
+
+template <typename RealType>
+void HarmonicTorsion<RealType>::execute_device(
+    const int batches, const int N, const int P, const RealType *d_x,
+    const RealType *d_p, const RealType *d_box, unsigned long long *d_du_dx,
+    unsigned long long *d_du_dp, __int128 *d_u, cudaStream_t stream) {
+
+  const int tpb = DEFAULT_THREADS_PER_BLOCK;
+  const int blocks = ceil_divide(cur_num_idxs_, tpb);
+
+  if (N != num_atoms_) {
+    throw std::runtime_error("N != num_atoms_");
+  }
+
+  if (blocks > 0) {
+    if (P != 2 * cur_num_idxs_) {
+      throw std::runtime_error("HarmonicTorsion::execute_device(): expected P "
+                               "== 2*cur_num_idxs_, got P=" +
+                               std::to_string(P) + ", 2*cur_num_idxs_=" +
+                               std::to_string(2 * cur_num_idxs_));
+    }
+
+    int kernel_idx = 0;
+    kernel_idx |= d_du_dp ? 1 << 0 : 0;
+    kernel_idx |= d_du_dx ? 1 << 1 : 0;
+    kernel_idx |= d_u ? 1 << 2 : 0;
+
+    kernel_ptrs_[kernel_idx]<<<blocks, tpb, 0, stream>>>(
+        num_atoms_, cur_num_idxs_, d_x, d_box, d_p, d_torsion_idxs_,
+        d_system_idxs_, d_du_dx, d_du_dp,
+        d_u == nullptr ? nullptr : d_u_buffer_);
+    gpuErrchk(cudaPeekAtLastError());
+
+    if (d_u) {
+      nrg_accum_.sum_device(cur_num_idxs_, d_u_buffer_, d_system_idxs_, d_u,
+                            stream);
+    }
+  }
+};
+
+template <typename RealType>
+void HarmonicTorsion<RealType>::set_idxs_device(const int num_idxs,
+                                                const int *d_new_idxs,
+                                                cudaStream_t stream) {
+  if (max_idxs_ < num_idxs) {
+    throw std::runtime_error("set_idxs_device(): Max number of torsions " +
+                             std::to_string(max_idxs_) +
+                             " is less than new idxs " +
+                             std::to_string(num_idxs));
+  }
+  gpuErrchk(cudaMemcpyAsync(d_torsion_idxs_, d_new_idxs,
+                            num_idxs * IDXS_DIM * sizeof(*d_torsion_idxs_),
+                            cudaMemcpyDeviceToDevice, stream));
+  cur_num_idxs_ = num_idxs;
+}
+
+template <typename RealType>
+void HarmonicTorsion<RealType>::set_system_idxs_device(
+    const int num_idxs, const int *d_new_system_idxs, cudaStream_t stream) {
+  if (cur_num_idxs_ != num_idxs) {
+    throw std::runtime_error("set_system_idxs_device(): num idxs must match");
+  }
+  gpuErrchk(cudaMemcpyAsync(d_system_idxs_, d_new_system_idxs,
+                            num_idxs * sizeof(*d_system_idxs_),
+                            cudaMemcpyDeviceToDevice, stream));
+}
+
+template <typename RealType>
+int HarmonicTorsion<RealType>::get_num_idxs() const {
+  return cur_num_idxs_;
+}
+
+template <typename RealType> int *HarmonicTorsion<RealType>::get_idxs_device() {
+  return d_torsion_idxs_;
+}
+
+template <typename RealType>
+int *HarmonicTorsion<RealType>::get_system_idxs_device() {
+  return d_system_idxs_;
+}
+
+template <typename RealType>
+std::vector<int> HarmonicTorsion<RealType>::get_idxs_host() const {
+  return device_array_to_vector<int>(cur_num_idxs_ * IDXS_DIM, d_torsion_idxs_);
+}
+
+template <typename RealType>
+int HarmonicTorsion<RealType>::num_systems() const {
+  return num_systems_;
+}
+
+template class HarmonicTorsion<double>;
+template class HarmonicTorsion<float>;
+
+} // namespace tmd

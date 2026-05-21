@@ -37,6 +37,7 @@
 #include "flat_bottom_restraint.hpp"
 #include "harmonic_angle.hpp"
 #include "harmonic_bond.hpp"
+#include "harmonic_torsion.hpp"
 #include "langevin_integrator.hpp"
 #include "local_md_potentials.hpp"
 #include "local_md_utils.hpp"
@@ -2861,6 +2862,59 @@ void declare_periodic_torsion(py::module &m, const char *typestr) {
 }
 
 template <typename RealType>
+void declare_harmonic_torsion(py::module &m, const char *typestr) {
+
+  using Class = HarmonicTorsion<RealType>;
+  std::string pyclass_name = std::string("HarmonicTorsion_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>, Potential<RealType>>(
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def(py::init(
+               [](const int num_atoms,
+                  const py::array_t<int, py::array::c_style> &torsion_idxs) {
+                 verify_bond_idxs(torsion_idxs, 4);
+                 std::vector<int> system_idxs(torsion_idxs.shape(0), 0);
+                 std::vector<int> vec_torsion_idxs =
+                     py_array_to_vector(torsion_idxs);
+
+                 const int num_systems = 1;
+                 return new HarmonicTorsion<RealType>(
+                     num_systems, num_atoms, vec_torsion_idxs, system_idxs);
+               }),
+           py::arg("num_atoms"), py::arg("torsion_idxs"))
+      .def(py::init([](const int num_atoms,
+                       const std::vector<py::array_t<int, py::array::c_style>>
+                           &torsion_idxs) {
+             const int num_systems = torsion_idxs.size();
+             std::vector<int> combined_torsion_vec;
+             std::vector<int> system_idxs;
+             int offset = 0;
+             for (int i = 0; i < num_systems; i++) {
+               verify_bond_idxs(torsion_idxs[i], 4);
+               const unsigned long bond_arr_size = torsion_idxs[i].size();
+               combined_torsion_vec.resize(combined_torsion_vec.size() +
+                                           bond_arr_size);
+               std::memcpy(combined_torsion_vec.data() + offset,
+                           torsion_idxs[i].data(), bond_arr_size * sizeof(int));
+               offset += bond_arr_size;
+
+               system_idxs.resize(system_idxs.size() +
+                                  torsion_idxs[i].shape(0));
+               std::fill(system_idxs.end() - torsion_idxs[i].shape(0),
+                         system_idxs.end(), i);
+             }
+             return new HarmonicTorsion<RealType>(
+                 num_systems, num_atoms, combined_torsion_vec, system_idxs);
+           }),
+           py::arg("num_atoms"), py::arg("torsion_idxs"))
+      .def("get_idxs", [](Class &pot) -> py::array_t<int, py::array::c_style> {
+        std::vector<int> output_idxs = pot.get_idxs_host();
+        py::array_t<int, py::array::c_style> out_idx_buffer(
+            {pot.get_num_idxs(), pot.IDXS_DIM}, output_idxs.data());
+        return out_idx_buffer;
+      });
+}
+
+template <typename RealType>
 void declare_nonbonded_interaction_group(py::module &m, const char *typestr) {
   using Class = NonbondedInteractionGroup<RealType>;
   std::string pyclass_name =
@@ -3790,6 +3844,9 @@ PYBIND11_MODULE(custom_ops, m) {
 
   declare_periodic_torsion<double>(m, "f64");
   declare_periodic_torsion<float>(m, "f32");
+
+  declare_harmonic_torsion<double>(m, "f64");
+  declare_harmonic_torsion<float>(m, "f32");
 
   declare_nonbonded_interaction_group<double>(m, "f64");
   declare_nonbonded_interaction_group<float>(m, "f32");

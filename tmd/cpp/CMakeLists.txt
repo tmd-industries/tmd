@@ -121,6 +121,7 @@ pybind11_add_module(${LIBRARY_NAME} MODULE NO_EXTRAS
   src/log_flat_bottom_bond.cu
   src/harmonic_angle.cu
   src/periodic_torsion.cu
+  src/harmonic_torsion.cu
   src/chiral_atom_restraint.cu
   src/chiral_bond_restraint.cu
   src/langevin_integrator.cu
