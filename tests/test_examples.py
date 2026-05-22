@@ -354,6 +354,86 @@ def test_run_rbfe_graph_gpcr_with_membrane_local(
         verify_run(edges, Path(config["output_dir"]))
 
 
+@pytest.mark.parametrize(
+    "n_steps, n_windows, n_frames, n_eq_steps, mps_workers",
+    [(100, 4, 50, 0, 1)],
+)
+@pytest.mark.parametrize("seed", [2026])
+def test_run_abfe_gpcr_with_membrane_local(
+    n_steps,
+    n_windows,
+    n_frames,
+    n_eq_steps,
+    mps_workers,
+    seed,
+):
+    """Note that this is not bitwise deterministic because building the membrane system is not deterministic"""
+    with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "ligands.sdf") as sdf_path:
+        mols = read_sdf(sdf_path)
+
+    with path_to_internal_file("tmd.testsystems.gpcrs.a2a_hip278", "a2a_hip278.pdb") as pdb_path:
+        config = dict(
+            pdb_path=str(pdb_path),
+            seed=seed,
+            n_eq_steps=n_eq_steps,
+            n_frames=n_frames,
+            n_windows=n_windows,
+            steps_per_frame=n_steps,
+            local_md_steps=n_steps,
+            forcefield="smirnoff_2_0_0_amber_am1ccc_amber14.py",
+            mps_workers=mps_workers,
+            output_dir=f"{ARTIFACT_DIR_NAME}/abfe_graph_local_gpcr_{seed}",
+            experimental_field="r_exp_dg",
+            experimental_units="kcal/mol",
+            add_membrane=None,  # Add a membrane to the protein
+            legs="complex",
+            force_overwrite=None,  # Force overwrite any existing data
+        )
+
+    temp_mols = NamedTemporaryFile(suffix=".sdf")
+    writer = Chem.SDWriter(temp_mols.name)
+    rng = np.random.default_rng(seed)
+    num_mols = 1
+    for i, mol in enumerate(rng.choice(mols, replace=False, size=num_mols)):
+        writer.write(mol)
+
+    writer.close()
+
+    def verify_run(output_dir: Path):
+        assert output_dir.is_dir()
+        mols = read_sdf(output_dir / "mols.sdf")
+        assert Forcefield.load_from_file(output_dir / "ff.py") is not None
+        assert (output_dir / "ff.py").is_file()
+        leg_names = ["complex"]
+        for mol in mols:
+            mol_dir = output_dir / get_mol_name(mol)
+
+            assert (mol_dir / "md_params.pkl").is_file()
+
+            for leg in leg_names:
+                leg_dir = mol_dir / leg
+                with open(leg_dir / "host_config.pkl", "rb") as ifs:
+                    host_config = pickle.load(ifs)
+                assert host_config.num_membrane_atoms > 20000
+
+        assert (output_dir / "dg_results.csv").is_file()
+        ddg_rows = list(DictReader(open(output_dir / "dg_results.csv")))
+        expected_ddg_keys = {
+            "mol",
+        }
+        for leg in leg_names:
+            expected_ddg_keys.add(f"{leg}_pred_dg (kcal/mol)")
+            expected_ddg_keys.add(f"{leg}_pred_dg_err (kcal/mol)")
+        for row in ddg_rows:
+            assert set(row.keys()) == expected_ddg_keys
+            assert len(row["mol"]) > 0
+
+    config["sdf_path"] = temp_mols.name
+    proc = run_example("run_abfe.py", get_cli_args(config))
+    assert proc.returncode == 0
+    verify_run(Path(config["output_dir"]))
+
+
 @pytest.mark.fixed_output
 @pytest.mark.parametrize(
     "leg, n_steps, n_windows, n_frames, n_eq_steps, mps_workers",
