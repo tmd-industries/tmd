@@ -333,7 +333,7 @@ def run_abfe(
         host_config = build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
     # TBD: Expose restraint params?
     res = estimate_abfe_leg(
-        mol, ff, leg, host_config, f"abfe_{leg}", md_params, n_windows, min_overlap, RestraintParams()
+        mol, ff, leg, host_config, f"{get_mol_name(mol)}_{leg}", md_params, n_windows, min_overlap, RestraintParams()
     )
     took = time.perf_counter() - start
     os.chdir(init_dir)
