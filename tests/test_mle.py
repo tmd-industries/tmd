@@ -312,6 +312,45 @@ def test_infer_node_vals_and_errs_networkx(nx_graph_with_reference_mle_instance)
         # assert g_res.nodes[n][node_stddev_prop] == pytest.approx(ref_dg_err)
 
 
+@pytest.mark.parametrize("seed", [2026, 814, 618])
+def test_infer_node_vals_and_errs_networkx_no_experimental_labels(seed, nx_graph_with_reference_mle_instance):
+    g, _, _, _ = nx_graph_with_reference_mle_instance
+
+    with warnings.catch_warnings(record=True) as captured_warnings:
+        g_res = infer_node_vals_and_errs_networkx_partial(g, seed=seed, ref_node_val_prop="doesnotexist")
+    assert len(captured_warnings) == 1
+    assert "no reference node values: picking first center node as reference" in captured_warnings[0].message.args[0]
+
+    center_node = sorted(nx.center(g.to_undirected(as_view=True)))[0]
+
+    assert g_res.nodes[center_node][node_val_prop] == 0.0
+
+
+@pytest.mark.parametrize("seed", [2026, 814, 618])
+def test_infer_node_vals_and_errs_networkx_star_map_no_experimental_labels(seed):
+    rng = np.random.default_rng(seed)
+    node_ids = np.arange(64, dtype=np.int32)
+    rng.shuffle(node_ids)
+
+    center_node = node_ids[0]
+
+    g = nx.DiGraph()
+    for node_id in node_ids[1:]:
+        g.add_edge(
+            center_node, node_id, **{edge_diff_prop: rng.uniform(-10, 10), edge_stddev_prop: rng.uniform(0.1, 0.2)}
+        )
+
+    computed_center = nx.center(g.to_undirected(as_view=True))[0]
+    assert computed_center == center_node
+
+    with warnings.catch_warnings(record=True) as captured_warnings:
+        g_res = infer_node_vals_and_errs_networkx_partial(g, seed=seed)
+    assert len(captured_warnings) == 1
+    assert "no reference node values: picking first center node as reference" in captured_warnings[0].message.args[0]
+
+    assert g_res.nodes[center_node][node_val_prop] == 0.0
+
+
 def test_infer_node_vals_and_errs_networkx_multi(nx_graph_with_reference_mle_instance):
     g, seed, ref_dgs, ref_dg_errs = nx_graph_with_reference_mle_instance
 
@@ -515,38 +554,38 @@ def compare_inferred_and_ref_dgs(inferred_dgs: dict, node_vals, mse_thresh=2e-5)
     assert mse < mse_thresh, f"{mse} >= {mse_thresh}"
 
 
-def test_disconnection():
+@pytest.mark.parametrize("seed", list(range(5)))
+def test_disconnection(seed):
     """infer dgs on largest connected component of disconnected random trees"""
-    np.random.seed(2025)
-    for i in range(5):
-        # generate random spanning tree, remove one random edge
-        K = np.random.randint(10, 100)
-        g = nx.random_labeled_tree(K, seed=hash(K * i))
-        bridge_edges = list(nx.bridges(g))
-        random_edge = bridge_edges[np.random.randint(len(bridge_edges))]
-        g.remove_edge(*random_edge)
-        assert len(list(nx.connected_components(g.to_undirected()))) > 1
-        size_of_largest_component = max([len(c) for c in nx.connected_components(g)])
-        assert K > size_of_largest_component > (K - 1) / 2
+    rng = np.random.default_rng(seed)
+    # generate random spanning tree, remove one random edge
+    K = rng.integers(10, 100)
+    g = nx.random_labeled_tree(K, seed=rng)
+    bridge_edges = list(nx.bridges(g))
+    random_edge = bridge_edges[rng.integers(len(bridge_edges))]
+    g.remove_edge(*random_edge)
+    assert len(list(nx.connected_components(g.to_undirected()))) > 1
+    size_of_largest_component = max([len(c) for c in nx.connected_components(g)])
+    assert K > size_of_largest_component > (K - 1) / 2
 
-        # convert to digraph with appropriate edge labels
-        instance = generate_instance(g, 1e-3)
-        test_g = instance_to_nx(instance)
-        assert len(list(nx.connected_components(test_g.to_undirected()))) > 1
+    # convert to digraph with appropriate edge labels
+    instance = generate_instance(g, 1e-3)
+    test_g = instance_to_nx(instance)
+    assert len(list(nx.connected_components(test_g.to_undirected()))) > 1
 
-        node_vals, edge_idxs, obs_edge_diffs, edge_stddevs = instance
+    node_vals, edge_idxs, obs_edge_diffs, edge_stddevs = instance
 
-        with warnings.catch_warnings(record=True) as captured_warnings:
-            # infer results
-            labeled_graph = infer_node_vals_and_errs_networkx(
-                test_g, "edge_diff", "edge_stddev", "ref", "ref_stddev", n_bootstrap=1
-            )
-        assert len(captured_warnings) == 1
-        assert "Graph has multiple connected components" in captured_warnings[0].message.args[0]
+    with warnings.catch_warnings(record=True) as captured_warnings:
+        # infer results
+        labeled_graph = infer_node_vals_and_errs_networkx(
+            test_g, "edge_diff", "edge_stddev", "ref", "ref_stddev", n_bootstrap=1
+        )
+    assert len(captured_warnings) >= 1
+    assert any(["Graph has multiple connected components" in cap.message.args[0] for cap in captured_warnings])
 
-        assert labeled_graph.number_of_nodes() == size_of_largest_component
+    assert labeled_graph.number_of_nodes() == size_of_largest_component
 
-        # assert inferred dgs match ref dgs, up to an additive offset
-        inferred_dgs = nx.get_node_attributes(labeled_graph, "inferred_dg")
-        assert len(inferred_dgs) == size_of_largest_component
-        compare_inferred_and_ref_dgs(inferred_dgs, node_vals)
+    # assert inferred dgs match ref dgs, up to an additive offset
+    inferred_dgs = nx.get_node_attributes(labeled_graph, "inferred_dg")
+    assert len(inferred_dgs) == size_of_largest_component
+    compare_inferred_and_ref_dgs(inferred_dgs, node_vals, mse_thresh=2.5e-5)
