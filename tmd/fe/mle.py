@@ -116,7 +116,7 @@ def infer_node_vals(edge_idxs, edge_diffs, edge_stddevs, ref_node_idxs=tuple(), 
     _assert_edges_valid(edge_idxs)
 
     if len(ref_node_idxs) == 0:
-        print("no reference node values: picking node 0 as arbitrary reference")
+        warnings.warn("no reference node values: picking node 0 as arbitrary reference")
         ref_node_idxs = np.array([0], dtype=int)
         ref_node_vals = np.array([0], dtype=float)
 
@@ -319,6 +319,12 @@ def infer_node_vals_and_errs_networkx(
             ref_node_idxs.append(n)
             ref_node_vals.append(d[ref_node_val_prop])
             ref_node_stddevs.append(d.get(ref_node_stddev_prop, 0.0))
+    if len(ref_node_idxs) == 0:
+        warnings.warn("no reference node values: picking first center node as reference")
+        center_node = sorted(nx.center(sg.to_undirected(as_view=True)))[0]
+        ref_node_idxs.append(center_node)
+        ref_node_vals.append(0.0)
+        ref_node_stddevs.append(0.0)
 
     edges = np.array(sg_relabeled.edges)
     edge_idxs = edges[:, :2]  # remove edge key in MultiDiGraph if present
