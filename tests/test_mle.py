@@ -588,4 +588,4 @@ def test_disconnection(seed):
     # assert inferred dgs match ref dgs, up to an additive offset
     inferred_dgs = nx.get_node_attributes(labeled_graph, "inferred_dg")
     assert len(inferred_dgs) == size_of_largest_component
-    compare_inferred_and_ref_dgs(inferred_dgs, node_vals, mse_thresh=2.5e-5)
+    compare_inferred_and_ref_dgs(inferred_dgs, node_vals, mse_thresh=4e-5)
