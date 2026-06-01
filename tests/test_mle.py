@@ -326,10 +326,14 @@ def test_infer_node_vals_and_errs_networkx_no_experimental_labels(seed, nx_graph
     assert g_res.nodes[center_node][node_val_prop] == 0.0
 
 
+@pytest.mark.parametrize("str_labels", [False, True])
 @pytest.mark.parametrize("seed", [2026, 814, 618])
-def test_infer_node_vals_and_errs_networkx_star_map_no_experimental_labels(seed):
+def test_infer_node_vals_and_errs_networkx_star_map_no_experimental_labels(seed, str_labels):
     rng = np.random.default_rng(seed)
+
     node_ids = np.arange(64, dtype=np.int32)
+    if str_labels:
+        node_ids = [str(x) for x in node_ids]
     rng.shuffle(node_ids)
 
     center_node = node_ids[0]
