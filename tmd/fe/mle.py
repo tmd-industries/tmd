@@ -321,7 +321,7 @@ def infer_node_vals_and_errs_networkx(
             ref_node_stddevs.append(d.get(ref_node_stddev_prop, 0.0))
     if len(ref_node_idxs) == 0:
         warnings.warn("no reference node values: picking first center node as reference")
-        center_node = sorted(nx.center(sg.to_undirected(as_view=True)))[0]
+        center_node = sorted(nx.center(sg_relabeled.to_undirected(as_view=True)))[0]
         ref_node_idxs.append(center_node)
         ref_node_vals.append(0.0)
         ref_node_stddevs.append(0.0)
