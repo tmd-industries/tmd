@@ -79,6 +79,7 @@ def get_single_topology_rest(
     )
 
 
+@pytest.mark.nogpu
 @pytest.mark.parametrize("lamb", [0.0, 0.4, 0.5, 1.0])
 @pytest.mark.parametrize("temperature_scale_interpolation_fxn", ["linear", "quadratic", "exponential"])
 @pytest.mark.parametrize("mol_pair", np.random.default_rng(2024).choice(hif2a_ligand_pairs, size=3))
@@ -252,6 +253,7 @@ def get_identity_transformation(mol):
     return SingleTopologyREST(mol, mol, core, forcefield, 2.0, "linear")
 
 
+@pytest.mark.nogpu
 def test_single_topology_rest_propers():
     """Example with some propers not in the REST region"""
     mol_a = hif2a_ligands["15"]
@@ -261,6 +263,7 @@ def test_single_topology_rest_propers():
     assert set(st.target_propers.items()) < set(st.candidate_propers.items())
 
 
+@pytest.mark.nogpu
 def test_single_topology_rest_propers_identity():
     # benzene: no propers are scaled
     benzene = ligand_from_smiles("c1ccccc1")
@@ -278,6 +281,7 @@ def test_single_topology_rest_propers_identity():
     assert len(set(st.candidate_propers.values())) == 9 * 6 + 6
 
 
+@pytest.mark.nogpu
 @pytest.mark.parametrize("seed", [2026])
 def test_single_topology_custom_rest_atoms(seed):
     """Test the ability to manually specify which atoms should be included in the REST region by setting
@@ -329,6 +333,7 @@ def test_single_topology_custom_rest_atoms(seed):
     assert len(st.rest_region_atom_idxs) == st.get_num_atoms()
 
 
+@pytest.mark.nogpu
 @pytest.mark.parametrize(
     "lamb", [0.0, 0.4, 0.51, 1.0]
 )  # NOTE: asymmetry at lambda = 0.5 due to discontinuity in combine_confs
