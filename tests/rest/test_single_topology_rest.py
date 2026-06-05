@@ -19,6 +19,7 @@ from functools import cache
 
 import jax
 import matplotlib.pyplot as plt
+import networkx as nx
 import numpy as np
 import pytest
 from common import ligand_from_smiles
@@ -40,8 +41,9 @@ from tmd.fe.rest.interpolation import (
 from tmd.fe.rest.single_topology import REST_REGION_ATOM_FLAG, SingleTopologyREST
 from tmd.fe.single_topology import SingleTopology
 from tmd.fe.system import GuestSystem
-from tmd.fe.utils import get_romol_conf, read_sdf_mols_by_name
+from tmd.fe.utils import get_romol_conf, read_sdf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
+from tmd.graph_utils import convert_to_nx
 from tmd.md import builders
 from tmd.potentials import NonbondedInteractionGroup
 from tmd.utils import path_to_internal_file
@@ -72,11 +74,52 @@ def get_single_topology(mol_a, mol_b, core) -> SingleTopology:
 
 @cache
 def get_single_topology_rest(
-    mol_a, mol_b, core, max_temperature_scale: float, temperature_scale_interpolation_fxn: InterpolationFxnName
+    mol_a,
+    mol_b,
+    core,
+    max_temperature_scale: float,
+    temperature_scale_interpolation_fxn: InterpolationFxnName,
+    **kwargs,
 ) -> SingleTopologyREST:
     return SingleTopologyREST(
-        mol_a, mol_b, np.asarray(core), forcefield, max_temperature_scale, temperature_scale_interpolation_fxn
+        mol_a, mol_b, np.asarray(core), forcefield, max_temperature_scale, temperature_scale_interpolation_fxn, **kwargs
     )
+
+
+@pytest.mark.nogpu
+def test_single_topology_rest_macrocycle():
+    mols = read_sdf("tests/data/3RKZ_macrocycles.sdf")
+    assert len(mols) >= 2
+
+    mol_a = mols[0]
+    mol_b = mols[1]
+
+    max_ring_size = 7
+    core = get_core(mol_a, mol_b)
+    st_rest = get_single_topology_rest(mol_a, mol_b, core, 2.0, "exponential", maximum_ring_size=max_ring_size)
+
+    assert all(len(cycle) < max_ring_size for cycle in st_rest._cycles_a)
+    assert all(len(cycle) < max_ring_size for cycle in st_rest._cycles_b)
+
+    alchemical_mol = st_rest.mol(0.0)
+    alchemical_nx = convert_to_nx(alchemical_mol)
+
+    # Verify that there is a macrocyclic ring larger than max_ring_size
+    largest_ring = max(nx.cycle_basis(alchemical_nx), key=lambda x: len(x))
+    assert len(largest_ring) > max_ring_size
+
+    rest_region_atoms = st_rest.rest_region_atom_idxs
+    # There may be parts of the ring included, but shouldn't be all of it
+    assert len(set(largest_ring).intersection(rest_region_atoms)) < len(largest_ring)
+
+    st_rest_include_largest_ring = get_single_topology_rest(
+        mol_a, mol_b, core, 2.0, "exponential", maximum_ring_size=None
+    )
+
+    assert len(st_rest_include_largest_ring.rest_region_atom_idxs) > len(st_rest.rest_region_atom_idxs)
+
+    # If we allow it, all atoms will be selected
+    assert len(set(largest_ring).intersection(st_rest_include_largest_ring.rest_region_atom_idxs)) == len(largest_ring)
 
 
 @pytest.mark.nogpu
