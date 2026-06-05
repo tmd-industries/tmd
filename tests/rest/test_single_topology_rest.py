@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 from common import ligand_from_smiles
 from numpy.typing import NDArray
-from rdkit.Chem import rdMolDescriptors
+from rdkit.Chem import AllChem, rdMolDescriptors
 
 from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS
 from tmd.fe import atom_mapping
@@ -322,6 +322,27 @@ def test_single_topology_rest_propers_identity():
     phenylcyclohexane = ligand_from_smiles("c1ccc(C2CCCCC2)cc1")
     st = get_identity_transformation(phenylcyclohexane)
     assert len(set(st.candidate_propers.values())) == 9 * 6 + 6
+
+
+def test_indane_to_indole_rest_region():
+    """Verify that fused rings aren't expanded to"""
+
+    indole = ligand_from_smiles("C12=C(C=CN2)C=CC=C1")
+    indane = ligand_from_smiles("c1ccc2c(c1)CCC2")
+
+    atom_map = ((0, 3), (1, 4), (2, 6), (3, 7), (4, 8), (5, 5), (6, 0), (7, 1), (8, 2))
+    AllChem.AlignMol(indole, indane, atomMap=atom_map)
+
+    core = get_core(indole, indane)
+    st = get_single_topology_rest(indole, indane, core, 2.0, "exponential")
+
+    print(st.base_rest_region_atom_idxs)
+
+    from tmd.fe.rest.plots import plot_rest_region
+
+    svg = plot_rest_region(st)
+    with open("rest_region.svg", "w") as ofs:
+        ofs.write(svg)
 
 
 @pytest.mark.nogpu
