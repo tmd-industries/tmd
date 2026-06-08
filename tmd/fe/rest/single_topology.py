@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -83,6 +84,7 @@ class SingleTopologyREST(SingleTopology):
         forcefield: Forcefield,
         max_temperature_scale: float,
         temperature_scale_interpolation: InterpolationFxnName = "exponential",
+        maximum_ring_size: int | None = 7,
     ):
         """
         Parameters
@@ -104,15 +106,27 @@ class SingleTopologyREST(SingleTopology):
 
         temperature_scale_interpolation: str
             Interpolation function to use for temperature scaling. One of "linear", "quadratic", or "exponential"
+
+        maximum_ring_size: integer | None
+            Maximum size of ring that will be considered for expansion. If none, all rings will be accepted
         """
         super().__init__(mol_a, mol_b, core, forcefield)
         self._temperature_scale_interpolation_fxn: InterpolationFxn = get_temperature_scale_interpolation_fxn(
             max_temperature_scale, temperature_scale_interpolation
         )
+        self._maximum_ring_size = maximum_ring_size
         self._nxg_a = convert_to_nx(mol_a)
         self._nxg_b = convert_to_nx(mol_b)
-        self._cycles_a = nx.cycle_basis(self._nxg_a)
-        self._cycles_b = nx.cycle_basis(self._nxg_b)
+        self._cycles_a = [
+            cycle
+            for cycle in nx.cycle_basis(self._nxg_a)
+            if self._maximum_ring_size is None or len(cycle) < self._maximum_ring_size
+        ]
+        self._cycles_b = [
+            cycle
+            for cycle in nx.cycle_basis(self._nxg_b)
+            if self._maximum_ring_size is None or len(cycle) < self._maximum_ring_size
+        ]
 
     # expand REST region to include complete ring groups
     @staticmethod
