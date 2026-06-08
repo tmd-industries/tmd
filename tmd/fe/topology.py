@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ from tmd.fe.system import GuestSystem
 from tmd.fe.utils import get_romol_conf
 from tmd.ff import Forcefield
 from tmd.ff.handlers import nonbonded
+from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups
 from tmd.potentials import ChiralAtomRestraint, ChiralBondRestraint
 from tmd.potentials.jax_utils import get_all_pairs_indices
 from tmd.potentials.nonbonded import combining_rule_epsilon, combining_rule_sigma
@@ -260,6 +261,10 @@ class BaseTopology:
         this topology as a list of NDArray.
         """
         return [np.arange(self.get_num_atoms())]
+
+    def get_constraint_groups(self) -> tuple[list[list[int]], list[list[float]]]:
+        """Return the hydrogen-bond constraint groups for the molecule."""
+        return get_hydrogen_bond_constraint_groups(self.mol)
 
     def parameterize_nonbonded(
         self,
@@ -508,6 +513,18 @@ class MultiTopology(BaseTopology):
             component_idxs.append(np.arange(mol.GetNumAtoms()) + offset)
             offset += mol.GetNumAtoms()
         return component_idxs
+
+    def get_constraint_groups(self) -> tuple[list[list[int]], list[list[float]]]:
+        """Return the hydrogen-bond constraint groups for the molecules."""
+        combined_groups = []
+        combined_dists = []
+        offset = 0
+        for mol in self.mols:
+            groups, dists = get_hydrogen_bond_constraint_groups(mol)
+            combined_groups.extend([(np.array(group) + offset).tolist() for group in groups])
+            combined_dists.extend(dists)
+            offset += mol.GetNumAtoms()
+        return combined_groups, combined_dists
 
     def _parameterize_nonbonded(
         self,

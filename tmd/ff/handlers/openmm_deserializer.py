@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections import defaultdict
 
 import numpy as np
 import openmm as mm
@@ -145,7 +147,7 @@ def deserialize_nonbonded_force(force, N):
 
 def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potentials.BoundPotential], NDArray]:
     """
-    Deserialize an OpenMM XML file
+    Deserialize an OpenMM System Object
 
     Parameters
     ----------
@@ -281,3 +283,67 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
     bps = [bond, angle, proper, improper, nonbonded]
 
     return bps, np.array(masses)
+
+
+def deserialize_constraints(system: mm.System) -> tuple[list[list[int]], list[list[float]]]:
+    """Extract constraint groups from an OpenMM system.
+
+    Returns constraint groups in the same format as get_hydrogen_bond_constraint_groups,
+    with each group having the heavy atom first followed by hydrogen indices,
+    and corresponding bond distances.
+
+    Parameters
+    ----------
+    system: openmm.System
+        A system object containing constraints
+
+    Returns
+    -------
+    groups : list of list of int
+        Atom index groups with heavy atom first.
+    distances : list of list of float
+        Bond distances from the heavy atom to each hydrogen in the group.
+    """
+    num_constraints = system.getNumConstraints()
+    if num_constraints == 0:
+        return [], []
+
+    constraints = []
+    for i in range(num_constraints):
+        i_idx, j_idx, distance = system.getConstraintParameters(i)
+        distance = value(distance)
+        constraints.append((i_idx, j_idx, distance))
+
+    hydrogen_mass_threshold = 1.5
+
+    is_hydrogen = []
+    for p in range(system.getNumParticles()):
+        is_hydrogen.append(value(system.getParticleMass(p)) < hydrogen_mass_threshold)
+
+    heavy_to_hydrogens = defaultdict(list)
+    for i_idx, j_idx, distance in constraints:
+        i_is_h = is_hydrogen[i_idx]
+        j_is_h = is_hydrogen[j_idx]
+
+        if i_is_h and not j_is_h:
+            heavy_atom = j_idx
+            hydrogen_atom = i_idx
+        elif j_is_h and not i_is_h:
+            heavy_atom = i_idx
+            hydrogen_atom = j_idx
+        elif not i_is_h and not j_is_h:
+            assert False, f"Unexpected got two heavy atoms with constraints: {i_idx} -> {j_idx}"
+        else:
+            continue
+
+        heavy_to_hydrogens[heavy_atom].append((hydrogen_atom, distance))
+
+    groups = []
+    distances = []
+    for heavy, hydrogens in heavy_to_hydrogens.items():
+        group = [heavy, *[h for h, _ in hydrogens]]
+        group_dists = [d for _, d in hydrogens]
+        groups.append(group)
+        distances.append(group_dists)
+
+    return groups, distances

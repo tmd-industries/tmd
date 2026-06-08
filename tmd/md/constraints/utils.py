@@ -1,0 +1,45 @@
+import networkx as nx
+from rdkit import Chem
+
+from tmd.fe.utils import get_romol_conf
+from tmd.potentials.jax_utils import distance
+
+
+def get_hydrogen_bond_constraint_groups(mol: Chem.Mol) -> tuple[list[list[int]], list[list[float]]]:
+    """Return hydrogen-bond constraint groups for a molecule.
+
+    Builds connected components of heavy atoms and their bonded hydrogens.
+    Each group has the heavy atom first, followed by hydrogen indices.
+
+    Returns
+    -------
+    groups : list of list of int
+        Atom index groups with heavy atom first.
+    distances : list of list of float
+        Bond distances from the heavy atom to each hydrogen in the group.
+    """
+    graph = nx.Graph()
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() == 1:
+            graph.add_node(atom.GetIdx(), **{"hydrogen": True})
+    for bond in mol.GetBonds():
+        start_idx = bond.GetBeginAtomIdx()
+        end_idx = bond.GetEndAtomIdx()
+        if start_idx in graph.nodes or end_idx in graph.nodes:
+            graph.add_edge(start_idx, end_idx)
+    constraint_groups = []
+    for component in nx.connected_components(graph):
+        heavy_atom_first_component = list(
+            sorted([atom for atom in component], key=lambda x: graph.nodes[x].get("hydrogen", False))
+        )
+        constraint_groups.append(heavy_atom_first_component)
+
+    conf = get_romol_conf(mol)
+    distances = []
+    for group in constraint_groups:
+        # Only support up to 3 bonds (+1 for the heavy atom)
+        assert 1 < len(group) <= 4
+        heavy = group[0]
+        group_dist = [abs(distance(conf[heavy], conf[idx], None)) for idx in group[1:]]
+        distances.append(group_dist)
+    return constraint_groups, distances

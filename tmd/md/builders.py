@@ -520,7 +520,7 @@ def construct_default_omm_system(
     return ff.createSystem(
         modeller.topology,
         nonbondedMethod=app.NoCutoff,
-        constraints=None,
+        constraints=app.HBonds,
         rigidWater=False,
         residueTemplates=residue_templates,
     )

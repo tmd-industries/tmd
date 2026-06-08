@@ -46,6 +46,7 @@ from tmd.fe.system import GuestSystem, HostGuestSystem, HostSystem
 from tmd.fe.topology import exclude_all_ligand_ligand_ixns
 from tmd.ff import Forcefield
 from tmd.graph_utils import convert_to_nx
+from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups
 from tmd.potentials import (
     BoundPotential,
     ChiralAtomRestraint,
@@ -1506,6 +1507,50 @@ class SingleTopology(AtomMapMixin):
             mol_c_masses.append(mass)
 
         return mol_c_masses
+
+    def get_constraint_groups(self) -> tuple[list[list[int]], list[list[float]]]:
+        """Return the hydrogen-bond constraint groups for the combined topology."""
+
+        # Assert there are no heavy -> hydrogen mappings
+        for a, b in self.core:
+            if self.mol_a.GetAtomWithIdx(int(a)).GetAtomicNum() == 1:
+                assert self.mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() == 1
+            else:
+                assert self.mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() != 1
+
+        groups_a, dists_a = get_hydrogen_bond_constraint_groups(self.mol_a)
+        groups_c_anchor_to_groups = {
+            self.a_to_c[group[0]]: [self.a_to_c[atom] for atom in group[1:]] for group in groups_a
+        }
+        groups_c_anchor_to_dists = {self.a_to_c[group[0]]: dists for group, dists in zip(groups_a, dists_a)}
+
+        groups_b, dists_b = get_hydrogen_bond_constraint_groups(self.mol_b)
+        groups_b_anchor_to_hydrogens = {
+            self.b_to_c[group[0]]: [self.b_to_c[atom] for atom in group[1:]] for group in groups_b
+        }
+        groups_b_anchor_to_dists = {self.b_to_c[group[0]]: dists for group, dists in zip(groups_b, dists_b)}
+
+        # Merge together the two groups
+        for anchor, hydrogens_b in groups_b_anchor_to_hydrogens.items():
+            group_dists_b = groups_b_anchor_to_dists[anchor]
+            # If the anchor is novel, simply add the constraint group
+            if anchor not in groups_c_anchor_to_groups:
+                groups_c_anchor_to_groups[anchor] = hydrogens_b
+                groups_c_anchor_to_dists[anchor] = group_dists_b
+            else:
+                hydrogen_b_to_idx = {atom: idx for idx, atom in enumerate(hydrogens_b)}
+                new_hydrogens = set(groups_c_anchor_to_groups[anchor]).difference(hydrogens_b)
+                for atom in new_hydrogens:
+                    idx = hydrogen_b_to_idx[atom]
+                    groups_c_anchor_to_groups[anchor].append(atom)
+                    groups_c_anchor_to_dists[anchor].append(group_dists_b[idx])
+
+        groups_c = []
+        dists_c = []
+        for anchor, hydrogens in groups_c_anchor_to_groups.items():
+            groups_c.append([anchor * hydrogens])
+            dists_c.append(groups_c_anchor_to_dists[anchor])
+        return groups_c, dists_c
 
     def combine_confs(self, x_a: NDArray, x_b: NDArray, lamb: float = 1.0) -> NDArray:
         """
