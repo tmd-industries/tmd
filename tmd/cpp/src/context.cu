@@ -16,6 +16,7 @@
 #include "barostat.hpp"
 #include "bound_potential.hpp"
 #include "constants.hpp"
+#include "constrained_langevin_integrator.hpp"
 #include "context.hpp"
 
 #include "fixed_point.hpp"
@@ -129,8 +130,15 @@ template <typename RealType> RealType Context<RealType>::_get_temperature() {
           std::dynamic_pointer_cast<LangevinIntegrator<RealType>>(intg_);
       langevin != nullptr) {
     return langevin->get_temperature();
+  } else if (std::shared_ptr<ConstrainedLangevinIntegrator<RealType>>
+                 constrained = std::dynamic_pointer_cast<
+                     ConstrainedLangevinIntegrator<RealType>>(intg_);
+             constrained != nullptr) {
+    return constrained->get_temperature();
   } else {
-    throw std::runtime_error("integrator must be LangevinIntegrator.");
+    throw std::runtime_error(
+        "integrator must be LangevinIntegrator or "
+        "ConstrainedLangevinIntegrator.");
   }
 }
 

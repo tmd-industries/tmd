@@ -87,10 +87,9 @@ void ConstrainedLangevinIntegrator<RealType>::step_fwd(
     cudaStream_t stream) {
   const int D = 3;
 
-  if (d_idxs != nullptr) {
-    throw std::runtime_error(
-        "ConstrainedLangevinIntegrator does not support local MD (d_idxs)");
-  }
+  // d_idxs (non-null under local MD) is the free-index buffer: atoms whose
+  // entry equals N are frozen and skipped by the sub-step kernels and treated
+  // as infinite-mass anchors by SHAKE/RATTLE.
 
   constexpr size_t tpb = DEFAULT_THREADS_PER_BLOCK;
   const dim3 atom_grid(ceil_divide(N_, tpb), batch_size_);
@@ -103,44 +102,44 @@ void ConstrainedLangevinIntegrator<RealType>::step_fwd(
 
   // B: full velocity kick, then project velocities onto the constraint
   // tangent space.
-  k_constrained_kick<RealType, D>
-      <<<atom_grid, tpb, 0, stream>>>(batch_size_, N_, d_cbs_, d_v_t, d_du_dx_);
+  k_constrained_kick<RealType, D><<<atom_grid, tpb, 0, stream>>>(
+      batch_size_, N_, d_cbs_, d_idxs, d_v_t, d_du_dx_);
   gpuErrchk(cudaPeekAtLastError());
-  constraints_->apply_velocity_constraints(batch_size_, N_, d_inv_mass_, d_x_t,
-                                           d_v_t, stream);
+  constraints_->apply_velocity_constraints(batch_size_, N_, d_inv_mass_, d_idxs,
+                                           d_x_t, d_v_t, stream);
 
   // A (first half drift): save pre-drift positions, drift, then SHAKE and apply
   // the constraint-consistent velocity correction. A subsequent RATTLE removes
   // any residual velocity component normal to the constraints.
   gpuErrchk(cudaMemcpyAsync(d_x_ref_, d_x_t, coords_size,
                             cudaMemcpyDeviceToDevice, stream));
-  k_constrained_drift<RealType, D>
-      <<<atom_grid, tpb, 0, stream>>>(batch_size_, N_, d_v_t, d_x_t, half_dt);
+  k_constrained_drift<RealType, D><<<atom_grid, tpb, 0, stream>>>(
+      batch_size_, N_, d_v_t, d_idxs, d_x_t, half_dt);
   gpuErrchk(cudaPeekAtLastError());
-  constraints_->apply_position_constraints(batch_size_, N_, d_inv_mass_,
+  constraints_->apply_position_constraints(batch_size_, N_, d_inv_mass_, d_idxs,
                                            d_x_ref_, d_x_t, d_v_t, half_dt,
                                            /*update_velocity=*/true, stream);
-  constraints_->apply_velocity_constraints(batch_size_, N_, d_inv_mass_, d_x_t,
-                                           d_v_t, stream);
+  constraints_->apply_velocity_constraints(batch_size_, N_, d_inv_mass_, d_idxs,
+                                           d_x_t, d_v_t, stream);
 
   // O: Ornstein-Uhlenbeck velocity update, then RATTLE.
   k_constrained_ornstein<RealType, D><<<atom_grid, tpb, 0, stream>>>(
-      batch_size_, N_, ca_, d_ccs_, d_rand_states_.data, d_v_t);
+      batch_size_, N_, ca_, d_ccs_, d_idxs, d_rand_states_.data, d_v_t);
   gpuErrchk(cudaPeekAtLastError());
-  constraints_->apply_velocity_constraints(batch_size_, N_, d_inv_mass_, d_x_t,
-                                           d_v_t, stream);
+  constraints_->apply_velocity_constraints(batch_size_, N_, d_inv_mass_, d_idxs,
+                                           d_x_t, d_v_t, stream);
 
   // A (second half drift): save, drift, SHAKE, velocity correction, RATTLE.
   gpuErrchk(cudaMemcpyAsync(d_x_ref_, d_x_t, coords_size,
                             cudaMemcpyDeviceToDevice, stream));
-  k_constrained_drift<RealType, D>
-      <<<atom_grid, tpb, 0, stream>>>(batch_size_, N_, d_v_t, d_x_t, half_dt);
+  k_constrained_drift<RealType, D><<<atom_grid, tpb, 0, stream>>>(
+      batch_size_, N_, d_v_t, d_idxs, d_x_t, half_dt);
   gpuErrchk(cudaPeekAtLastError());
-  constraints_->apply_position_constraints(batch_size_, N_, d_inv_mass_,
+  constraints_->apply_position_constraints(batch_size_, N_, d_inv_mass_, d_idxs,
                                            d_x_ref_, d_x_t, d_v_t, half_dt,
                                            /*update_velocity=*/true, stream);
-  constraints_->apply_velocity_constraints(batch_size_, N_, d_inv_mass_, d_x_t,
-                                           d_v_t, stream);
+  constraints_->apply_velocity_constraints(batch_size_, N_, d_inv_mass_, d_idxs,
+                                           d_x_t, d_v_t, stream);
 }
 
 template <typename RealType>
@@ -148,23 +147,20 @@ void ConstrainedLangevinIntegrator<RealType>::initialize(
     std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
     RealType *d_x_t, RealType *d_v_t, RealType *d_box_t, unsigned int *d_idxs,
     cudaStream_t stream) {
-  if (d_idxs != nullptr) {
-    throw std::runtime_error(
-        "ConstrainedLangevinIntegrator does not support local MD (d_idxs)");
-  }
   const int D = 3;
   const size_t coords_size = batch_size_ * N_ * D * sizeof(*d_x_t);
 
   // Ensure the initial state satisfies the constraints: project positions onto
   // the manifold (without modifying velocities) and then remove any velocity
-  // component along the constraints.
+  // component along the constraints. d_idxs (non-null under local MD) freezes
+  // atoms whose entry equals N.
   gpuErrchk(cudaMemcpyAsync(d_x_ref_, d_x_t, coords_size,
                             cudaMemcpyDeviceToDevice, stream));
   constraints_->apply_position_constraints(
-      batch_size_, N_, d_inv_mass_, d_x_ref_, d_x_t, d_v_t,
+      batch_size_, N_, d_inv_mass_, d_idxs, d_x_ref_, d_x_t, d_v_t,
       static_cast<RealType>(1.0), /*update_velocity=*/false, stream);
-  constraints_->apply_velocity_constraints(batch_size_, N_, d_inv_mass_, d_x_t,
-                                           d_v_t, stream);
+  constraints_->apply_velocity_constraints(batch_size_, N_, d_inv_mass_, d_idxs,
+                                           d_x_t, d_v_t, stream);
 }
 
 template <typename RealType>

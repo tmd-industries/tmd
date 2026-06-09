@@ -257,3 +257,104 @@ def test_constraints_hold_under_batched_dynamics(precision, integrator_cls, cont
     final = xs[-1]
     assert not np.allclose(final[0], final[1])
 
+
+def _constrained_water_box(precision):
+    """Build a solvated water box with a constrained integrator and return the
+    Context plus the (global) constraint pairs and target distances.
+
+    Local MD requires a NonbondedInteractionGroup potential, so we use a real
+    water box rather than the toy two-molecule system.
+    """
+    from tmd.fe.model_utils import apply_hmr
+    from tmd.ff import Forcefield
+    from tmd.lib import ConstrainedLangevinIntegrator
+    from tmd.md.builders import build_water_system
+    from tmd.potentials import HarmonicAngle
+    from tmd.potentials import HarmonicBond as HarmonicBondPot
+    from tmd.potentials.potential import get_bound_potential_by_type
+
+    ff = Forcefield.load_default()
+    host_config = build_water_system(3.0, ff.water_ff, box_margin=0.1)
+    bound_pots = host_config.host_system.get_U_fns()
+    masses = np.array(host_config.masses)
+
+    bond_bp = get_bound_potential_by_type(bound_pots, HarmonicBondPot)
+    angle_bp = get_bound_potential_by_type(bound_pots, HarmonicAngle)
+
+    clusters = cst.build_constraints(
+        bond_bp.potential.idxs,
+        bond_bp.params,
+        masses,
+        angle_bp.potential.idxs,
+        angle_bp.params,
+        rigid_water=True,
+    )
+    pairs, targets = _global_constraint_pairs(clusters)
+
+    constrained_bond_idxs, constrained_bond_params = cst.remove_constrained_bonds(
+        bond_bp.potential.idxs, bond_bp.params, clusters.constrained_bond_rows
+    )
+
+    hmr_masses = apply_hmr(masses, bond_bp.potential.idxs)
+    intg = ConstrainedLangevinIntegrator(
+        temperature=300.0,
+        dt=1.5e-3,
+        friction=1.0,
+        masses=hmr_masses,
+        seed=2025,
+        constraints=clusters,
+    ).impl(precision=precision)
+
+    bps = []
+    for bp in bound_pots:
+        if bp is bond_bp:
+            new_bp = HarmonicBondPot(bp.potential.num_atoms, constrained_bond_idxs).bind(constrained_bond_params)
+            bps.append(new_bp.to_gpu(precision=precision).bound_impl)
+        else:
+            bps.append(bp.to_gpu(precision=precision).bound_impl)
+
+    from tmd import lib
+
+    conf = host_config.conf.astype(precision)
+    box = host_config.box.astype(precision)
+    ctxt = lib.Context(conf, np.zeros_like(conf), box, intg, bps, precision=precision)
+    return ctxt, conf, box, pairs, targets
+
+
+@pytest.mark.parametrize("precision, dist_atol", [(np.float64, 1e-6), (np.float32, 5e-3)])
+def test_constraints_hold_under_local_md(precision, dist_atol):
+    """Local MD freezes a per-step subset of atoms. The constrained integrator
+    must treat frozen atoms as infinite-mass anchors so that every constraint --
+    including clusters that straddle the free/frozen boundary -- stays rigid,
+    while frozen atoms remain stationary."""
+    ctxt, _, _, pairs, targets = _constrained_water_box(precision)
+
+    # Equilibrate briefly with global constrained dynamics.
+    ctxt.multiple_steps(200, 200)
+
+    # Reference positions at the start of the local move (the frozen atoms are
+    # held relative to these, not the original coordinates).
+    x_pre = ctxt.get_x_t()
+
+    local_idx = 0  # a water oxygen at the start of the box
+    xs, _ = ctxt.multiple_steps_local(
+        500, np.array([local_idx], dtype=np.int32), store_x_interval=50, seed=2025
+    )
+    assert len(xs) > 0
+
+    # Every constraint distance must be preserved in every frame. Pairs whose
+    # atoms are frozen are held trivially; free pairs are held by SHAKE/RATTLE;
+    # straddling pairs are held by the infinite-mass-anchor treatment.
+    for frame in xs:
+        d = np.linalg.norm(frame[pairs[:, 0]] - frame[pairs[:, 1]], axis=1)
+        np.testing.assert_allclose(d, targets, atol=dist_atol)
+
+    # The reference atom is frozen by local MD and must not move.
+    np.testing.assert_array_equal(xs[-1][local_idx], x_pre[local_idx])
+
+    # Local MD must actually partition the system: some atoms move (free region)
+    # and some stay put (frozen region).
+    moved = ~np.all(np.isclose(xs[-1], x_pre), axis=1)
+    assert moved.any(), "expected some atoms to move in the free region"
+    assert (~moved).any(), "expected some atoms to remain frozen"
+

@@ -51,6 +51,7 @@ __global__ void k_constrain_positions(
     const int *__restrict__ constraint_local_j,         // [total_constraints]
     const RealType *__restrict__ constraint_r0,         // [total_constraints]
     const RealType *__restrict__ inv_mass,              // [num_systems * N]
+    const unsigned int *__restrict__ idxs,             // [num_systems * N] or null
     const RealType *__restrict__ x_ref,                 // [num_systems * N * 3]
     RealType *__restrict__ x,                           // [num_systems * N * 3]
     RealType *__restrict__ v,                           // [num_systems * N * 3]
@@ -74,6 +75,7 @@ __global__ void k_constrain_positions(
 
     // Load cluster state into registers.
     int global_atom[CONSTRAINT_MAX_CLUSTER_ATOMS];
+    bool frozen[CONSTRAINT_MAX_CLUSTER_ATOMS];
     RealType pos[CONSTRAINT_MAX_CLUSTER_ATOMS][D];
     RealType ref[CONSTRAINT_MAX_CLUSTER_ATOMS][D];
     RealType winv[CONSTRAINT_MAX_CLUSTER_ATOMS];
@@ -88,7 +90,15 @@ __global__ void k_constrain_positions(
       ref[a][0] = x_ref[base + 0];
       ref[a][1] = x_ref[base + 1];
       ref[a][2] = x_ref[base + 2];
-      winv[a] = inv_mass[system_idx * N + atom];
+      // A frozen atom (local MD) acts as an infinite-mass anchor: it does not
+      // move during the drift, so its position equals its reference and its
+      // inverse mass is treated as zero.
+      const bool is_frozen =
+          idxs != nullptr &&
+          idxs[system_idx * N + atom] >= static_cast<unsigned int>(N);
+      frozen[a] = is_frozen;
+      winv[a] = is_frozen ? static_cast<RealType>(0.0)
+                          : inv_mass[system_idx * N + atom];
     }
 
     // Iterative SHAKE (Gauss-Seidel sweeps over constraints).
@@ -142,6 +152,11 @@ __global__ void k_constrain_positions(
                         : static_cast<RealType>(0.0);
 
     for (int a = 0; a < n_atoms; a++) {
+      // Frozen atoms are anchors: their position is unchanged and their
+      // velocity must not be overwritten with the constraint-consistent value.
+      if (frozen[a]) {
+        continue;
+      }
       const int base = system_idx * N * D + global_atom[a] * D;
       x[base + 0] = pos[a][0];
       x[base + 1] = pos[a][1];
@@ -170,6 +185,7 @@ __global__ void k_constrain_velocities(
     const int *__restrict__ constraint_local_i,
     const int *__restrict__ constraint_local_j,
     const RealType *__restrict__ inv_mass,
+    const unsigned int *__restrict__ idxs, // [num_systems * N] or null
     const RealType *__restrict__ x, // [num_systems * N * 3]
     RealType *__restrict__ v,       // [num_systems * N * 3]
     const RealType tol, const int max_iters) {
@@ -190,6 +206,7 @@ __global__ void k_constrain_velocities(
     const int con_end = cluster_constraint_offsets[cluster_idx + 1];
 
     int global_atom[CONSTRAINT_MAX_CLUSTER_ATOMS];
+    bool frozen[CONSTRAINT_MAX_CLUSTER_ATOMS];
     RealType pos[CONSTRAINT_MAX_CLUSTER_ATOMS][D];
     RealType vel[CONSTRAINT_MAX_CLUSTER_ATOMS][D];
     RealType winv[CONSTRAINT_MAX_CLUSTER_ATOMS];
@@ -201,10 +218,24 @@ __global__ void k_constrain_velocities(
       pos[a][0] = x[base + 0];
       pos[a][1] = x[base + 1];
       pos[a][2] = x[base + 2];
-      vel[a][0] = v[base + 0];
-      vel[a][1] = v[base + 1];
-      vel[a][2] = v[base + 2];
-      winv[a] = inv_mass[system_idx * N + atom];
+      // A frozen atom (local MD) is physically stationary: treat its velocity
+      // as zero and its inverse mass as zero so it anchors the constraint
+      // without absorbing momentum. Its stored velocity is left untouched.
+      const bool is_frozen =
+          idxs != nullptr &&
+          idxs[system_idx * N + atom] >= static_cast<unsigned int>(N);
+      frozen[a] = is_frozen;
+      if (is_frozen) {
+        vel[a][0] = static_cast<RealType>(0.0);
+        vel[a][1] = static_cast<RealType>(0.0);
+        vel[a][2] = static_cast<RealType>(0.0);
+        winv[a] = static_cast<RealType>(0.0);
+      } else {
+        vel[a][0] = v[base + 0];
+        vel[a][1] = v[base + 1];
+        vel[a][2] = v[base + 2];
+        winv[a] = inv_mass[system_idx * N + atom];
+      }
     }
 
     for (int iter = 0; iter < max_iters; iter++) {
@@ -247,6 +278,9 @@ __global__ void k_constrain_velocities(
     }
 
     for (int a = 0; a < n_atoms; a++) {
+      if (frozen[a]) {
+        continue;
+      }
       const int base = system_idx * N * D + global_atom[a] * D;
       v[base + 0] = vel[a][0];
       v[base + 1] = vel[a][1];
@@ -264,22 +298,27 @@ template <typename RealType, int D>
 __global__ void
 k_constrained_kick(const int num_systems, const int N,
                    const RealType *__restrict__ cbs, // [num_systems * N], dt/m
+                   const unsigned int *__restrict__ idxs, // [num_systems*N] or null
                    RealType *__restrict__ v,
                    unsigned long long *__restrict__ du_dx) {
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
     return;
   }
-  int atom_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  while (atom_idx < N) {
-    const RealType cb = cbs[system_idx * N + atom_idx];
-    for (int d = 0; d < D; d++) {
-      const int idx = system_idx * N * D + atom_idx * D + d;
-      const RealType force = -FIXED_TO_FLOAT<RealType>(du_dx[idx]);
-      v[idx] += cb * force;
-      du_dx[idx] = 0;
+  int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (kernel_idx < N) {
+    const int atom_idx =
+        (idxs == nullptr ? kernel_idx : idxs[system_idx * N + kernel_idx]);
+    if (atom_idx < N) {
+      const RealType cb = cbs[system_idx * N + atom_idx];
+      for (int d = 0; d < D; d++) {
+        const int idx = system_idx * N * D + atom_idx * D + d;
+        const RealType force = -FIXED_TO_FLOAT<RealType>(du_dx[idx]);
+        v[idx] += cb * force;
+        du_dx[idx] = 0;
+      }
     }
-    atom_idx += gridDim.x * blockDim.x;
+    kernel_idx += gridDim.x * blockDim.x;
   }
 }
 
@@ -287,19 +326,24 @@ k_constrained_kick(const int num_systems, const int N,
 template <typename RealType, int D>
 __global__ void k_constrained_drift(const int num_systems, const int N,
                                     const RealType *__restrict__ v,
+                                    const unsigned int *__restrict__ idxs,
                                     RealType *__restrict__ x,
                                     const RealType frac_dt) {
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
     return;
   }
-  int atom_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  while (atom_idx < N) {
-    for (int d = 0; d < D; d++) {
-      const int idx = system_idx * N * D + atom_idx * D + d;
-      x[idx] += frac_dt * v[idx];
+  int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (kernel_idx < N) {
+    const int atom_idx =
+        (idxs == nullptr ? kernel_idx : idxs[system_idx * N + kernel_idx]);
+    if (atom_idx < N) {
+      for (int d = 0; d < D; d++) {
+        const int idx = system_idx * N * D + atom_idx * D + d;
+        x[idx] += frac_dt * v[idx];
+      }
     }
-    atom_idx += gridDim.x * blockDim.x;
+    kernel_idx += gridDim.x * blockDim.x;
   }
 }
 
@@ -309,29 +353,34 @@ template <typename RealType, int D>
 __global__ void k_constrained_ornstein(
     const int num_systems, const int N, const RealType ca,
     const RealType *__restrict__ ccs, // [num_systems * N]
+    const unsigned int *__restrict__ idxs, // [num_systems * N] or null
     curandState_t *__restrict__ rand_states, RealType *__restrict__ v) {
   static_assert(D == 3);
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
     return;
   }
-  int atom_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  while (atom_idx < N) {
-    const RealType cc = ccs[system_idx * N + atom_idx];
-    curandState_t local_state = rand_states[system_idx * N + atom_idx];
+  int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (kernel_idx < N) {
+    const int atom_idx =
+        (idxs == nullptr ? kernel_idx : idxs[system_idx * N + kernel_idx]);
+    if (atom_idx < N) {
+      const RealType cc = ccs[system_idx * N + atom_idx];
+      curandState_t local_state = rand_states[system_idx * N + atom_idx];
 
-    const int base = system_idx * N * D + atom_idx * D;
-    RealType noise_x;
-    RealType noise_y;
-    template_curand_normal2(noise_x, noise_y, &local_state);
-    const RealType noise_z = template_curand_normal<RealType>(&local_state);
+      const int base = system_idx * N * D + atom_idx * D;
+      RealType noise_x;
+      RealType noise_y;
+      template_curand_normal2(noise_x, noise_y, &local_state);
+      const RealType noise_z = template_curand_normal<RealType>(&local_state);
 
-    v[base + 0] = ca * v[base + 0] + cc * noise_x;
-    v[base + 1] = ca * v[base + 1] + cc * noise_y;
-    v[base + 2] = ca * v[base + 2] + cc * noise_z;
+      v[base + 0] = ca * v[base + 0] + cc * noise_x;
+      v[base + 1] = ca * v[base + 1] + cc * noise_y;
+      v[base + 2] = ca * v[base + 2] + cc * noise_z;
 
-    rand_states[system_idx * N + atom_idx] = local_state;
-    atom_idx += gridDim.x * blockDim.x;
+      rand_states[system_idx * N + atom_idx] = local_state;
+    }
+    kernel_idx += gridDim.x * blockDim.x;
   }
 }
 

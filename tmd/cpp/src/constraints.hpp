@@ -73,18 +73,25 @@ public:
   // Project drifted positions x back onto the constraint manifold using x_ref
   // (positions at the start of the drift) for the constraint directions. When
   // update_velocity is true, velocities of constrained atoms are reset to the
-  // constraint-consistent value (x - x_ref) / dt_drift.
+  // constraint-consistent value (x - x_ref) / dt_drift. When d_idxs is non-null
+  // (local MD) it is the free-index buffer: atoms whose entry equals N are
+  // frozen and treated as infinite-mass anchors.
   void apply_position_constraints(const int num_systems, const int N,
                                   const RealType *d_inv_mass,
+                                  const unsigned int *d_idxs,
                                   const RealType *d_x_ref, RealType *d_x,
                                   RealType *d_v, const RealType dt_drift,
                                   const bool update_velocity,
                                   cudaStream_t stream);
 
-  // Project velocities so that every constrained pair satisfies r . v = 0.
+  // Project velocities so that every constrained pair satisfies r . v = 0. When
+  // d_idxs is non-null (local MD) frozen atoms (entry == N) are treated as
+  // stationary infinite-mass anchors.
   void apply_velocity_constraints(const int num_systems, const int N,
-                                  const RealType *d_inv_mass, const RealType *d_x,
-                                  RealType *d_v, cudaStream_t stream);
+                                  const RealType *d_inv_mass,
+                                  const unsigned int *d_idxs,
+                                  const RealType *d_x, RealType *d_v,
+                                  cudaStream_t stream);
 };
 
 } // namespace tmd

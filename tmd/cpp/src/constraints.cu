@@ -83,8 +83,9 @@ template <typename RealType> Constraints<RealType>::~Constraints() {}
 template <typename RealType>
 void Constraints<RealType>::apply_position_constraints(
     const int num_systems, const int N, const RealType *d_inv_mass,
-    const RealType *d_x_ref, RealType *d_x, RealType *d_v,
-    const RealType dt_drift, const bool update_velocity, cudaStream_t stream) {
+    const unsigned int *d_idxs, const RealType *d_x_ref, RealType *d_x,
+    RealType *d_v, const RealType dt_drift, const bool update_velocity,
+    cudaStream_t stream) {
   if (num_clusters_ == 0) {
     return;
   }
@@ -94,15 +95,16 @@ void Constraints<RealType>::apply_position_constraints(
       num_systems, N, num_clusters_, d_cluster_atom_offsets_.data,
       d_cluster_atoms_.data, d_cluster_constraint_offsets_.data,
       d_constraint_local_i_.data, d_constraint_local_j_.data,
-      d_constraint_r0_.data, d_inv_mass, d_x_ref, d_x, d_v, dt_drift, pos_tol_,
-      max_iters_, update_velocity);
+      d_constraint_r0_.data, d_inv_mass, d_idxs, d_x_ref, d_x, d_v, dt_drift,
+      pos_tol_, max_iters_, update_velocity);
   gpuErrchk(cudaPeekAtLastError());
 }
 
 template <typename RealType>
 void Constraints<RealType>::apply_velocity_constraints(
     const int num_systems, const int N, const RealType *d_inv_mass,
-    const RealType *d_x, RealType *d_v, cudaStream_t stream) {
+    const unsigned int *d_idxs, const RealType *d_x, RealType *d_v,
+    cudaStream_t stream) {
   if (num_clusters_ == 0) {
     return;
   }
@@ -111,8 +113,8 @@ void Constraints<RealType>::apply_velocity_constraints(
   k_constrain_velocities<RealType><<<grid, tpb, 0, stream>>>(
       num_systems, N, num_clusters_, d_cluster_atom_offsets_.data,
       d_cluster_atoms_.data, d_cluster_constraint_offsets_.data,
-      d_constraint_local_i_.data, d_constraint_local_j_.data, d_inv_mass, d_x,
-      d_v, vel_tol_, max_iters_);
+      d_constraint_local_i_.data, d_constraint_local_j_.data, d_inv_mass,
+      d_idxs, d_x, d_v, vel_tol_, max_iters_);
   gpuErrchk(cudaPeekAtLastError());
 }
 

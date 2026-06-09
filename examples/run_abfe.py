@@ -483,11 +483,9 @@ def main():
     parser.add_argument(
         "--constrain_hydrogens",
         action="store_true",
-        help="Constrain bonds involving hydrogen (and rigidify water) with SHAKE/RATTLE. Incompatible with local MD.",
+        help="Constrain bonds involving hydrogen (and rigidify water) with SHAKE/RATTLE.",
     )
     args = parser.parse_args()
-    if args.constrain_hydrogens and args.local_md_steps > 0:
-        raise ValueError("--constrain_hydrogens is incompatible with local MD (--local_md_steps > 0)")
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
     np.random.seed(args.seed)
 
