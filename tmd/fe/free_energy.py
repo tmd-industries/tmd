@@ -48,7 +48,7 @@ from tmd.fe.rest.single_topology import InterpolationFxnName
 from tmd.fe.stored_arrays import StoredArrays
 from tmd.fe.utils import get_mol_masses, get_romol_conf
 from tmd.ff import Forcefield, ForcefieldParams
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops
+from tmd.lib import ConstrainedLangevinIntegrator, LangevinIntegrator, MonteCarloBarostat, custom_ops
 from tmd.lib.custom_ops import BoundPotential_f32, Context_f32, SummedPotential_f32
 from tmd.md.barostat.utils import compute_box_center, get_bond_list, get_group_indices
 from tmd.md.builders import HostConfig
@@ -745,14 +745,31 @@ def get_batched_context(initial_states: Sequence[InitialState], md_params: Optio
 
     bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
 
-    assert isinstance(initial_states[0].integrator, LangevinIntegrator)
-    intg = LangevinIntegrator(
-        initial_states[0].integrator.temperature,
-        initial_states[0].integrator.dt,
-        initial_states[0].integrator.friction,
-        np.array([initial_states[0].integrator.masses for _ in range(len(initial_states))]),
-        initial_states[0].integrator.seed,
-    )
+    template_intg = initial_states[0].integrator
+    batched_masses = np.array([template_intg.masses for _ in range(len(initial_states))])
+    if isinstance(template_intg, ConstrainedLangevinIntegrator):
+        # The constraint topology is fixed across lambda, so all states share the
+        # same Constraints object; only the per-system masses are batched.
+        intg: LangevinIntegrator | ConstrainedLangevinIntegrator = ConstrainedLangevinIntegrator(
+            template_intg.temperature,
+            template_intg.dt,
+            template_intg.friction,
+            batched_masses,
+            template_intg.seed,
+            template_intg.constraints,
+            template_intg.pos_tol,
+            template_intg.vel_tol,
+            template_intg.max_iters,
+        )
+    else:
+        assert isinstance(template_intg, LangevinIntegrator)
+        intg = LangevinIntegrator(
+            template_intg.temperature,
+            template_intg.dt,
+            template_intg.friction,
+            batched_masses,
+            template_intg.seed,
+        )
     intg_impl = intg.impl(np.float32)
     movers = []
     if initial_states[0].barostat is not None:

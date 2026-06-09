@@ -24,7 +24,7 @@ from scipy.optimize import minimize
 from tmd import testsystems
 from tmd.constants import BOLTZ, KCAL_TO_KJ
 from tmd.fe.absolute import hydration as absolute_hydration
-from tmd.fe.free_energy import AbsoluteFreeEnergy, LocalMDParams, MDParams, get_context
+from tmd.fe.free_energy import AbsoluteFreeEnergy, LocalMDParams, MDParams, get_batched_context, get_context
 from tmd.fe.reweighting import one_sided_exp
 from tmd.fe.topology import BaseTopology
 from tmd.ff import Forcefield
@@ -102,6 +102,39 @@ def test_constrained_hydration_setup_holds_constraints():
     for frame in xs:
         d = np.linalg.norm(frame[pairs[:, 0]] - frame[pairs[:, 1]], axis=1)
         np.testing.assert_allclose(d, targets, atol=2e-3)
+
+
+def test_constrained_hydration_batched_context_holds_constraints():
+    """The batched (multi-state) context path builds a batched
+    ConstrainedLangevinIntegrator and holds the constraints in every replica.
+    This is the path used by HREX / batched bisection for the complex leg."""
+    seed = 2022
+    mol, _ = testsystems.ligands.get_biphenyl()
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    host_config = builders.build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
+    afe = AbsoluteFreeEnergy(mol, BaseTopology(mol, ff))
+
+    temperature = 300.0
+    lambda_schedule = np.array([0.6, 0.5, 0.4])
+
+    states = absolute_hydration.setup_initial_states(
+        afe, ff, host_config, temperature, lambda_schedule, seed, constrain_hydrogens=True
+    )
+
+    assert all(isinstance(s.integrator, ConstrainedLangevinIntegrator) for s in states)
+    clusters = states[0].integrator.constraints
+    pairs, targets = _global_constraint_pairs(clusters)
+
+    ctxt = get_batched_context(states)
+    xs, _ = ctxt.multiple_steps(n_steps=500, store_x_interval=100)
+    assert len(xs) > 0
+    for frame in xs:
+        # Each frame is [n_states, N, 3]; constraints must hold per replica.
+        assert frame.shape[0] == len(states)
+        for replica in frame:
+            d = np.linalg.norm(replica[pairs[:, 0]] - replica[pairs[:, 1]], axis=1)
+            np.testing.assert_allclose(d, targets, atol=2e-3)
 
 
 def test_run_solvent_absolute_hydration():

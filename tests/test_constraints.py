@@ -198,3 +198,62 @@ def test_lib_wrapper_runs():
     for frame in xs:
         d = np.linalg.norm(frame[pairs[:, 0]] - frame[pairs[:, 1]], axis=1)
         np.testing.assert_allclose(d, targets, atol=1e-7)
+
+
+@pytest.mark.parametrize(
+    "precision, integrator_cls, context_cls, dist_atol",
+    [
+        (np.float64, custom_ops.ConstrainedLangevinIntegrator_f64, custom_ops.Context_f64, 1e-7),
+        (np.float32, custom_ops.ConstrainedLangevinIntegrator_f32, custom_ops.Context_f32, 1e-3),
+    ],
+)
+def test_constraints_hold_under_batched_dynamics(precision, integrator_cls, context_cls, dist_atol):
+    """A batched (multi-replica) Context with a constrained integrator must hold
+    the constraints independently in every replica."""
+    masses, x0, bond_idxs, bond_params, angle_idxs, angle_params = _build_test_system()
+    clusters = cst.build_constraints(
+        bond_idxs, bond_params, masses, angle_idxs, angle_params, rigid_water=True
+    )
+    pairs, targets = _global_constraint_pairs(clusters)
+
+    batch_size = 4
+    con = clusters.to_custom_ops(precision=precision)
+
+    # 2D masses -> batched integrator.
+    batched_masses = np.tile(masses.astype(precision), (batch_size, 1))
+    intg = integrator_cls(batched_masses, 300.0, 2e-3, 1.0, 2025, con)
+
+    # Build a batched zero-force harmonic bond by combining per-system bound
+    # potentials, exactly as get_batched_context does.
+    single_bp = HarmonicBond(len(masses), np.array([[0, 3]], dtype=np.int32)).bind(np.array([[0.0, 1.0]]))
+    batched_bp = single_bp
+    for _ in range(batch_size - 1):
+        batched_bp = batched_bp.combine(single_bp)
+    bp_impl = batched_bp.to_gpu(precision=precision).bound_impl
+
+    box = (np.eye(3) * 5.0).astype(precision)
+    v0 = np.zeros_like(x0).astype(precision)
+    ctxt = context_cls(
+        np.tile(x0.astype(precision), (batch_size, 1, 1)),
+        np.tile(v0, (batch_size, 1, 1)),
+        np.tile(box, (batch_size, 1, 1)),
+        intg,
+        [bp_impl],
+    )
+
+    n_steps = 1000
+    xs, _ = ctxt.multiple_steps(n_steps, n_steps // 10)
+    assert len(xs) > 0
+
+    # Each stored frame is [batch_size, N, 3]; constraints must hold per replica.
+    for frame in xs:
+        assert frame.shape[0] == batch_size
+        for replica in frame:
+            d = np.linalg.norm(replica[pairs[:, 0]] - replica[pairs[:, 1]], axis=1)
+            np.testing.assert_allclose(d, targets, atol=dist_atol)
+
+    # The replicas should diverge under independent noise (distinct seeds per
+    # system), confirming they are not accidentally sharing state.
+    final = xs[-1]
+    assert not np.allclose(final[0], final[1])
+
