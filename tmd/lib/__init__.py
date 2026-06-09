@@ -48,6 +48,40 @@ class LangevinIntegrator:
 
 
 @dataclass
+class ConstrainedLangevinIntegrator:
+    temperature: float
+    dt: float
+    friction: float
+    masses: NDArray[np.float64]
+    seed: int
+    constraints: Any  # tmd.fe.constraints.ConstraintClusters
+    pos_tol: float = 1e-8
+    vel_tol: float = 1e-8
+    max_iters: int = 50
+
+    def impl(self, precision=np.float32):
+        klass: (
+            type[custom_ops.ConstrainedLangevinIntegrator_f32] | type[custom_ops.ConstrainedLangevinIntegrator_f64]
+        ) = custom_ops.ConstrainedLangevinIntegrator_f32
+        if precision == np.float64:
+            klass = custom_ops.ConstrainedLangevinIntegrator_f64
+        constraints_impl = self.constraints.to_custom_ops(
+            precision=precision,
+            pos_tol=self.pos_tol,
+            vel_tol=self.vel_tol,
+            max_iters=self.max_iters,
+        )
+        return klass(
+            np.array(self.masses, dtype=precision),
+            self.temperature,
+            self.dt,
+            self.friction,
+            self.seed,
+            constraints_impl,
+        )
+
+
+@dataclass
 class VelocityVerletIntegrator:
     dt: float
     masses: NDArray[np.float64]

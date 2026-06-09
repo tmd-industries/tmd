@@ -28,6 +28,8 @@
 #include "centroid_restraint.hpp"
 #include "chiral_atom_restraint.hpp"
 #include "chiral_bond_restraint.hpp"
+#include "constrained_langevin_integrator.hpp"
+#include "constraints.hpp"
 #include "context.hpp"
 #include "exceptions.hpp"
 #include "exchange.hpp"
@@ -1044,6 +1046,85 @@ void declare_langevin_integrator(py::module &m, const char *typestr) {
            }),
            py::arg("masses"), py::arg("temperature"), py::arg("dt"),
            py::arg("friction"), py::arg("seed"));
+}
+
+template <typename RealType>
+void declare_constraints(py::module &m, const char *typestr) {
+
+  using Class = Constraints<RealType>;
+  std::string pyclass_name = std::string("Constraints_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>>(
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def(py::init([](const py::array_t<int, py::array::c_style>
+                           &cluster_atom_offsets,
+                       const py::array_t<int, py::array::c_style> &cluster_atoms,
+                       const py::array_t<int, py::array::c_style>
+                           &cluster_constraint_offsets,
+                       const py::array_t<int, py::array::c_style>
+                           &constraint_local_i,
+                       const py::array_t<int, py::array::c_style>
+                           &constraint_local_j,
+                       const py::array_t<RealType, py::array::c_style>
+                           &constraint_r0,
+                       const RealType pos_tol, const RealType vel_tol,
+                       const int max_iters) {
+             std::vector<int> atom_offsets(
+                 cluster_atom_offsets.data(),
+                 cluster_atom_offsets.data() + cluster_atom_offsets.size());
+             std::vector<int> atoms(cluster_atoms.data(),
+                                    cluster_atoms.data() + cluster_atoms.size());
+             std::vector<int> con_offsets(
+                 cluster_constraint_offsets.data(),
+                 cluster_constraint_offsets.data() +
+                     cluster_constraint_offsets.size());
+             std::vector<int> local_i(constraint_local_i.data(),
+                                      constraint_local_i.data() +
+                                          constraint_local_i.size());
+             std::vector<int> local_j(constraint_local_j.data(),
+                                      constraint_local_j.data() +
+                                          constraint_local_j.size());
+             std::vector<RealType> r0(constraint_r0.data(),
+                                      constraint_r0.data() +
+                                          constraint_r0.size());
+             return new Class(atom_offsets, atoms, con_offsets, local_i, local_j,
+                              r0, pos_tol, vel_tol, max_iters);
+           }),
+           py::arg("cluster_atom_offsets"), py::arg("cluster_atoms"),
+           py::arg("cluster_constraint_offsets"), py::arg("constraint_local_i"),
+           py::arg("constraint_local_j"), py::arg("constraint_r0"),
+           py::arg("pos_tol"), py::arg("vel_tol"), py::arg("max_iters"))
+      .def("num_clusters", &Class::num_clusters)
+      .def("num_constraints", &Class::num_constraints);
+}
+
+template <typename RealType>
+void declare_constrained_langevin_integrator(py::module &m,
+                                             const char *typestr) {
+
+  using Class = ConstrainedLangevinIntegrator<RealType>;
+  std::string pyclass_name =
+      std::string("ConstrainedLangevinIntegrator_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>, Integrator<RealType>>(
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def(py::init([](const py::array_t<RealType, py::array::c_style> &masses,
+                       const RealType temperature, const RealType dt,
+                       const RealType friction, const int seed,
+                       std::shared_ptr<Constraints<RealType>> constraints) {
+             int num_systems = 1;
+             int N = masses.size();
+             if (masses.ndim() == 2) {
+               num_systems = masses.shape(0);
+               N = masses.shape(1);
+             } else if (masses.ndim() != 1) {
+               throw std::runtime_error(
+                   "masses must be either 1 or 2d dimensional, got " +
+                   std::to_string(masses.ndim()) + " dimensions");
+             }
+             return new Class(num_systems, N, masses.data(), temperature, dt,
+                              friction, seed, constraints);
+           }),
+           py::arg("masses"), py::arg("temperature"), py::arg("dt"),
+           py::arg("friction"), py::arg("seed"), py::arg("constraints"));
 }
 
 template <typename RealType>
@@ -3797,6 +3878,10 @@ PYBIND11_MODULE(custom_ops, m) {
   declare_integrator<float>(m, "f32");
   declare_langevin_integrator<double>(m, "f64");
   declare_langevin_integrator<float>(m, "f32");
+  declare_constraints<double>(m, "f64");
+  declare_constraints<float>(m, "f32");
+  declare_constrained_langevin_integrator<double>(m, "f64");
+  declare_constrained_langevin_integrator<float>(m, "f32");
   declare_velocity_verlet_integrator<double>(m, "f64");
   declare_velocity_verlet_integrator<float>(m, "f32");
 
