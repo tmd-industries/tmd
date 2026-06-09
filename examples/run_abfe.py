@@ -172,6 +172,7 @@ def estimate_abfe_leg(
     n_windows: int,
     min_overlap: float,
     rst_params: RestraintParams,
+    constrain_hydrogens: bool = False,
 ):
     host_config = setup_optimized_host(host_config, [mol], ff)
     host_conf = host_config.conf
@@ -181,7 +182,9 @@ def estimate_abfe_leg(
     afe = AbsoluteFreeEnergy(mol, bt)
     if leg == COMPLEX_LEG:
         # Run short equilibration to obtain trajectory used to pick restraint atoms
-        initial_state = get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, 0.0)
+        initial_state = get_initial_state(
+            afe, ff, host_config, host_conf, temperature, md_params.seed, 0.0, constrain_hydrogens=constrain_hydrogens
+        )
         minimized_state = optimize_abfe_initial_state(initial_state)
         # TBD: How many frames do you want from here?
         sample_md_params = replace(md_params, n_eq_steps=200_000)
@@ -201,7 +204,9 @@ def estimate_abfe_leg(
         md_params = replace(md_params, water_sampling_params=None)
 
     def create_abfe_initial_state(lamb):
-        return get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, lamb)
+        return get_initial_state(
+            afe, ff, host_config, host_conf, temperature, md_params.seed, lamb, constrain_hydrogens=constrain_hydrogens
+        )
 
     if md_params.hrex_params is None:
         bisection_params = md_params
@@ -254,6 +259,7 @@ def run_abfe(
     write_trajectories: bool,
     force_overwrite: bool,
     add_membrane: bool,
+    constrain_hydrogens: bool = False,
 ) -> dict[str, Any]:
     """Run an ABFE calculation.
 
@@ -333,7 +339,16 @@ def run_abfe(
         host_config = build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
     # TBD: Expose restraint params?
     res = estimate_abfe_leg(
-        mol, ff, leg, host_config, f"{get_mol_name(mol)}_{leg}", md_params, n_windows, min_overlap, RestraintParams()
+        mol,
+        ff,
+        leg,
+        host_config,
+        f"{get_mol_name(mol)}_{leg}",
+        md_params,
+        n_windows,
+        min_overlap,
+        RestraintParams(),
+        constrain_hydrogens=constrain_hydrogens,
     )
     took = time.perf_counter() - start
     os.chdir(init_dir)
@@ -465,7 +480,14 @@ def main():
         action="store_true",
         help="Add a POPC membrane to the protein. Refer to OpenMM for preparing proteins for adding Membranes",
     )
+    parser.add_argument(
+        "--constrain_hydrogens",
+        action="store_true",
+        help="Constrain bonds involving hydrogen (and rigidify water) with SHAKE/RATTLE. Incompatible with local MD.",
+    )
     args = parser.parse_args()
+    if args.constrain_hydrogens and args.local_md_steps > 0:
+        raise ValueError("--constrain_hydrogens is incompatible with local MD (--local_md_steps > 0)")
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
     np.random.seed(args.seed)
 
@@ -541,6 +563,7 @@ def main():
                 args.store_trajectories,
                 args.force_overwrite,
                 args.add_membrane,
+                args.constrain_hydrogens,
             )
             future_id_to_leg[fut.id] = (name, leg)
             futures.append(fut)
