@@ -118,17 +118,23 @@ class HREXParams:
 
     rest_params: RESTParams or None
        Parameters that control REST. Only compatible with SingleTopologyREST, will be ignored otherwise.
+
+    iterations_per_frame: int
+        The number of HREX iterations to run between frames collected. Each iteration will run MDParams.steps_per_frame
+        number of steps, so this number will linearly increase the number of steps
     """
 
     n_frames_bisection: int = 100
     max_delta_states: Optional[int] = 4
     optimize_target_overlap: Optional[float] = None
     rest_params: Optional[RESTParams] = None
+    iterations_per_frame: int = 1
 
     def __post_init__(self):
         assert self.n_frames_bisection > 0
         assert self.max_delta_states is None or self.max_delta_states > 0
         assert self.optimize_target_overlap is None or 0.0 < self.optimize_target_overlap < 1.0
+        assert self.iterations_per_frame >= 1
 
 
 @dataclass(frozen=True)
@@ -388,6 +394,7 @@ class HREXSimulationResult(SimulationResult):
     hrex_diagnostics: HREXDiagnostics
     hrex_plots: HREXPlots
     water_sampling_diagnostics: WaterSamplingDiagnostics | None = None
+    iterations_per_frame: int = 1
 
     def extract_trajectories_by_replica(self, atom_idxs: NDArray) -> NDArray:
         """Returns an array of shape (n_replicas, n_frames, len(atom_idxs), 3) of trajectories for each replica
@@ -415,7 +422,9 @@ class HREXSimulationResult(SimulationResult):
         state_idx_by_iter_by_replica = np.argsort(replica_idx_by_iter_by_state, axis=0)
 
         # (replicas, frames, atoms, 3)
-        trajs_by_replica = np.take_along_axis(trajs_by_state, state_idx_by_iter_by_replica[:, :, None, None], axis=0)
+        trajs_by_replica = np.take_along_axis(
+            trajs_by_state, state_idx_by_iter_by_replica[:, :: self.iterations_per_frame, None, None], axis=0
+        )
 
         return trajs_by_replica
 
@@ -2347,42 +2356,44 @@ def run_sims_hrex(
 
     hrex_func = run_sequential_hrex_step if not batch_simulations else run_batched_hrex_step
 
+    iters_per_frame = md_params.hrex_params.iterations_per_frame
     for current_frame in range(md_params.n_frames):
-        hrex, samples_by_state_iter, U_kl_raw, water_sampler_proposals_by_state = hrex_func(
-            hrex,
-            nrg_pots,
-            params_by_state_by_pot,
-            water_params_by_state,
-            context,
-            md_params,
-            ligand_idxs,
-            temperature,
-            current_frame,
-        )
+        for i in range(iters_per_frame):
+            hrex, samples_by_state_iter, U_kl_raw, water_sampler_proposals_by_state = hrex_func(
+                hrex,
+                nrg_pots,
+                params_by_state_by_pot,
+                water_params_by_state,
+                context,
+                md_params,
+                ligand_idxs,
+                temperature,
+                current_frame * iters_per_frame + i,
+            )
 
-        water_sampler_proposals_by_state_by_iter.append(water_sampler_proposals_by_state)
+            water_sampler_proposals_by_state_by_iter.append(water_sampler_proposals_by_state)
 
-        # Sum the per-potential components for performing swaps
-        U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
+            # Sum the per-potential components for performing swaps
+            U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 
-        # Re-order energies by state
+            log_q_kl = -U_kl / kBT
+
+            replica_idx_by_state_by_iter.append(hrex.replica_idx_by_state)
+
+            hrex, fraction_accepted_by_pair = hrex.attempt_neighbor_swaps_fast(
+                neighbor_pairs, log_q_kl, n_swap_attempts_per_iter, md_params.seed + current_frame * iters_per_frame + i
+            )
+
+            if len(initial_states) == 2:
+                fraction_accepted_by_pair = fraction_accepted_by_pair[1:]  # remove stats for identity move
+
+            fraction_accepted_by_pair_by_iter.append(fraction_accepted_by_pair)
+
+        # Re-order energies by state, must use the replica_idx_by_state_iter replica_idx_by_state and not hrex.replica_idx_by_state
+        # else the energies will be wrong if iterations_per_frame > 1
         iterated_u_kln[:, :, :, current_frame] = (
-            sanitize_energies_for_bar(np.array(U_kl_raw[:, hrex.replica_idx_by_state])) / kBT
+            sanitize_energies_for_bar(np.array(U_kl_raw[:, replica_idx_by_state_by_iter[-1]])) / kBT
         )
-        log_q_kl = -U_kl / kBT
-
-        replica_idx_by_state_by_iter.append(hrex.replica_idx_by_state)
-
-        hrex, fraction_accepted_by_pair = hrex.attempt_neighbor_swaps_fast(
-            neighbor_pairs,
-            log_q_kl,
-            n_swap_attempts_per_iter,
-            md_params.seed + current_frame + 1,  # NOTE: "+ 1" is for bitwise compatibility with previous version
-        )
-
-        if len(initial_states) == 2:
-            fraction_accepted_by_pair = fraction_accepted_by_pair[1:]  # remove stats for identity move
-
         for samples, (xs, boxes, velos, final_barostat_volume_scale_factor) in zip(
             samples_by_state, samples_by_state_iter
         ):
@@ -2390,8 +2401,6 @@ def run_sims_hrex(
             samples.boxes.extend([boxes])
             samples.final_velocities = velos
             samples.final_barostat_volume_scale_factor = final_barostat_volume_scale_factor
-
-        fraction_accepted_by_pair_by_iter.append(fraction_accepted_by_pair)
 
         if print_diagnostics_interval and (current_frame + 1) % print_diagnostics_interval == 0:
             current_time = time.perf_counter()
