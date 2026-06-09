@@ -21,6 +21,7 @@ import numpy as np
 from tmd import potentials
 from tmd.constants import DEFAULT_PRESSURE
 from tmd.fe import model_utils
+from tmd.fe.constraints import build_constraints, remove_constrained_bonds
 from tmd.fe.free_energy import (
     InitialState,
     Trajectory,
@@ -31,20 +32,18 @@ from tmd.fe.free_energy import (
 from tmd.fe.rbfe import (
     optimize_coordinates,
 )
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat
+from tmd.lib import ConstrainedLangevinIntegrator, LangevinIntegrator, MonteCarloBarostat
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.thermostat.utils import sample_velocities
 from tmd.potentials.potential import get_potential_by_type
 
 
-def get_initial_state(afe, ff, host_config, host_conf, temperature, seed, lamb) -> InitialState:
+def get_initial_state(
+    afe, ff, host_config, host_conf, temperature, seed, lamb, constrain_hydrogens: bool = False
+) -> InitialState:
     """Get initial state at a particular lambda for use with ABFE"""
     ubps, params, masses = afe.prepare_host_edge(ff, host_config, lamb)
     x0 = afe.prepare_combined_coords(host_coords=host_conf)
-    bps = []
-    for ubp, param in zip(ubps, params):
-        bp = ubp.bind(param)
-        bps.append(bp)
 
     bond_potential = get_potential_by_type(ubps, potentials.HarmonicBond)
 
@@ -60,7 +59,36 @@ def get_initial_state(afe, ff, host_config, host_conf, temperature, seed, lamb) 
 
     dt = 2.5e-3
     friction = 1.0
-    intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
+
+    constrained_bond_idxs = None
+    constrained_bond_params = None
+    if constrain_hydrogens:
+        bond_params = next(p for u, p in zip(ubps, params) if u is bond_potential)
+        angle_potential = get_potential_by_type(ubps, potentials.HarmonicAngle)
+        angle_params = next(p for u, p in zip(ubps, params) if u is angle_potential)
+        clusters = build_constraints(
+            bond_potential.idxs,
+            bond_params,
+            masses,
+            angle_potential.idxs,
+            angle_params,
+            rigid_water=True,
+        )
+        # Replace the constrained harmonic stretches with rigid SHAKE constraints.
+        constrained_bond_idxs, constrained_bond_params = remove_constrained_bonds(
+            bond_potential.idxs, bond_params, clusters.constrained_bond_rows
+        )
+        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, hmr_masses, seed, clusters)
+    else:
+        intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
+
+    bps = []
+    for ubp, param in zip(ubps, params):
+        if constrain_hydrogens and ubp is bond_potential:
+            bp = potentials.HarmonicBond(ubp.num_atoms, constrained_bond_idxs).bind(constrained_bond_params)
+        else:
+            bp = ubp.bind(param)
+        bps.append(bp)
 
     protein_idxs = np.arange(
         len(host_config.conf) - host_config.num_water_atoms - host_config.num_membrane_atoms, dtype=np.int32

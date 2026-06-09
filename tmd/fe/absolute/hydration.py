@@ -32,11 +32,12 @@ from tmd.fe.free_energy import (
     make_pair_bar_plots,
     run_sims_sequential,
 )
+from tmd.fe.constraints import build_constraints, remove_constrained_bonds
 from tmd.fe.lambda_schedule import construct_pre_optimized_absolute_lambda_schedule_solvent
 from tmd.fe.topology import BaseTopology
 from tmd.fe.utils import get_mol_name, get_romol_conf
 from tmd.ff import Forcefield
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat
+from tmd.lib import ConstrainedLangevinIntegrator, LangevinIntegrator, MonteCarloBarostat
 from tmd.md import builders, enhanced, minimizer, smc
 from tmd.md.barostat.moves import NPTMove
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
@@ -196,6 +197,7 @@ def estimate_absolute_free_energy(
     prefix="",
     md_params: MDParams = DEFAULT_AHFE_MD_PARAMS,
     n_windows=None,
+    constrain_hydrogens: bool = False,
 ):
     """
     Estimate the absolute hydration free energy for the given mol.
@@ -221,6 +223,10 @@ def estimate_absolute_free_energy(
         Parameters for the equilibration and production MD. Defaults to 400 global steps per frame, 1000 frames and 10k
         equilibration steps with seed 2023.
 
+    constrain_hydrogens: bool
+        If True, constrain bonds involving hydrogens (and make water fully rigid) using SHAKE/RATTLE in a
+        constrained Langevin integrator. Defaults to False.
+
     Returns
     -------
     SimulationResult
@@ -237,7 +243,9 @@ def estimate_absolute_free_energy(
     assert np.isclose(lambda_schedule[0], 1.0) and np.isclose(lambda_schedule[-1], 0.0)
 
     temperature = DEFAULT_TEMP
-    initial_states = setup_initial_states(afe, ff, host_config, temperature, lambda_schedule, md_params.seed)
+    initial_states = setup_initial_states(
+        afe, ff, host_config, temperature, lambda_schedule, md_params.seed, constrain_hydrogens=constrain_hydrogens
+    )
 
     combined_prefix = get_mol_name(mol) + "_" + prefix
     try:
@@ -257,6 +265,7 @@ def setup_initial_states(
     temperature: float,
     lambda_schedule: Array,
     seed: int,
+    constrain_hydrogens: bool = False,
 ) -> list[InitialState]:
     """
     Setup the initial states for a series of lambda values. It is assumed that the lambda schedule
@@ -281,6 +290,10 @@ def setup_initial_states(
     seed: int
         Random number seed
 
+    constrain_hydrogens: bool
+        If True, constrain bonds involving hydrogens (and make water fully rigid) using SHAKE/RATTLE in a
+        constrained Langevin integrator. Defaults to False.
+
     Returns
     -------
     list of InitialStates
@@ -304,13 +317,10 @@ def setup_initial_states(
 
         ubps, params, masses = afe.prepare_host_edge(ff, host_config, lamb)
         x0 = afe.prepare_combined_coords(host_coords=host_conf)
-        bps = []
-        for ubp, param in zip(ubps, params):
-            bp = ubp.bind(param)
-            bps.append(bp)
 
         bond_potential = get_potential_by_type(ubps, potentials.HarmonicBond)
 
+        # HMR is computed from the full bond topology and pre-HMR masses, independent of constraints.
         hmr_masses = model_utils.apply_hmr(masses, bond_potential.idxs)
         group_idxs = get_group_indices(get_bond_list(bond_potential), len(masses))
         baro = MonteCarloBarostat(len(hmr_masses), 1.0, temperature, group_idxs, 15, seed)
@@ -323,7 +333,36 @@ def setup_initial_states(
 
         dt = 2.5e-3
         friction = 1.0
-        intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
+
+        constrained_bond_idxs = None
+        constrained_bond_params = None
+        if constrain_hydrogens:
+            bond_params = next(p for u, p in zip(ubps, params) if u is bond_potential)
+            angle_potential = get_potential_by_type(ubps, potentials.HarmonicAngle)
+            angle_params = next(p for u, p in zip(ubps, params) if u is angle_potential)
+            clusters = build_constraints(
+                bond_potential.idxs,
+                bond_params,
+                masses,
+                angle_potential.idxs,
+                angle_params,
+                rigid_water=True,
+            )
+            # Replace the constrained harmonic stretches with rigid SHAKE constraints.
+            constrained_bond_idxs, constrained_bond_params = remove_constrained_bonds(
+                bond_potential.idxs, bond_params, clusters.constrained_bond_rows
+            )
+            intg = ConstrainedLangevinIntegrator(temperature, dt, friction, hmr_masses, seed, clusters)
+        else:
+            intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
+
+        bps = []
+        for ubp, param in zip(ubps, params):
+            if constrain_hydrogens and ubp is bond_potential:
+                bp = potentials.HarmonicBond(ubp.num_atoms, constrained_bond_idxs).bind(constrained_bond_params)
+            else:
+                bp = ubp.bind(param)
+            bps.append(bp)
 
         state = InitialState(bps, intg, baro, x0, v0, box0, lamb, ligand_idxs, np.array([], dtype=np.int32))
         initial_states.append(state)
@@ -331,7 +370,7 @@ def setup_initial_states(
 
 
 def run_solvent(
-    mol, forcefield: Forcefield, _, md_params: MDParams, n_windows=16
+    mol, forcefield: Forcefield, _, md_params: MDParams, n_windows=16, constrain_hydrogens: bool = False
 ) -> tuple[SimulationResult, HostConfig]:
     box_width = 4.0
     solvent_host_config = builders.build_water_system(box_width, forcefield.water_ff, mols=[mol], box_margin=0.1)
@@ -342,5 +381,6 @@ def run_solvent(
         md_params=md_params,
         prefix="solvent",
         n_windows=n_windows,
+        constrain_hydrogens=constrain_hydrogens,
     )
     return solvent_res, solvent_host_config

@@ -24,12 +24,15 @@ from scipy.optimize import minimize
 from tmd import testsystems
 from tmd.constants import BOLTZ, KCAL_TO_KJ
 from tmd.fe.absolute import hydration as absolute_hydration
-from tmd.fe.free_energy import LocalMDParams, MDParams
+from tmd.fe.free_energy import AbsoluteFreeEnergy, LocalMDParams, MDParams, get_context
 from tmd.fe.reweighting import one_sided_exp
+from tmd.fe.topology import BaseTopology
 from tmd.ff import Forcefield
+from tmd.lib import ConstrainedLangevinIntegrator
+from tmd.md import builders
 from tmd.potentials.nonbonded import coulomb_interaction_group_energy, coulomb_prefactors_on_traj
 from tmd.potentials.potential import get_bound_potential_by_type
-from tmd.potentials.potentials import Nonbonded
+from tmd.potentials.potentials import HarmonicBond, Nonbonded
 from tmd.testsystems import fetch_freesolv
 
 try:
@@ -40,12 +43,73 @@ except ImportError:
         return False
 
 
+def _global_constraint_pairs(clusters):
+    """Return (pairs, r0) in global atom indices for a ConstraintClusters."""
+    pairs = []
+    r0s = []
+    cao = clusters.cluster_atom_offsets
+    ca = clusters.cluster_atoms
+    cco = clusters.cluster_constraint_offsets
+    li = clusters.constraint_local_i
+    lj = clusters.constraint_local_j
+    r0 = clusters.constraint_r0
+    for c in range(clusters.num_clusters):
+        astart = cao[c]
+        for k in range(cco[c], cco[c + 1]):
+            pairs.append((ca[astart + li[k]], ca[astart + lj[k]]))
+            r0s.append(r0[k])
+    return np.array(pairs, dtype=int), np.array(r0s, dtype=float)
+
+
+def test_constrained_hydration_setup_holds_constraints():
+    """The constrained hydration path swaps in a ConstrainedLangevinIntegrator,
+    drops the constrained harmonic bonds, and the constrained distances are held
+    during real solvated MD."""
+    seed = 2022
+    mol, _ = testsystems.ligands.get_biphenyl()
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    host_config = builders.build_water_system(4.0, ff.water_ff, mols=[mol], box_margin=0.1)
+    afe = AbsoluteFreeEnergy(mol, BaseTopology(mol, ff))
+
+    temperature = 300.0
+    lamb = 0.5
+    lambda_schedule = np.array([lamb])
+
+    states_off = absolute_hydration.setup_initial_states(
+        afe, ff, host_config, temperature, lambda_schedule, seed, constrain_hydrogens=False
+    )
+    states_on = absolute_hydration.setup_initial_states(
+        afe, ff, host_config, temperature, lambda_schedule, seed, constrain_hydrogens=True
+    )
+
+    # The constrained integrator must be used and constrained bonds removed.
+    assert isinstance(states_on[0].integrator, ConstrainedLangevinIntegrator)
+    clusters = states_on[0].integrator.constraints
+    assert clusters.num_constraints > 0
+
+    bond_off = get_bound_potential_by_type(states_off[0].potentials, HarmonicBond)
+    bond_on = get_bound_potential_by_type(states_on[0].potentials, HarmonicBond)
+    n_removed = len(bond_off.potential.idxs) - len(bond_on.potential.idxs)
+    assert n_removed == len(clusters.constrained_bond_rows)
+    assert n_removed > 0
+
+    # Constrained distances must be held across real solvated dynamics.
+    pairs, targets = _global_constraint_pairs(clusters)
+    ctxt = get_context(states_on[0])
+    xs, _ = ctxt.multiple_steps(n_steps=500, store_x_interval=100)
+    assert len(xs) > 0
+    for frame in xs:
+        d = np.linalg.norm(frame[pairs[:, 0]] - frame[pairs[:, 1]], axis=1)
+        np.testing.assert_allclose(d, targets, atol=2e-3)
+
+
 def test_run_solvent_absolute_hydration():
     seed = 2022
     n_frames = 10
-    n_eq_steps = 100
+    n_eq_steps = 10
     n_windows = 8
-    steps_per_frame = 10
+    steps_per_frame = 100
     mol, _ = testsystems.ligands.get_biphenyl()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     md_params = MDParams(seed=seed, n_eq_steps=n_eq_steps, n_frames=n_frames, steps_per_frame=steps_per_frame)
