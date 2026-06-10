@@ -317,6 +317,19 @@ k_constrained_kick(const int num_systems, const int N,
         v[idx] += cb * force;
         du_dx[idx] = 0;
       }
+    } else if (idxs != nullptr) {
+      // Frozen atom under local MD. The potentials still accumulate a force on
+      // this atom (e.g. free-frozen nonbonded interactions), but it is never
+      // integrated, so that force must be zeroed here. Otherwise it would
+      // accumulate across local-MD steps and be injected as a spurious velocity
+      // kick the next time this atom is integrated -- a subsequent global step,
+      // or a later local burst in which it becomes free -- destabilizing the
+      // simulation. Mirrors the frozen-atom branch in k_update_forward_baoab;
+      // relies on idxs[kernel_idx] == kernel_idx for free atoms, so kernel_idx
+      // is this frozen atom's storage slot.
+      for (int d = 0; d < D; d++) {
+        du_dx[system_idx * N * D + kernel_idx * D + d] = 0;
+      }
     }
     kernel_idx += gridDim.x * blockDim.x;
   }

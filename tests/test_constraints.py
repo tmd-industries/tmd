@@ -358,3 +358,52 @@ def test_constraints_hold_under_local_md(precision, dist_atol):
     assert moved.any(), "expected some atoms to move in the free region"
     assert (~moved).any(), "expected some atoms to remain frozen"
 
+
+@pytest.mark.parametrize("precision, dist_atol", [(np.float64, 1e-6), (np.float32, 5e-3)])
+def test_local_md_does_not_accumulate_frozen_forces(precision, dist_atol):
+    """Regression test for a constrained local-MD instability.
+
+    Under local MD the potentials still accumulate forces on the frozen atoms
+    (e.g. free-frozen nonbonded interactions). Those forces are never
+    integrated, so the constrained "B" kick must zero them every step. If it
+    does not, the stale force accumulates across local-MD steps and is injected
+    as a large, unphysical velocity kick the next time the atom is integrated --
+    either in a following global step or in a later local burst (with a fresh
+    reference) in which the atom becomes free -- blowing the simulation up.
+
+    The earlier local-MD test runs a single local burst and only checks
+    constraint distances, so it never exercises this path. Here we mirror the
+    production sampling loop, which interleaves a local-MD burst with a short
+    global segment every frame and draws a new local-MD seed each time. Before
+    the fix this NaN'd within a few hundred constrained local-MD steps; we
+    require the trajectory to stay finite with constraints intact and no runaway
+    heating.
+    """
+    ctxt, _, _, pairs, targets = _constrained_water_box(precision)
+
+    # Brief global equilibration.
+    ctxt.multiple_steps(200, 200)
+
+    local_idxs = np.array([0], dtype=np.int32)  # a water oxygen near the box origin
+
+    # Interleave local and global segments, drawing a new seed each iteration as
+    # the production free-energy sampling loop does. A fresh seed re-randomizes
+    # the free/frozen partition, so atoms that were frozen (and would carry a
+    # stale accumulated force) become free and are integrated.
+    for i in range(6):
+        ctxt.multiple_steps_local(200, local_idxs, k=1000.0, radius=1.2, seed=100 + i)
+        ctxt.multiple_steps(50)
+
+        xs = ctxt.get_x_t()
+        vs = ctxt.get_v_t()
+        assert np.all(np.isfinite(xs)), f"non-finite coordinates after burst {i}"
+        assert np.all(np.isfinite(vs)), f"non-finite velocities after burst {i}"
+        # Thermal speeds are O(1) nm/ps; a value this large only occurs once the
+        # accumulated frozen force has been injected and the system is blowing up.
+        assert np.abs(vs).max() < 25.0, f"runaway velocities after burst {i}"
+
+    # Constraints must still be satisfied at the end of the interleaved run.
+    x_final = ctxt.get_x_t()
+    d = np.linalg.norm(x_final[pairs[:, 0]] - x_final[pairs[:, 1]], axis=1)
+    np.testing.assert_allclose(d, targets, atol=dist_atol)
+
