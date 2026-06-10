@@ -153,6 +153,7 @@ def run_rbfe_leg(
     force_overwrite: bool,
     water_box_size: float = 4.0,
     add_membrane: bool = False,
+    constrain_hydrogens: bool = False,
 ) -> dict[str, Any]:
     """Run an RBFE leg (vacuum, solvent, or complex).
 
@@ -206,6 +207,10 @@ def run_rbfe_leg(
     add_membrane: bool
         Add a POPC membrane to the protein system
 
+    constrain_hydrogens: bool
+        Constrain bonds involving hydrogen (and rigidify water) using SHAKE/RATTLE. Also restricts the
+        atom mapping to avoid mapping hydrogens across transmuted heavy atoms.
+
     Returns
     -------
     Summary data
@@ -221,7 +226,7 @@ def run_rbfe_leg(
         return dict(np.load(results_path))
 
     if core is None:
-        core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+        core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS, constrain_hydrogens=constrain_hydrogens)[0]
 
     # Store top level data
     file_client.store(edge_path / "atom_mapping.svg", plot_atom_mapping_grid(mol_a, mol_b, core).encode("utf-8"))
@@ -251,6 +256,7 @@ def run_rbfe_leg(
             ff,
             max_temperature_scale=rest_params.max_temperature_scale,
             temperature_scale_interpolation=rest_params.temperature_scale_interpolation,
+            constrain_hydrogens=constrain_hydrogens,
         )
         file_client.store(
             edge_path / "rest_region.svg",
@@ -273,6 +279,7 @@ def run_rbfe_leg(
             md_params,
             n_windows=n_windows,
             min_overlap=min_overlap,
+            constrain_hydrogens=constrain_hydrogens,
         )
     elif leg_name == SOLVENT_LEG:
         res, host_config = run_solvent(
@@ -285,6 +292,7 @@ def run_rbfe_leg(
             n_windows=n_windows,
             min_overlap=min_overlap,
             box_width=water_box_size,
+            constrain_hydrogens=constrain_hydrogens,
         )
     elif leg_name == COMPLEX_LEG:
         assert pdb_path is not None, "No pdb data provided"
@@ -298,6 +306,7 @@ def run_rbfe_leg(
             n_windows=n_windows,
             min_overlap=min_overlap,
             add_membrane=add_membrane,
+            constrain_hydrogens=constrain_hydrogens,
         )
     else:
         assert 0, f"Invalid leg: {leg_name}"

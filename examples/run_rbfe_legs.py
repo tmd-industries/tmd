@@ -126,6 +126,12 @@ def main():
         action="store_true",
         help="Add a POPC membrane to the protein. Refer to OpenMM for preparing proteins for adding Membranes",
     )
+    parser.add_argument(
+        "--constrain_hydrogens",
+        action="store_true",
+        help="Constrain bonds involving hydrogen (and rigidify water) with SHAKE/RATTLE, and avoid mapping "
+        "hydrogens across transmuted heavy atoms",
+    )
     args = parser.parse_args()
 
     if COMPLEX_LEG in args.legs:
@@ -177,7 +183,9 @@ def main():
         water_sampling_params=WaterSamplingParams(radius=mol_radius + args.water_sampling_padding),
     )
 
-    core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+    core = atom_mapping.get_cores(
+        mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS, constrain_hydrogens=args.constrain_hydrogens
+    )[0]
 
     num_gpus = args.n_gpus
     if num_gpus is None:
@@ -208,6 +216,7 @@ def main():
             args.force_overwrite,
             water_box_size=water_box_size,
             add_membrane=args.add_membrane,
+            constrain_hydrogens=args.constrain_hydrogens,
         )
         futures.append(fut)
     leg_results = defaultdict(dict)

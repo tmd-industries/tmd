@@ -85,6 +85,7 @@ class SingleTopologyREST(SingleTopology):
         max_temperature_scale: float,
         temperature_scale_interpolation: InterpolationFxnName = "exponential",
         maximum_ring_size: int | None = 7,
+        constrain_hydrogens: bool = False,
     ):
         """
         Parameters
@@ -110,7 +111,7 @@ class SingleTopologyREST(SingleTopology):
         maximum_ring_size: integer | None
             Maximum size of ring that will be considered for expansion. If none, all rings will be accepted
         """
-        super().__init__(mol_a, mol_b, core, forcefield)
+        super().__init__(mol_a, mol_b, core, forcefield, constrain_hydrogens=constrain_hydrogens)
         self._temperature_scale_interpolation_fxn: InterpolationFxn = get_temperature_scale_interpolation_fxn(
             max_temperature_scale, temperature_scale_interpolation
         )

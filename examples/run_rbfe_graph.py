@@ -114,6 +114,12 @@ def main():
         action="store_true",
         help="Add a POPC membrane to the protein. Refer to OpenMM for preparing proteins for adding Membranes",
     )
+    parser.add_argument(
+        "--constrain_hydrogens",
+        action="store_true",
+        help="Constrain bonds involving hydrogen (and rigidify water) with SHAKE/RATTLE, and avoid mapping "
+        "hydrogens across transmuted heavy atoms",
+    )
     args = parser.parse_args()
 
     if COMPLEX_LEG in args.legs:
@@ -217,6 +223,7 @@ def main():
                 args.force_overwrite,
                 water_box_size=water_box_size,
                 add_membrane=args.add_membrane,
+                constrain_hydrogens=args.constrain_hydrogens,
             )
             future_id_to_leg[fut.id] = (edge["mol_a"], edge["mol_b"], leg_name)
             futures.append(fut)

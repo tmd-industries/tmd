@@ -29,6 +29,7 @@ from tmd._vendored.pymbar.mbar import MBAR
 from tmd.constants import DEFAULT_POSITIONAL_RESTRAINT_K, DEFAULT_PRESSURE, DEFAULT_TEMP
 from tmd.fe import model_utils
 from tmd.fe.bar import DEFAULT_MAXIMUM_ITERATIONS, DEFAULT_RELATIVE_TOLERANCE, DEFAULT_SOLVER_PROTOCOL
+from tmd.fe.constraints import build_constraints, remove_constrained_bonds
 from tmd.fe.free_energy import (
     HREXParams,
     HREXPlots,
@@ -55,13 +56,14 @@ from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
 from tmd.fe.single_topology import AtomMapFlags, SingleTopology, assert_default_system_constraints
 from tmd.fe.utils import bytes_to_id, get_mol_name, get_romol_conf
 from tmd.ff import Forcefield
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat
+from tmd.lib import ConstrainedLangevinIntegrator, LangevinIntegrator, MonteCarloBarostat
 from tmd.md import builders, minimizer
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.builders import HostConfig
 from tmd.md.thermostat.utils import sample_velocities
 from tmd.optimize.protocol import greedily_optimize_protocol, make_fast_approx_overlap_distance_fxn
-from tmd.potentials import BoundPotential, jax_utils
+from tmd.potentials import BoundPotential, HarmonicAngle, HarmonicBond, jax_utils
+from tmd.potentials.potential import get_bound_potential_by_type
 
 BATCH_MODE_ENV_VAR = "TMD_BATCH_MODE"
 BISECTION_BATCH_SIZE_ENV_VAR = "TMD_BISECTION_BATCH_SIZE"
@@ -260,6 +262,7 @@ def setup_initial_state(
     temperature: float,
     seed: int,
     verify_constraints: bool,
+    constrain_hydrogens: bool = False,
 ) -> InitialState:
     conf_a = get_romol_conf(st.mol_a)
     conf_b = get_romol_conf(st.mol_b)
@@ -299,7 +302,40 @@ def setup_initial_state(
     # initialize Langevin integrator
     dt = 2.5e-3
     friction = 1.0
-    intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, run_seed)
+    intg: Union[LangevinIntegrator, ConstrainedLangevinIntegrator]
+    if constrain_hydrogens:
+        # Replace bonds involving hydrogen with rigid SHAKE/RATTLE constraints (and make water
+        # rigid). The two-stage atom-map/single-topology filtering ensures every constrained
+        # hydrogen has a lambda-independent bond length, so a single constraint length is valid
+        # across the whole schedule.
+        bond_bp = get_bound_potential_by_type(potentials, HarmonicBond)
+        angle_bp = get_bound_potential_by_type(potentials, HarmonicAngle)
+        # Constraints identify hydrogens by mass, so use pre-HMR masses.
+        ligand_masses = st.combine_masses(use_hmr=False)
+        if host:
+            pre_hmr_masses = np.concatenate([np.asarray(host.masses), np.asarray(ligand_masses)])
+        else:
+            pre_hmr_masses = np.asarray(ligand_masses)
+        clusters = build_constraints(
+            bond_bp.potential.idxs,
+            bond_bp.params,
+            pre_hmr_masses,
+            angle_bp.potential.idxs,
+            angle_bp.params,
+            rigid_water=True,
+        )
+        constrained_bond_idxs, constrained_bond_params = remove_constrained_bonds(
+            bond_bp.potential.idxs, bond_bp.params, clusters.constrained_bond_rows
+        )
+        potentials = [
+            HarmonicBond(bond_bp.potential.num_atoms, constrained_bond_idxs).bind(constrained_bond_params)
+            if bp is bond_bp
+            else bp
+            for bp in potentials
+        ]
+        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, hmr_masses, run_seed, clusters)
+    else:
+        intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, run_seed)
 
     # Determine the atoms that are in the 4d plane defined by all w_coords being 0.0
     # TBD: Do something more sophisticated depending on the actual parameters for when we vary w_coords independently.
@@ -324,6 +360,7 @@ def setup_initial_states(
     seed: int,
     verify_constraints: bool,
     min_cutoff: Optional[float] = None,
+    constrain_hydrogens: bool = False,
 ) -> list[InitialState]:
     """
     Given a sequence of lambda values, return a list of initial states.
@@ -357,6 +394,10 @@ def setup_initial_states(
         Throw error if any atom moves more than this distance (nm) after minimization. Typically only meaningful
         in the complex leg where the check may indicate that the ligand is no longer posed reliably.
 
+    constrain_hydrogens: bool
+        If True, constrain bonds involving hydrogens (and make water fully rigid) using SHAKE/RATTLE in a
+        constrained Langevin integrator. Defaults to False.
+
     Returns
     -------
     list of InitialState
@@ -367,7 +408,8 @@ def setup_initial_states(
     assert np.all(np.diff(lambda_schedule) > 0)
 
     initial_states = [
-        setup_initial_state(st, lamb, host, temperature, seed, verify_constraints) for lamb in lambda_schedule
+        setup_initial_state(st, lamb, host, temperature, seed, verify_constraints, constrain_hydrogens)
+        for lamb in lambda_schedule
     ]
 
     # minimize ligand and environment atoms within min_cutoff of the ligand
@@ -655,6 +697,7 @@ def estimate_relative_free_energy(
     md_params: MDParams = DEFAULT_MD_PARAMS,
     min_cutoff: Optional[float] = 0.7,
     temperature: float = DEFAULT_TEMP,
+    constrain_hydrogens: bool = False,
 ) -> SimulationResult:
     """
     Estimate relative free energy between mol_a and mol_b via independent simulations with a predetermined lambda
@@ -710,13 +753,20 @@ def estimate_relative_free_energy(
     if temperature != DEFAULT_TEMP:
         warnings.warn(f"Using non Standard temperature ({DEFAULT_TEMP:.1f}) of {temperature:.1f}")
 
-    single_topology = SingleTopology(mol_a, mol_b, core, ff)
+    single_topology = SingleTopology(mol_a, mol_b, core, ff, constrain_hydrogens=constrain_hydrogens)
 
     lambda_min, lambda_max = lambda_interval or (0.0, 1.0)
     lambda_schedule = np.linspace(lambda_min, lambda_max, n_windows or DEFAULT_NUM_WINDOWS)
 
     initial_states = setup_initial_states(
-        single_topology, host_config, temperature, lambda_schedule, md_params.seed, False, min_cutoff=min_cutoff
+        single_topology,
+        host_config,
+        temperature,
+        lambda_schedule,
+        md_params.seed,
+        False,
+        min_cutoff=min_cutoff,
+        constrain_hydrogens=constrain_hydrogens,
     )
 
     # TODO: rename prefix to postfix, or move to beginning of combined_prefix?
@@ -760,6 +810,7 @@ def estimate_relative_free_energy_bisection(
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = 0.7,
     temperature: float = DEFAULT_TEMP,
+    constrain_hydrogens: bool = False,
 ) -> SimulationResult:
     r"""Estimate relative free energy between mol_a and mol_b via independent simulations with a dynamic lambda schedule
     determined by successively bisecting the lambda interval between the pair of states with the greatest BAR
@@ -820,7 +871,7 @@ def estimate_relative_free_energy_bisection(
     if temperature != DEFAULT_TEMP:
         warnings.warn(f"Using non Standard temperature ({DEFAULT_TEMP:.1f}) of {temperature:.1f}")
 
-    single_topology = SingleTopology(mol_a, mol_b, core, ff)
+    single_topology = SingleTopology(mol_a, mol_b, core, ff, constrain_hydrogens=constrain_hydrogens)
 
     lambda_interval = lambda_interval or (0.0, 1.0)
     lambda_min, lambda_max = lambda_interval[0], lambda_interval[1]
@@ -828,7 +879,14 @@ def estimate_relative_free_energy_bisection(
     lambda_grid = bisection_lambda_schedule(n_windows, lambda_interval=lambda_interval)
 
     initial_states = setup_initial_states(
-        single_topology, host_config, temperature, lambda_grid, md_params.seed, False, min_cutoff=min_cutoff
+        single_topology,
+        host_config,
+        temperature,
+        lambda_grid,
+        md_params.seed,
+        False,
+        min_cutoff=min_cutoff,
+        constrain_hydrogens=constrain_hydrogens,
     )
 
     make_initial_state_fn = partial(
@@ -838,6 +896,7 @@ def estimate_relative_free_energy_bisection(
         temperature=temperature,
         seed=md_params.seed,
         verify_constraints=False,  # Speeds up construction of initial state
+        constrain_hydrogens=constrain_hydrogens,
     )
 
     make_optimized_initial_state_fn = partial(
@@ -1100,6 +1159,7 @@ def estimate_relative_free_energy_bisection_hrex(
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = 0.7,
     temperature: float = DEFAULT_TEMP,
+    constrain_hydrogens: bool = False,
 ) -> HREXSimulationResult:
     """
     Estimate relative free energy between mol_a and mol_b using Hamiltonian Replica EXchange (HREX) sampling of a
@@ -1175,9 +1235,10 @@ def estimate_relative_free_energy_bisection_hrex(
             ff,
             max_temperature_scale=hrex_params.rest_params.max_temperature_scale,
             temperature_scale_interpolation=hrex_params.rest_params.temperature_scale_interpolation,
+            constrain_hydrogens=constrain_hydrogens,
         )
         if hrex_params.rest_params is not None
-        else SingleTopology(mol_a, mol_b, core, ff)
+        else SingleTopology(mol_a, mol_b, core, ff, constrain_hydrogens=constrain_hydrogens)
     )
 
     lambda_interval = lambda_interval or (0.0, 1.0)
@@ -1185,7 +1246,14 @@ def estimate_relative_free_energy_bisection_hrex(
 
     lambda_grid = bisection_lambda_schedule(n_windows, lambda_interval=lambda_interval)
     initial_states = setup_initial_states(
-        single_topology, host_config, temperature, lambda_grid, md_params.seed, False, min_cutoff=min_cutoff
+        single_topology,
+        host_config,
+        temperature,
+        lambda_grid,
+        md_params.seed,
+        False,
+        min_cutoff=min_cutoff,
+        constrain_hydrogens=constrain_hydrogens,
     )
 
     make_initial_state_fn = partial(
@@ -1195,6 +1263,7 @@ def estimate_relative_free_energy_bisection_hrex(
         temperature=temperature,
         seed=md_params.seed,
         verify_constraints=False,  # Speeds up construction of initial state
+        constrain_hydrogens=constrain_hydrogens,
     )
 
     make_optimized_initial_state_fn = partial(
@@ -1228,6 +1297,7 @@ def run_vacuum(
     n_windows: Optional[int] = None,
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = None,
+    constrain_hydrogens: bool = False,
 ):
     if md_params is not None and md_params.local_md_params is not None:
         md_params = replace(md_params, local_md_params=None)
@@ -1247,6 +1317,7 @@ def run_vacuum(
         n_windows=n_windows,
         min_overlap=min_overlap,
         min_cutoff=min_cutoff,
+        constrain_hydrogens=constrain_hydrogens,
     )
 
 
@@ -1261,6 +1332,7 @@ def run_solvent(
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = None,
     box_width: float = 4.0,
+    constrain_hydrogens: bool = False,
 ):
     if md_params is not None and md_params.water_sampling_params is not None:
         md_params = replace(md_params, water_sampling_params=None)
@@ -1282,6 +1354,7 @@ def run_solvent(
         n_windows=n_windows,
         min_overlap=min_overlap,
         min_cutoff=min_cutoff,
+        constrain_hydrogens=constrain_hydrogens,
     )
     return solvent_res, solvent_host_config
 
@@ -1297,6 +1370,7 @@ def run_complex(
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = 0.7,
     add_membrane: bool = False,
+    constrain_hydrogens: bool = False,
 ):
     if not add_membrane:
         complex_host_config = builders.build_protein_system(
@@ -1318,5 +1392,6 @@ def run_complex(
         n_windows=n_windows,
         min_overlap=min_overlap,
         min_cutoff=min_cutoff,
+        constrain_hydrogens=constrain_hydrogens,
     )
     return complex_res, complex_host_config
