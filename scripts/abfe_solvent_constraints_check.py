@@ -30,7 +30,8 @@ import numpy as np
 from tmd import testsystems
 from tmd.constants import DEFAULT_TEMP
 from tmd.fe.absolute import abfe
-from tmd.fe.free_energy import AbsoluteFreeEnergy, MDParams, run_sims_bisection
+from tmd.fe.utils import read_sdf
+from tmd.fe.free_energy import AbsoluteFreeEnergy, MDParams, get_context, run_sims_bisection
 from tmd.fe.topology import BaseTopology
 from tmd.ff import Forcefield
 from tmd.md import builders, minimizer
@@ -52,6 +53,7 @@ def run_leg(afe, ff, host_config, host_conf, md_params, temperature, seed, n_bis
         temperature=temperature,
         min_overlap=min_overlap,
         verbose=False,
+        batch_size=8,
     )
     wall = time.time() - t0
 
@@ -74,6 +76,73 @@ def run_leg(afe, ff, host_config, host_conf, md_params, temperature, seed, n_bis
     return total_dG, total_err, wall
 
 
+def _global_constraint_pairs(clusters):
+    """Return (pairs, r0) in global atom indices for the constraint clusters."""
+    pairs = []
+    r0s = []
+    cao = clusters.cluster_atom_offsets
+    ca = clusters.cluster_atoms
+    cco = clusters.cluster_constraint_offsets
+    li = clusters.constraint_local_i
+    lj = clusters.constraint_local_j
+    r0 = clusters.constraint_r0
+    for c in range(clusters.num_clusters):
+        astart = cao[c]
+        for k in range(cco[c], cco[c + 1]):
+            pairs.append((ca[astart + li[k]], ca[astart + lj[k]]))
+            r0s.append(r0[k])
+    return np.array(pairs, dtype=int), np.array(r0s, dtype=float)
+
+
+def check_local_md_stability(
+    afe, ff, host_config, host_conf, md_params, temperature, seed, local_steps, dist_atol=5e-3
+):
+    """Stability test: run local MD on a constrained, minimized solvent state and verify it stays
+    stable. Local MD freezes a per-step subset of atoms (treated as infinite-mass anchors by the
+    constrained integrator), which is the path most likely to destabilize SHAKE/RATTLE. The test
+    passes when coordinates stay finite and every constraint distance is held to ``dist_atol``.
+    """
+    state = abfe.get_initial_state(
+        afe, ff, host_config, host_conf, temperature, seed, lamb=0.0,
+        constrain_hydrogens=True, dt=md_params.dt,
+    )
+    state = abfe.optimize_abfe_initial_state(state)
+
+    clusters = state.integrator.constraints
+    pairs, targets = _global_constraint_pairs(clusters)
+    print(f"  {clusters.num_constraints} constraints over {clusters.num_clusters} clusters", flush=True)
+
+    ctxt = get_context(state, md_params)
+    ctxt.setup_local_md(temperature, freeze_reference=True)
+
+    # Equilibrate globally, then run a long stretch of local MD centered on the ligand.
+    ctxt.multiple_steps(500, 0)
+    assert np.all(np.isfinite(ctxt.get_x_t())), "global equilibration produced a nan"
+
+    store_interval = max(local_steps // 10, 1)
+    xs, _ = ctxt.multiple_steps_local(
+        local_steps,
+        state.ligand_idxs.astype(np.int32),
+        k=1.0,
+        radius=1.2,
+        store_x_interval=store_interval,
+        seed=seed,
+    )
+
+    finite = bool(np.all(np.isfinite(xs)))
+    max_dev = 0.0
+    for frame in xs:
+        d = np.linalg.norm(frame[pairs[:, 0]] - frame[pairs[:, 1]], axis=1)
+        max_dev = max(max_dev, float(np.max(np.abs(d - targets))))
+
+    print(f"  finite coordinates: {finite}", flush=True)
+    print(f"  max constraint deviation: {max_dev:.2e} nm (tol {dist_atol:.0e})", flush=True)
+    passed = finite and max_dev <= dist_atol
+    print(f"  RESULT: {'PASS' if passed else 'FAIL'}", flush=True)
+    return passed
+
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=2024)
@@ -87,7 +156,22 @@ def main():
     parser.add_argument("--min-overlap", type=float, default=0.5)
     parser.add_argument("--box-width", type=float, default=4.0)
     parser.add_argument("--forcefield", type=str, default="smirnoff_2_0_0_sc.py")
+    parser.add_argument("--sdf")
+    parser.add_argument(
+        "--local-md-steps",
+        type=int,
+        default=2000,
+        help="Number of local MD steps to run in the constrained local-MD stability check",
+    )
+    parser.add_argument(
+        "--skip-bisection",
+        action="store_true",
+        help="Only run the constrained local-MD stability check, skipping the dG bisection legs",
+    )
     args = parser.parse_args()
+
+    if args.sdf:
+        mol, *_ = read_sdf(args.sdf)
 
     mol, _ = testsystems.ligands.get_biphenyl()
     ff = Forcefield.load_from_file(args.forcefield)
@@ -113,6 +197,16 @@ def main():
         f"steps_per_frame={args.steps_per_frame} dt={args.dt} seed={args.seed} ff={args.forcefield}",
         flush=True,
     )
+
+    print("\n=== constrained local MD stability ===", flush=True)
+    local_md_ok = check_local_md_stability(
+        afe, ff, host_config, host_conf, md_params, temperature, args.seed, args.local_md_steps,
+    )
+    if not local_md_ok:
+        raise SystemExit("constrained local MD stability check FAILED")
+
+    if args.skip_bisection:
+        return
 
     print("\n=== unconstrained ===", flush=True)
     dG_off, err_off, wall_off = run_leg(
