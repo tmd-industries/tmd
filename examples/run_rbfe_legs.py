@@ -54,6 +54,12 @@ def main():
     parser.add_argument("--n_frames", default=2000, type=int, help="Number of frames to simulate")
     parser.add_argument("--steps_per_frame", default=400, type=int, help="Steps per frame")
     parser.add_argument(
+        "--dt",
+        default=2.5e-3,
+        type=float,
+        help="Integrator timestep in picoseconds (default 2.5e-3 = 2.5 fs)",
+    )
+    parser.add_argument(
         "--n_windows", default=DEFAULT_NUM_WINDOWS, type=int, help="Max number of windows from bisection"
     )
     parser.add_argument("--min_overlap", default=0.667, type=float, help="Overlap to target in bisection")
@@ -169,6 +175,7 @@ def main():
         n_frames=args.n_frames,
         steps_per_frame=args.steps_per_frame,
         seed=args.seed,
+        dt=args.dt,
         hrex_params=HREXParams(
             optimize_target_overlap=args.target_overlap,
             rest_params=RESTParams(

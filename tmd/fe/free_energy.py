@@ -184,6 +184,8 @@ class MDParams:
     steps_per_frame: int
     seed: int
 
+    # Integrator timestep in picoseconds.
+    dt: float = 2.5e-3
     # Set to LocalMDParams to enable local MD
     local_md_params: LocalMDParams | None = None
     # Set to HREXParams or None to disable HREX
@@ -195,6 +197,7 @@ class MDParams:
         assert self.steps_per_frame > 0
         assert self.n_frames > 0
         assert self.n_eq_steps >= 0
+        assert self.dt > 0
         if self.local_md_params is not None:
             assert self.local_md_params.local_steps <= self.steps_per_frame
 

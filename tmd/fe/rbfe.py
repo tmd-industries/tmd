@@ -263,6 +263,7 @@ def setup_initial_state(
     seed: int,
     verify_constraints: bool,
     constrain_hydrogens: bool = False,
+    dt: float = 2.5e-3,
 ) -> InitialState:
     conf_a = get_romol_conf(st.mol_a)
     conf_b = get_romol_conf(st.mol_b)
@@ -300,7 +301,6 @@ def setup_initial_state(
     ligand_idxs = np.arange(num_total_atoms - num_ligand_atoms, num_total_atoms, dtype=np.int32)
 
     # initialize Langevin integrator
-    dt = 2.5e-3
     friction = 1.0
     intg: Union[LangevinIntegrator, ConstrainedLangevinIntegrator]
     if constrain_hydrogens:
@@ -361,6 +361,7 @@ def setup_initial_states(
     verify_constraints: bool,
     min_cutoff: Optional[float] = None,
     constrain_hydrogens: bool = False,
+    dt: float = 2.5e-3,
 ) -> list[InitialState]:
     """
     Given a sequence of lambda values, return a list of initial states.
@@ -398,6 +399,9 @@ def setup_initial_states(
         If True, constrain bonds involving hydrogens (and make water fully rigid) using SHAKE/RATTLE in a
         constrained Langevin integrator. Defaults to False.
 
+    dt: float
+        Integrator timestep in picoseconds. Defaults to 2.5e-3.
+
     Returns
     -------
     list of InitialState
@@ -408,7 +412,7 @@ def setup_initial_states(
     assert np.all(np.diff(lambda_schedule) > 0)
 
     initial_states = [
-        setup_initial_state(st, lamb, host, temperature, seed, verify_constraints, constrain_hydrogens)
+        setup_initial_state(st, lamb, host, temperature, seed, verify_constraints, constrain_hydrogens, dt)
         for lamb in lambda_schedule
     ]
 
@@ -767,6 +771,7 @@ def estimate_relative_free_energy(
         False,
         min_cutoff=min_cutoff,
         constrain_hydrogens=constrain_hydrogens,
+        dt=md_params.dt,
     )
 
     # TODO: rename prefix to postfix, or move to beginning of combined_prefix?
@@ -887,6 +892,7 @@ def estimate_relative_free_energy_bisection(
         False,
         min_cutoff=min_cutoff,
         constrain_hydrogens=constrain_hydrogens,
+        dt=md_params.dt,
     )
 
     make_initial_state_fn = partial(
@@ -897,6 +903,7 @@ def estimate_relative_free_energy_bisection(
         seed=md_params.seed,
         verify_constraints=False,  # Speeds up construction of initial state
         constrain_hydrogens=constrain_hydrogens,
+        dt=md_params.dt,
     )
 
     make_optimized_initial_state_fn = partial(
@@ -1254,6 +1261,7 @@ def estimate_relative_free_energy_bisection_hrex(
         False,
         min_cutoff=min_cutoff,
         constrain_hydrogens=constrain_hydrogens,
+        dt=md_params.dt,
     )
 
     make_initial_state_fn = partial(
@@ -1264,6 +1272,7 @@ def estimate_relative_free_energy_bisection_hrex(
         seed=md_params.seed,
         verify_constraints=False,  # Speeds up construction of initial state
         constrain_hydrogens=constrain_hydrogens,
+        dt=md_params.dt,
     )
 
     make_optimized_initial_state_fn = partial(
