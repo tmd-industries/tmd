@@ -85,6 +85,7 @@ template class DeviceBuffer<float>;
 template class DeviceBuffer<int>;
 template class DeviceBuffer<size_t>;
 template class DeviceBuffer<char>;
+template class DeviceBuffer<unsigned char>;
 template class DeviceBuffer<unsigned int>;
 template class DeviceBuffer<unsigned long long>;
 template class DeviceBuffer<__int128>;

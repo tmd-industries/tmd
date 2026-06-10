@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -54,6 +55,30 @@ private:
   std::shared_ptr<Constraints<RealType>> constraints_;
 
   StreamedPotentialRunner<RealType> runner_;
+
+  // Per-atom (per system) mask: 1 if the atom belongs to a constraint cluster.
+  // Cluster atoms are integrated by the fused per-cluster kernel; the remaining
+  // atoms are integrated by a separate per-atom kernel.
+  DeviceBuffer<uint8_t> d_is_cluster_atom_;
+  // False when every atom belongs to a cluster (e.g. pure water): the per-atom
+  // non-cluster kernel can then be skipped entirely.
+  bool has_noncluster_atoms_;
+  // Fuse the entire post-force sub-step sequence into one per-cluster kernel
+  // (plus one non-cluster kernel) instead of issuing a kernel per sub-step.
+  // Disabled by setting TMD_NO_CONSTRAINT_FUSION (e.g. for A/B comparison).
+  bool use_fusion_;
+
+  // Issue the fixed post-force sequence of integrator sub-step kernels.
+  // Dispatches to the fused or per-sub-step implementation depending on
+  // use_fusion_.
+  void step_post_force(RealType *d_x_t, RealType *d_v_t, unsigned int *d_idxs,
+                       cudaStream_t stream);
+  // Fused implementation: one per-cluster kernel (plus one non-cluster kernel).
+  void step_post_force_fused(RealType *d_x_t, RealType *d_v_t,
+                             unsigned int *d_idxs, cudaStream_t stream);
+  // Reference implementation: one kernel per integrator sub-step.
+  void step_post_force_unfused(RealType *d_x_t, RealType *d_v_t,
+                               unsigned int *d_idxs, cudaStream_t stream);
 
 public:
   ConstrainedLangevinIntegrator(

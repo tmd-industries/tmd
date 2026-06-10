@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 
 #include "constants.hpp"
@@ -35,7 +36,6 @@ ConstrainedLangevinIntegrator<RealType>::ConstrainedLangevinIntegrator(
     throw std::runtime_error(
         "ConstrainedLangevinIntegrator requires a Constraints object");
   }
-
   const RealType kT = static_cast<RealType>(BOLTZ) * temperature;
   const RealType ccs_adjustment = sqrt(1 - exp(-2 * friction * dt));
 
@@ -64,6 +64,28 @@ ConstrainedLangevinIntegrator<RealType>::ConstrainedLangevinIntegrator(
                                DEFAULT_THREADS_PER_BLOCK, 0>>>(
       static_cast<int>(d_rand_states_.length), seed, d_rand_states_.data);
   gpuErrchk(cudaPeekAtLastError());
+
+  // Build the per-atom cluster-membership mask used to split work between the
+  // fused per-cluster kernel and the per-atom non-cluster kernel. Clusters use
+  // per-system atom indices in [0, N), so the mask has length N.
+  std::vector<uint8_t> h_mask(N_, 0);
+  for (int atom : constraints_->cluster_atoms_host()) {
+    if (atom >= 0 && atom < N_) {
+      h_mask[atom] = 1;
+    }
+  }
+  int n_cluster_atoms = 0;
+  for (uint8_t m : h_mask) {
+    n_cluster_atoms += m;
+  }
+  has_noncluster_atoms_ = n_cluster_atoms < N_;
+  d_is_cluster_atom_.realloc(N_);
+  d_is_cluster_atom_.copy_from(h_mask.data());
+
+  // Fuse the per-sub-step kernels into a single per-cluster kernel (plus a
+  // non-cluster kernel) to minimize the number of dependent launches. Disabled
+  // at runtime by setting TMD_NO_CONSTRAINT_FUSION (e.g. for A/B comparison).
+  use_fusion_ = std::getenv("TMD_NO_CONSTRAINT_FUSION") == nullptr;
 }
 
 template <typename RealType>
@@ -85,20 +107,67 @@ void ConstrainedLangevinIntegrator<RealType>::step_fwd(
     std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
     RealType *d_x_t, RealType *d_v_t, RealType *d_box_t, unsigned int *d_idxs,
     cudaStream_t stream) {
-  const int D = 3;
 
   // d_idxs (non-null under local MD) is the free-index buffer: atoms whose
   // entry equals N are frozen and skipped by the sub-step kernels and treated
   // as infinite-mass anchors by SHAKE/RATTLE.
 
+  // Force evaluation at the current positions.
+  runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t, d_du_dx_,
+                             nullptr, nullptr, stream);
+
+  step_post_force(d_x_t, d_v_t, d_idxs, stream);
+}
+
+template <typename RealType>
+void ConstrainedLangevinIntegrator<RealType>::step_post_force(
+    RealType *d_x_t, RealType *d_v_t, unsigned int *d_idxs,
+    cudaStream_t stream) {
+  if (use_fusion_) {
+    step_post_force_fused(d_x_t, d_v_t, d_idxs, stream);
+  } else {
+    step_post_force_unfused(d_x_t, d_v_t, d_idxs, stream);
+  }
+}
+
+template <typename RealType>
+void ConstrainedLangevinIntegrator<RealType>::step_post_force_fused(
+    RealType *d_x_t, RealType *d_v_t, unsigned int *d_idxs,
+    cudaStream_t stream) {
+  const int D = 3;
+  const RealType half_dt = static_cast<RealType>(0.5) * dt_;
+
+  // One fused kernel performs the entire post-force B-A-O-A sequence (with the
+  // interleaved SHAKE/RATTLE projections) for every cluster atom, consuming and
+  // zeroing the forces. This replaces the long chain of small dependent kernels
+  // whose per-launch latency otherwise dominates the step.
+  constraints_->apply_constrained_baoab(batch_size_, N_, d_cbs_, d_ccs_,
+                                        d_inv_mass_, d_idxs,
+                                        d_rand_states_.data, d_du_dx_, d_x_t,
+                                        d_v_t, ca_, half_dt, stream);
+
+  // Integrate the remaining (unconstrained) atoms, if any. For all-water
+  // systems every atom is in a cluster and this launch is skipped.
+  if (has_noncluster_atoms_) {
+    constexpr size_t tpb = DEFAULT_THREADS_PER_BLOCK;
+    const dim3 atom_grid(ceil_divide(N_, tpb), batch_size_);
+    k_baoab_noncluster<RealType, D><<<atom_grid, tpb, 0, stream>>>(
+        batch_size_, N_, d_cbs_, d_ccs_, d_idxs, d_is_cluster_atom_.data,
+        d_rand_states_.data, d_du_dx_, d_x_t, d_v_t, ca_, half_dt);
+    gpuErrchk(cudaPeekAtLastError());
+  }
+}
+
+template <typename RealType>
+void ConstrainedLangevinIntegrator<RealType>::step_post_force_unfused(
+    RealType *d_x_t, RealType *d_v_t, unsigned int *d_idxs,
+    cudaStream_t stream) {
+  const int D = 3;
+
   constexpr size_t tpb = DEFAULT_THREADS_PER_BLOCK;
   const dim3 atom_grid(ceil_divide(N_, tpb), batch_size_);
   const RealType half_dt = static_cast<RealType>(0.5) * dt_;
   const size_t coords_size = batch_size_ * N_ * D * sizeof(*d_x_t);
-
-  // Force evaluation at the current positions.
-  runner_.execute_potentials(batch_size_, bps, N_, d_x_t, d_box_t, d_du_dx_,
-                             nullptr, nullptr, stream);
 
   // B: full velocity kick, then project velocities onto the constraint
   // tangent space.

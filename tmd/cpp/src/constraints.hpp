@@ -16,6 +16,7 @@
 
 #include "device_buffer.hpp"
 #include <cuda_runtime.h>
+#include <curand_kernel.h>
 #include <vector>
 
 namespace tmd {
@@ -50,6 +51,10 @@ private:
   DeviceBuffer<int> d_constraint_local_j_;         // [num_constraints]
   DeviceBuffer<RealType> d_constraint_r0_;         // [num_constraints]
 
+  // Host copy of the cluster member atom indices (one system), used to build
+  // the cluster-membership mask consumed by the fused integrator.
+  const std::vector<int> h_cluster_atoms_;
+
 public:
   // cluster_atom_offsets / cluster_constraint_offsets are CSR offset arrays of
   // length num_clusters + 1. cluster_atoms holds the global atom index of each
@@ -69,6 +74,14 @@ public:
 
   int num_clusters() const { return num_clusters_; }
   int num_constraints() const { return num_constraints_; }
+
+  // Per-system global atom indices (in [0, N)) of every cluster member. The
+  // clusters are disjoint, so these indices are distinct; an atom not in this
+  // list participates in no constraint. Used to build the cluster-membership
+  // mask for the fused integrator.
+  const std::vector<int> &cluster_atoms_host() const {
+    return h_cluster_atoms_;
+  }
 
   // Project drifted positions x back onto the constraint manifold using x_ref
   // (positions at the start of the drift) for the constraint directions. When
@@ -92,6 +105,18 @@ public:
                                   const unsigned int *d_idxs,
                                   const RealType *d_x, RealType *d_v,
                                   cudaStream_t stream);
+
+  // Perform the entire post-force constrained BAOAB step for all cluster atoms
+  // in a single fused kernel (one thread per cluster), consuming and zeroing
+  // the forces in d_du_dx. This is equivalent to the sequence of per-sub-step
+  // kernels plus their interleaved SHAKE/RATTLE projections, but issues a single
+  // launch. Non-cluster atoms are not touched and must be integrated separately.
+  void apply_constrained_baoab(
+      const int num_systems, const int N, const RealType *d_cbs,
+      const RealType *d_ccs, const RealType *d_inv_mass,
+      const unsigned int *d_idxs, curandState_t *d_rand_states,
+      unsigned long long *d_du_dx, RealType *d_x, RealType *d_v,
+      const RealType ca, const RealType half_dt, cudaStream_t stream);
 };
 
 } // namespace tmd

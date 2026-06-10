@@ -36,7 +36,7 @@ Constraints<RealType>::Constraints(
       d_cluster_constraint_offsets_(cluster_constraint_offsets),
       d_constraint_local_i_(constraint_local_i),
       d_constraint_local_j_(constraint_local_j),
-      d_constraint_r0_(constraint_r0) {
+      d_constraint_r0_(constraint_r0), h_cluster_atoms_(cluster_atoms) {
 
   if (cluster_atom_offsets.size() < 1) {
     throw std::runtime_error("cluster_atom_offsets must be non-empty");
@@ -115,6 +115,27 @@ void Constraints<RealType>::apply_velocity_constraints(
       d_cluster_atoms_.data, d_cluster_constraint_offsets_.data,
       d_constraint_local_i_.data, d_constraint_local_j_.data, d_inv_mass,
       d_idxs, d_x, d_v, vel_tol_, max_iters_);
+  gpuErrchk(cudaPeekAtLastError());
+}
+
+template <typename RealType>
+void Constraints<RealType>::apply_constrained_baoab(
+    const int num_systems, const int N, const RealType *d_cbs,
+    const RealType *d_ccs, const RealType *d_inv_mass,
+    const unsigned int *d_idxs, curandState_t *d_rand_states,
+    unsigned long long *d_du_dx, RealType *d_x, RealType *d_v,
+    const RealType ca, const RealType half_dt, cudaStream_t stream) {
+  if (num_clusters_ == 0) {
+    return;
+  }
+  const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
+  dim3 grid(ceil_divide(num_clusters_, tpb), num_systems);
+  k_constrained_baoab_cluster<RealType, 3><<<grid, tpb, 0, stream>>>(
+      num_systems, N, num_clusters_, d_cluster_atom_offsets_.data,
+      d_cluster_atoms_.data, d_cluster_constraint_offsets_.data,
+      d_constraint_local_i_.data, d_constraint_local_j_.data,
+      d_constraint_r0_.data, d_cbs, d_ccs, d_inv_mass, d_idxs, d_rand_states,
+      d_du_dx, d_x, d_v, ca, half_dt, pos_tol_, vel_tol_, max_iters_);
   gpuErrchk(cudaPeekAtLastError());
 }
 
