@@ -62,9 +62,10 @@ def _global_constraint_pairs(clusters):
 
 
 def test_constrained_hydration_setup_holds_constraints():
-    """The constrained hydration path swaps in a ConstrainedLangevinIntegrator,
-    drops the constrained harmonic bonds, and the constrained distances are held
-    during real solvated MD."""
+    """The constrained hydration path swaps in a ConstrainedLangevinIntegrator and the
+    constrained distances are held during real solvated MD. The harmonic bond terms are
+    retained (their force is ~0 at the constrained length) so that energy minimization,
+    which does not apply constraints, remains stable."""
     seed = 2022
     mol, _ = testsystems.ligands.get_biphenyl()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
@@ -83,16 +84,16 @@ def test_constrained_hydration_setup_holds_constraints():
         afe, ff, host_config, temperature, lambda_schedule, seed, constrain_hydrogens=True
     )
 
-    # The constrained integrator must be used and constrained bonds removed.
+    # The constrained integrator must be used.
     assert isinstance(states_on[0].integrator, ConstrainedLangevinIntegrator)
     clusters = states_on[0].integrator.constraints
     assert clusters.num_constraints > 0
 
+    # The harmonic bond terms are retained so the unconstrained minimizer stays stable; the X-H
+    # stretches are held rigid by the integrator's SHAKE/RATTLE constraints, not by removal.
     bond_off = get_bound_potential_by_type(states_off[0].potentials, HarmonicBond)
     bond_on = get_bound_potential_by_type(states_on[0].potentials, HarmonicBond)
-    n_removed = len(bond_off.potential.idxs) - len(bond_on.potential.idxs)
-    assert n_removed == len(clusters.constrained_bond_rows)
-    assert n_removed > 0
+    assert len(bond_on.potential.idxs) == len(bond_off.potential.idxs)
 
     # Constrained distances must be held across real solvated dynamics.
     pairs, targets = _global_constraint_pairs(clusters)

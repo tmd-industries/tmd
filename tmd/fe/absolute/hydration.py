@@ -33,7 +33,7 @@ from tmd.fe.free_energy import (
     make_pair_bar_plots,
     run_sims_sequential,
 )
-from tmd.fe.constraints import build_constraints, remove_constrained_bonds
+from tmd.fe.constraints import build_constraints
 from tmd.fe.lambda_schedule import construct_pre_optimized_absolute_lambda_schedule_solvent
 from tmd.fe.topology import BaseTopology
 from tmd.fe.utils import get_mol_name, get_romol_conf
@@ -335,8 +335,6 @@ def setup_initial_states(
         dt = 2.5e-3
         friction = 1.0
 
-        constrained_bond_idxs = None
-        constrained_bond_params = None
         if constrain_hydrogens:
             bond_params = next(p for u, p in zip(ubps, params) if u is bond_potential)
             angle_potential = get_potential_by_type(ubps, potentials.HarmonicAngle)
@@ -349,21 +347,14 @@ def setup_initial_states(
                 angle_params,
                 rigid_water=True,
             )
-            # Replace the constrained harmonic stretches with rigid SHAKE constraints.
-            constrained_bond_idxs, constrained_bond_params = remove_constrained_bonds(
-                bond_potential.idxs, bond_params, clusters.constrained_bond_rows
-            )
+            # The constrained X-H stretches are held rigid by SHAKE/RATTLE in the integrator. The
+            # harmonic bond terms are retained (their force is ~0 at the constrained length) so that
+            # energy minimization, which does not apply constraints, remains stable.
             intg = ConstrainedLangevinIntegrator(temperature, dt, friction, hmr_masses, seed, clusters)
         else:
             intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
 
-        bps = []
-        for ubp, param in zip(ubps, params):
-            if constrain_hydrogens and ubp is bond_potential:
-                bp = potentials.HarmonicBond(ubp.num_atoms, constrained_bond_idxs).bind(constrained_bond_params)
-            else:
-                bp = ubp.bind(param)
-            bps.append(bp)
+        bps = [ubp.bind(param) for ubp, param in zip(ubps, params)]
 
         state = InitialState(bps, intg, baro, x0, v0, box0, lamb, ligand_idxs, np.array([], dtype=np.int32))
         initial_states.append(state)

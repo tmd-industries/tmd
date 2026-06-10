@@ -29,7 +29,7 @@ from tmd._vendored.pymbar.mbar import MBAR
 from tmd.constants import DEFAULT_POSITIONAL_RESTRAINT_K, DEFAULT_PRESSURE, DEFAULT_TEMP
 from tmd.fe import model_utils
 from tmd.fe.bar import DEFAULT_MAXIMUM_ITERATIONS, DEFAULT_RELATIVE_TOLERANCE, DEFAULT_SOLVER_PROTOCOL
-from tmd.fe.constraints import build_constraints, remove_constrained_bonds
+from tmd.fe.constraints import build_constraints
 from tmd.fe.free_energy import (
     HREXParams,
     HREXPlots,
@@ -304,7 +304,7 @@ def setup_initial_state(
     friction = 1.0
     intg: Union[LangevinIntegrator, ConstrainedLangevinIntegrator]
     if constrain_hydrogens:
-        # Replace bonds involving hydrogen with rigid SHAKE/RATTLE constraints (and make water
+        # Make bonds involving hydrogen rigid with SHAKE/RATTLE constraints (and make water
         # rigid). The two-stage atom-map/single-topology filtering ensures every constrained
         # hydrogen has a lambda-independent bond length, so a single constraint length is valid
         # across the whole schedule.
@@ -324,15 +324,9 @@ def setup_initial_state(
             angle_bp.params,
             rigid_water=True,
         )
-        constrained_bond_idxs, constrained_bond_params = remove_constrained_bonds(
-            bond_bp.potential.idxs, bond_bp.params, clusters.constrained_bond_rows
-        )
-        potentials = [
-            HarmonicBond(bond_bp.potential.num_atoms, constrained_bond_idxs).bind(constrained_bond_params)
-            if bp is bond_bp
-            else bp
-            for bp in potentials
-        ]
+        # The constrained X-H stretches are held rigid by SHAKE/RATTLE in the integrator. The
+        # harmonic bond terms are retained (their force is ~0 at the constrained length) so that
+        # energy minimization, which does not apply constraints, remains stable.
         intg = ConstrainedLangevinIntegrator(temperature, dt, friction, hmr_masses, run_seed, clusters)
     else:
         intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, run_seed)

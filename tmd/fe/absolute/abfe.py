@@ -21,7 +21,7 @@ import numpy as np
 from tmd import potentials
 from tmd.constants import DEFAULT_PRESSURE
 from tmd.fe import model_utils
-from tmd.fe.constraints import build_constraints, remove_constrained_bonds
+from tmd.fe.constraints import build_constraints
 from tmd.fe.free_energy import (
     InitialState,
     Trajectory,
@@ -59,8 +59,6 @@ def get_initial_state(
 
     friction = 1.0
 
-    constrained_bond_idxs = None
-    constrained_bond_params = None
     if constrain_hydrogens:
         bond_params = next(p for u, p in zip(ubps, params) if u is bond_potential)
         angle_potential = get_potential_by_type(ubps, potentials.HarmonicAngle)
@@ -73,21 +71,14 @@ def get_initial_state(
             angle_params,
             rigid_water=True,
         )
-        # Replace the constrained harmonic stretches with rigid SHAKE constraints.
-        constrained_bond_idxs, constrained_bond_params = remove_constrained_bonds(
-            bond_potential.idxs, bond_params, clusters.constrained_bond_rows
-        )
+        # The constrained X-H stretches are held rigid by SHAKE/RATTLE in the integrator. The
+        # harmonic bond terms are retained (their force is ~0 at the constrained length) so that
+        # energy minimization, which does not apply constraints, remains stable.
         intg = ConstrainedLangevinIntegrator(temperature, dt, friction, hmr_masses, seed, clusters)
     else:
         intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
 
-    bps = []
-    for ubp, param in zip(ubps, params):
-        if constrain_hydrogens and ubp is bond_potential:
-            bp = potentials.HarmonicBond(ubp.num_atoms, constrained_bond_idxs).bind(constrained_bond_params)
-        else:
-            bp = ubp.bind(param)
-        bps.append(bp)
+    bps = [ubp.bind(param) for ubp, param in zip(ubps, params)]
 
     protein_idxs = np.arange(
         len(host_config.conf) - host_config.num_water_atoms - host_config.num_membrane_atoms, dtype=np.int32

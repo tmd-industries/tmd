@@ -39,8 +39,9 @@ def _hydrogen_heavy_bonds(bond_idxs, bond_params, is_h):
 
 
 def test_rbfe_vacuum_constrain_hydrogens_holds_constraints():
-    """A constrained single-topology vacuum state must hold every X-H bond rigid under MD, and
-    the constrained X-H stretches must be removed from the harmonic bond potential."""
+    """A constrained single-topology vacuum state must hold every X-H bond rigid under MD. The
+    harmonic bond terms are retained (their force is ~0 at the constrained length) so that
+    energy minimization, which does not apply constraints, remains stable."""
     # Simple-charge forcefield avoids the OpenEye AM1CCC dependency.
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     mol_a, mol_b, _ = get_hif2a_ligand_pair_single_topology()
@@ -67,8 +68,20 @@ def test_rbfe_vacuum_constrain_hydrogens_holds_constraints():
     assert isinstance(state.integrator, ConstrainedLangevinIntegrator)
 
     bond_con = get_bound_potential_by_type(state.potentials, HarmonicBond)
-    # Every X-H stretch was replaced by a rigid constraint and dropped from the harmonic potential.
-    assert len(bond_con.potential.idxs) == len(bond_unc.potential.idxs) - len(hx)
+    # The harmonic bond terms are retained so the unconstrained minimizer stays stable; the X-H
+    # stretches are held rigid by the integrator's SHAKE/RATTLE constraints, not by removal.
+    assert len(bond_con.potential.idxs) == len(bond_unc.potential.idxs)
+
+    ctxt = get_context(state)
+    xs, _ = ctxt.multiple_steps(500, 50)
+    assert len(xs) > 0
+
+    pairs = np.array([(i, j) for i, j, _ in hx])
+    targets = np.array([r0 for *_, r0 in hx])
+    for frame in xs:
+        d = np.linalg.norm(frame[pairs[:, 0]] - frame[pairs[:, 1]], axis=1)
+        # float32 SHAKE/RATTLE tolerance
+        np.testing.assert_allclose(d, targets, atol=5e-3)
 
     ctxt = get_context(state)
     xs, _ = ctxt.multiple_steps(500, 50)
