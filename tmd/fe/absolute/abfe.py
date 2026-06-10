@@ -39,7 +39,7 @@ from tmd.potentials.potential import get_potential_by_type
 
 
 def get_initial_state(
-    afe, ff, host_config, host_conf, temperature, seed, lamb, constrain_hydrogens: bool = False
+    afe, ff, host_config, host_conf, temperature, seed, lamb, constrain_hydrogens: bool = False, dt: float = 2.5e-3
 ) -> InitialState:
     """Get initial state at a particular lambda for use with ABFE"""
     ubps, params, masses = afe.prepare_host_edge(ff, host_config, lamb)
@@ -57,7 +57,6 @@ def get_initial_state(
     num_total_atoms = len(x0)
     ligand_idxs = np.arange(num_total_atoms - num_ligand_atoms, num_total_atoms, dtype=np.int32)
 
-    dt = 2.5e-3
     friction = 1.0
 
     constrained_bond_idxs = None

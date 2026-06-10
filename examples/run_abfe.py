@@ -183,7 +183,15 @@ def estimate_abfe_leg(
     if leg == COMPLEX_LEG:
         # Run short equilibration to obtain trajectory used to pick restraint atoms
         initial_state = get_initial_state(
-            afe, ff, host_config, host_conf, temperature, md_params.seed, 0.0, constrain_hydrogens=constrain_hydrogens
+            afe,
+            ff,
+            host_config,
+            host_conf,
+            temperature,
+            md_params.seed,
+            0.0,
+            constrain_hydrogens=constrain_hydrogens,
+            dt=md_params.dt,
         )
         minimized_state = optimize_abfe_initial_state(initial_state)
         # TBD: How many frames do you want from here?
@@ -205,7 +213,15 @@ def estimate_abfe_leg(
 
     def create_abfe_initial_state(lamb):
         return get_initial_state(
-            afe, ff, host_config, host_conf, temperature, md_params.seed, lamb, constrain_hydrogens=constrain_hydrogens
+            afe,
+            ff,
+            host_config,
+            host_conf,
+            temperature,
+            md_params.seed,
+            lamb,
+            constrain_hydrogens=constrain_hydrogens,
+            dt=md_params.dt,
         )
 
     if md_params.hrex_params is None:
@@ -425,6 +441,12 @@ def main():
     parser.add_argument("--n_frames", default=2000, type=int, help="Number of frames to generation")
     parser.add_argument("--steps_per_frame", default=400, type=int, help="Steps per frame")
     parser.add_argument(
+        "--dt",
+        default=2.5e-3,
+        type=float,
+        help="Integrator timestep in picoseconds (default 2.5e-3 = 2.5 fs)",
+    )
+    parser.add_argument(
         "--n_windows", default=DEFAULT_NUM_WINDOWS, type=int, help="Max number of windows from bisection"
     )
     parser.add_argument("--min_overlap", default=0.667, type=float, help="Overlap to target in bisection")
@@ -531,6 +553,7 @@ def main():
             n_frames=args.n_frames,
             steps_per_frame=args.steps_per_frame,
             seed=args.seed,
+            dt=args.dt,
             hrex_params=HREXParams(
                 optimize_target_overlap=args.target_overlap,
                 n_frames_bisection=args.bisection_frames,

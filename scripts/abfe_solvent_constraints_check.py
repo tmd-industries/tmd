@@ -39,7 +39,8 @@ from tmd.md import builders, minimizer
 def run_leg(afe, ff, host_config, host_conf, md_params, temperature, seed, n_bisections, min_overlap, constrain):
     def make_initial_state(lamb):
         return abfe.get_initial_state(
-            afe, ff, host_config, host_conf, temperature, seed, lamb, constrain_hydrogens=constrain
+            afe, ff, host_config, host_conf, temperature, seed, lamb,
+            constrain_hydrogens=constrain, dt=md_params.dt,
         )
 
     t0 = time.time()
@@ -79,6 +80,9 @@ def main():
     parser.add_argument("--n-frames", type=int, default=200)
     parser.add_argument("--n-eq-steps", type=int, default=5000)
     parser.add_argument("--steps-per-frame", type=int, default=400)
+    parser.add_argument(
+        "--dt", type=float, default=2.5e-3, help="Integrator timestep in picoseconds (default 2.5e-3 = 2.5 fs)"
+    )
     parser.add_argument("--n-bisections", type=int, default=12)
     parser.add_argument("--min-overlap", type=float, default=0.5)
     parser.add_argument("--box-width", type=float, default=4.0)
@@ -100,12 +104,13 @@ def main():
         n_eq_steps=args.n_eq_steps,
         n_frames=args.n_frames,
         steps_per_frame=args.steps_per_frame,
+        dt=args.dt,
     )
 
     print(
         f"settings: n_bisections={args.n_bisections} min_overlap={args.min_overlap} "
         f"n_frames={args.n_frames} n_eq_steps={args.n_eq_steps} "
-        f"steps_per_frame={args.steps_per_frame} seed={args.seed} ff={args.forcefield}",
+        f"steps_per_frame={args.steps_per_frame} dt={args.dt} seed={args.seed} ff={args.forcefield}",
         flush=True,
     )
 
