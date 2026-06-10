@@ -1059,6 +1059,77 @@ def batch_interpolate_nonbonded_pair_list_params(
     return pair_params
 
 
+# Default tolerance (in nm) for deciding whether a mapped hydrogen's bond length
+# is the same in both end states. Force-field bond lengths that are genuinely
+# identical compare exactly equal, while element/hybridization-driven retypings
+# differ by >~5e-3 nm, so a tight tolerance only rejects true mismatches.
+DEFAULT_CONSTRAINT_LENGTH_ATOL = 1e-4
+
+
+def _hydrogen_bond_lengths(mol: Chem.Mol, ff: Forcefield) -> dict[int, float]:
+    """Return the harmonic-bond equilibrium length of each hydrogen's single bond.
+
+    A hydrogen has exactly one bond, so its constrained distance is unambiguous.
+    The returned dict maps each hydrogen's atom index to its bond length (nm).
+    """
+    assert ff.hb_handle is not None
+    base_top = topology.BaseTopology(mol, ff)
+    params, hb = base_top.parameterize_harmonic_bond(ff.hb_handle.params)
+    params = np.asarray(params)
+    lengths: dict[int, float] = {}
+    for (i, j), p in zip(hb.idxs, params):
+        i, j = int(i), int(j)
+        b0 = float(p[1])
+        if mol.GetAtomWithIdx(i).GetAtomicNum() == 1:
+            lengths[i] = b0
+        if mol.GetAtomWithIdx(j).GetAtomicNum() == 1:
+            lengths[j] = b0
+    return lengths
+
+
+def filter_constraint_incompatible_hydrogens(
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    core: NDArray,
+    ff: Forcefield,
+    length_atol: float = DEFAULT_CONSTRAINT_LENGTH_ATOL,
+) -> tuple[NDArray, list[tuple[int, int]]]:
+    """Drop hydrogen pairs from ``core`` whose constrained bond length differs
+    between the two molecules.
+
+    Hydrogen-involving bonds are rigidly constrained at a single, lambda-
+    independent length, so a mapped hydrogen can only be constrained if its bond
+    length is the same in both end states. This catches transmutations of the
+    parent heavy atom (e.g. C->O) as well as same-element retypings (e.g. an
+    sp3->sp2 carbon) that change the X-H equilibrium length. Such hydrogens are
+    unmapped here so that single topology demotes them to per-state dummy atoms,
+    each retaining its own native (and therefore constraint-compatible) bond.
+
+    Returns
+    -------
+    (filtered_core, dropped_pairs)
+        ``filtered_core`` is ``core`` with the incompatible rows removed;
+        ``dropped_pairs`` lists the ``(a_idx, b_idx)`` pairs that were removed.
+    """
+    core = np.asarray(core)
+    lengths_a = _hydrogen_bond_lengths(mol_a, ff)
+    lengths_b = _hydrogen_bond_lengths(mol_b, ff)
+
+    keep_rows: list[tuple[int, int]] = []
+    dropped_pairs: list[tuple[int, int]] = []
+    for a, b in core:
+        a, b = int(a), int(b)
+        a_is_h = mol_a.GetAtomWithIdx(a).GetAtomicNum() == 1
+        b_is_h = mol_b.GetAtomWithIdx(b).GetAtomicNum() == 1
+        if a_is_h and b_is_h and abs(lengths_a[a] - lengths_b[b]) > length_atol:
+            dropped_pairs.append((a, b))
+            continue
+        keep_rows.append((a, b))
+
+    filtered_core = np.array(keep_rows, dtype=core.dtype).reshape(-1, 2)
+    return filtered_core, dropped_pairs
+
+
 class AtomMapFlags(IntEnum):
     CORE = 0
     MOL_A = 1
@@ -1306,7 +1377,7 @@ class AlignedNonbondedPairlist(AlignedPotential):
 
 
 class SingleTopology(AtomMapMixin):
-    def __init__(self, mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray, forcefield: Forcefield):
+    def __init__(self, mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray, forcefield: Forcefield, constrain_hydrogens: bool = False):
         """
         SingleTopology combines two molecules through a common core. The combined mol has
         atom indices laid out such that mol_a is identically mapped to the combined mol indices.
@@ -1328,7 +1399,15 @@ class SingleTopology(AtomMapMixin):
 
         forcefield: ff.Forcefield
             Forcefield to be used for parameterization.
+
+        constrain_hydrogens: bool
+            If True, unmap (demote to per-state dummy atoms) any mapped hydrogen pair whose
+            harmonic bond length differs between the two end states, so that the resulting core
+            is compatible with rigid hydrogen-bond constraints. Defaults to False.
         """
+        if constrain_hydrogens:
+            core, _ = filter_constraint_incompatible_hydrogens(mol_a, mol_b, core, forcefield)
+
         # initialize the mixin to get the a_to_c, b_to_c, c_to_a, c_to_b, and c_flags
         super().__init__(mol_a, mol_b, core)
 
