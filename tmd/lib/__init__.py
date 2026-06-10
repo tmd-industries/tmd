@@ -103,6 +103,35 @@ class VelocityVerletIntegrator:
 
 
 @dataclass
+class ConstrainedVelocityVerletIntegrator:
+    dt: float
+    masses: NDArray[np.float64]
+    constraints: Any  # tmd.fe.constraints.ConstraintClusters
+    pos_tol: float = 1e-8
+    vel_tol: float = 1e-8
+    max_iters: int = 50
+
+    def impl(self, precision=np.float32):
+        klass: (
+            type[custom_ops.ConstrainedVelocityVerletIntegrator_f32]
+            | type[custom_ops.ConstrainedVelocityVerletIntegrator_f64]
+        ) = custom_ops.ConstrainedVelocityVerletIntegrator_f32
+        if precision == np.float64:
+            klass = custom_ops.ConstrainedVelocityVerletIntegrator_f64
+        constraints_impl = self.constraints.to_custom_ops(
+            precision=precision,
+            pos_tol=self.pos_tol,
+            vel_tol=self.vel_tol,
+            max_iters=self.max_iters,
+        )
+        return klass(
+            np.array(self.masses, dtype=precision),
+            self.dt,
+            constraints_impl,
+        )
+
+
+@dataclass
 class MonteCarloBarostat:
     N: int
     pressure: float

@@ -29,6 +29,7 @@
 #include "chiral_atom_restraint.hpp"
 #include "chiral_bond_restraint.hpp"
 #include "constrained_langevin_integrator.hpp"
+#include "constrained_velocity_verlet_integrator.hpp"
 #include "constraints.hpp"
 #include "context.hpp"
 #include "exceptions.hpp"
@@ -1125,6 +1126,33 @@ void declare_constrained_langevin_integrator(py::module &m,
            }),
            py::arg("masses"), py::arg("temperature"), py::arg("dt"),
            py::arg("friction"), py::arg("seed"), py::arg("constraints"));
+}
+
+template <typename RealType>
+void declare_constrained_velocity_verlet_integrator(py::module &m,
+                                                    const char *typestr) {
+
+  using Class = ConstrainedVelocityVerletIntegrator<RealType>;
+  std::string pyclass_name =
+      std::string("ConstrainedVelocityVerletIntegrator_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>, Integrator<RealType>>(
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def(py::init([](const py::array_t<RealType, py::array::c_style> &masses,
+                       const RealType dt,
+                       std::shared_ptr<Constraints<RealType>> constraints) {
+             int num_systems = 1;
+             int N = masses.size();
+             if (masses.ndim() == 2) {
+               num_systems = masses.shape(0);
+               N = masses.shape(1);
+             } else if (masses.ndim() != 1) {
+               throw std::runtime_error(
+                   "masses must be either 1 or 2d dimensional, got " +
+                   std::to_string(masses.ndim()) + " dimensions");
+             }
+             return new Class(num_systems, N, masses.data(), dt, constraints);
+           }),
+           py::arg("masses"), py::arg("dt"), py::arg("constraints"));
 }
 
 template <typename RealType>
@@ -3882,6 +3910,8 @@ PYBIND11_MODULE(custom_ops, m) {
   declare_constraints<float>(m, "f32");
   declare_constrained_langevin_integrator<double>(m, "f64");
   declare_constrained_langevin_integrator<float>(m, "f32");
+  declare_constrained_velocity_verlet_integrator<double>(m, "f64");
+  declare_constrained_velocity_verlet_integrator<float>(m, "f32");
   declare_velocity_verlet_integrator<double>(m, "f64");
   declare_velocity_verlet_integrator<float>(m, "f32");
 

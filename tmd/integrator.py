@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026 Justin Gullingsrud
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -234,6 +235,135 @@ class VelocityVerletIntegrator(Integrator):
         v_fixed = v_fixed + float_to_fixed((0.5 * self.cb) * self.force_fxn(fixed_to_float(x_fixed)))
 
         return fixed_to_float(x_fixed), fixed_to_float(v_fixed)
+
+
+class ConstrainedVelocityVerletIntegrator(Integrator):
+    """Reference RATTLE velocity-Verlet (NVE) integrator with SHAKE/RATTLE
+    distance constraints.
+
+    This is a pure-numpy reference for the GPU
+    ``custom_ops.ConstrainedVelocityVerletIntegrator``: it freezes a set of
+    interatomic distances while integrating the remaining degrees of freedom,
+    and (absent a thermostat) conserves the total energy up to integration
+    error. It is intended for cross-checking the GPU integrator and for
+    measuring energy drift as a function of timestep.
+
+    Parameters
+    ----------
+    force_fxn:
+        Callable mapping coordinates (N, 3) to forces (N, 3), i.e. -dU/dx.
+    masses:
+        Per-atom masses (N,). np.inf freezes the particle.
+    dt:
+        Timestep.
+    constraint_pairs:
+        (M, 2) integer array of constrained atom pairs.
+    constraint_lengths:
+        (M,) target distances for each pair.
+    tol:
+        Convergence tolerance for the iterative SHAKE/RATTLE projections.
+    max_iters:
+        Maximum number of Gauss-Seidel sweeps per projection.
+    """
+
+    def __init__(self, force_fxn, masses, dt, constraint_pairs, constraint_lengths, tol=1e-10, max_iters=100):
+        self.dt = dt
+        self.masses = np.asarray(masses, dtype=np.float64)
+        self.inv_mass = np.where(np.isinf(self.masses), 0.0, 1.0 / self.masses)
+        self.force_fxn = force_fxn
+        self.pairs = np.asarray(constraint_pairs, dtype=int).reshape(-1, 2)
+        self.r0 = np.asarray(constraint_lengths, dtype=np.float64).reshape(-1)
+        self.tol = tol
+        self.max_iters = max_iters
+        # Atoms touched by any constraint; their velocities are overwritten by
+        # the constraint-consistent value after the SHAKE drift.
+        self.constrained_atoms = np.unique(self.pairs) if self.pairs.size else np.array([], dtype=int)
+
+    def _shake(self, x, x_ref):
+        """Project drifted positions x back onto the constraint manifold, using
+        the pre-drift positions x_ref to build the constraint directions."""
+        x = np.array(x, dtype=np.float64)
+        winv = self.inv_mass
+        for _ in range(self.max_iters):
+            done = True
+            for k in range(len(self.pairs)):
+                i, j = self.pairs[k]
+                d = x[i] - x[j]
+                r2 = float(d @ d)
+                target = self.r0[k] ** 2
+                diff = r2 - target
+                if abs(diff) > self.tol * target:
+                    done = False
+                    dref = x_ref[i] - x_ref[j]
+                    denom = 2.0 * (winv[i] + winv[j]) * float(d @ dref)
+                    if denom == 0.0:
+                        continue
+                    g = diff / denom
+                    x[i] = x[i] - g * winv[i] * dref
+                    x[j] = x[j] + g * winv[j] * dref
+            if done:
+                break
+        return x
+
+    def _rattle(self, x, v):
+        """Project velocities so that every constrained pair satisfies r . v = 0."""
+        v = np.array(v, dtype=np.float64)
+        winv = self.inv_mass
+        for _ in range(self.max_iters):
+            done = True
+            for k in range(len(self.pairs)):
+                i, j = self.pairs[k]
+                d = x[i] - x[j]
+                dv = v[i] - v[j]
+                rv = float(d @ dv)
+                r2 = float(d @ d)
+                denom = (winv[i] + winv[j]) * r2
+                if denom == 0.0:
+                    continue
+                if abs(rv) > self.tol:
+                    done = False
+                    lam = rv / denom
+                    v[i] = v[i] - lam * winv[i] * d
+                    v[j] = v[j] + lam * winv[j] * d
+            if done:
+                break
+        return v
+
+    def step(self, x, v):
+        x = np.asarray(x, dtype=np.float64)
+        v = np.asarray(v, dtype=np.float64)
+        half_cb = 0.5 * self.dt * self.inv_mass[:, None]
+
+        # First half kick using the force at the current positions.
+        v = v + half_cb * self.force_fxn(x)
+
+        # Full drift, then SHAKE. The constraint-consistent velocity update for
+        # the cluster atoms is (x_constrained - x_ref) / dt = v(t + dt/2).
+        x_ref = x
+        x_new = self._shake(x_ref + self.dt * v, x_ref)
+        v = np.array(v)
+        ca = self.constrained_atoms
+        if len(ca):
+            v[ca] = (x_new[ca] - x_ref[ca]) / self.dt
+
+        # Second half kick using the force at the new positions, then RATTLE.
+        v = v + half_cb * self.force_fxn(x_new)
+        v = self._rattle(x_new, v)
+        return x_new, v
+
+    def multiple_steps(self, x, v, n_steps=1000):
+        x = np.asarray(x, dtype=np.float64)
+        v = np.asarray(v, dtype=np.float64)
+        # Project the initial state onto the constraint manifold.
+        x = self._shake(x, x)
+        v = self._rattle(x, v)
+        xs = [x]
+        vs = [v]
+        for _ in range(n_steps):
+            x, v = self.step(x, v)
+            xs.append(x)
+            vs.append(v)
+        return np.array(xs), np.array(vs)
 
 
 def _fori_steps(x0, v0, key0, grad_fn, num_steps, dt, ca, cbs, ccs):
