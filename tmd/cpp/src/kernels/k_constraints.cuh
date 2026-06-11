@@ -900,39 +900,46 @@ __device__ __forceinline__ void settle_velocity(const RealType pos[3][3],
 // the oxygen and atoms 1, 2 are the hydrogens; the three constraints are O-H1,
 // O-H2 (length dOH) and H1-H2 (length dHH). Only used in global MD; local MD
 // (with frozen anchors) routes water through the iterative path instead.
+//
+// Every water in the system shares the same model geometry and masses, so the
+// per-water/per-atom quantities are passed as uniform scalars rather than read
+// from arrays: dOH/dHH (constraint lengths), inv_mO/inv_mH (inverse masses) and
+// cb_{O,H}/cc_{O,H} (the BAOAB dt/m and noise-scale coefficients for the oxygen
+// and hydrogens). This removes the per-thread loads of constraint_r0, inv_mass,
+// cbs and ccs that the general iterative path still requires.
 template <typename RealType, int D>
 __global__ void k_settle_baoab_water(
     const int num_systems, const int N, const int num_water_clusters,
     const int *__restrict__ water_cluster_ids,
     const int *__restrict__ cluster_atom_offsets,
     const int *__restrict__ cluster_atoms,
-    const int *__restrict__ cluster_constraint_offsets,
-    const RealType *__restrict__ constraint_r0,
-    const RealType *__restrict__ cbs,        // [num_systems * N] dt / m
-    const RealType *__restrict__ ccs,        // [num_systems * N] noise scale
-    const RealType *__restrict__ inv_mass,   // [num_systems * N]
     curandState_t *__restrict__ rand_states, // [num_systems * N]
     unsigned long long *__restrict__ du_dx,  // [num_systems * N * 3]
     RealType *__restrict__ x,                // [num_systems * N * 3]
     RealType *__restrict__ v,                // [num_systems * N * 3]
-    const RealType ca, const RealType half_dt) {
+    const RealType ca, const RealType half_dt, const RealType inv_mO,
+    const RealType inv_mH, const RealType cb_O, const RealType cb_H,
+    const RealType cc_O, const RealType cc_H, const RealType dOH,
+    const RealType dHH) {
   static_assert(D == 3);
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
     return;
   }
+  // Oxygen is local atom 0, the two hydrogens are atoms 1 and 2.
+  const RealType cb[3] = {cb_O, cb_H, cb_H};
+  const RealType cc[3] = {cc_O, cc_H, cc_H};
+  const RealType mO = static_cast<RealType>(1.0) / inv_mO;
+  const RealType mH = static_cast<RealType>(1.0) / inv_mH;
   int t = blockIdx.x * blockDim.x + threadIdx.x;
   while (t < num_water_clusters) {
     const int cluster_idx = water_cluster_ids[t];
     const int atom_begin = cluster_atom_offsets[cluster_idx];
-    const int con_begin = cluster_constraint_offsets[cluster_idx];
     const int ga[3] = {cluster_atoms[atom_begin + 0],
                        cluster_atoms[atom_begin + 1],
                        cluster_atoms[atom_begin + 2]};
-    const RealType dOH = constraint_r0[con_begin];
-    const RealType dHH = constraint_r0[con_begin + 2];
 
-    RealType pos[3][D], vel[3][D], ref[3][D], cb[3], cc[3], winv[3];
+    RealType pos[3][D], vel[3][D], ref[3][D];
     curandState_t rng[3];
     for (int a = 0; a < 3; a++) {
       const int sN = system_idx * N + ga[a];
@@ -943,13 +950,8 @@ __global__ void k_settle_baoab_water(
       vel[a][0] = v[base + 0];
       vel[a][1] = v[base + 1];
       vel[a][2] = v[base + 2];
-      winv[a] = inv_mass[sN];
-      cb[a] = cbs[sN];
-      cc[a] = ccs[sN];
       rng[a] = rand_states[sN];
     }
-    const RealType mO = static_cast<RealType>(1.0) / winv[0];
-    const RealType mH = static_cast<RealType>(1.0) / winv[1];
 
     // B: velocity kick (consume and zero the force on each atom).
     for (int a = 0; a < 3; a++) {

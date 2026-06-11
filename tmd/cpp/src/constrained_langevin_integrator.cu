@@ -54,6 +54,18 @@ ConstrainedLangevinIntegrator<RealType>::ConstrainedLangevinIntegrator(
   d_ccs_ = gpuErrchkCudaMallocAndCopy(h_ccs.data(), batch_size_ * N_);
   d_inv_mass_ = gpuErrchkCudaMallocAndCopy(h_inv_mass.data(), batch_size_ * N_);
 
+  // All waters share mass, so the SETTLE kernel takes the oxygen/hydrogen BAOAB
+  // coefficients as scalars rather than reading per-atom arrays. Supply them
+  // from a representative water's atoms (per-system indices in [0, N); system 0
+  // entries apply to every batched system since masses are identical).
+  if (constraints_->num_water_clusters() > 0) {
+    const int o = constraints_->water_oxygen_index();
+    const int h = constraints_->water_hydrogen_index();
+    constraints_->set_water_baoab_scalars(h_inv_mass[o], h_inv_mass[h],
+                                          h_cbs[o], h_cbs[h], h_ccs[o],
+                                          h_ccs[h]);
+  }
+
   cudaSafeMalloc(&d_du_dx_, batch_size_ * N_ * 3 * sizeof(*d_du_dx_));
   gpuErrchk(cudaMemset(d_du_dx_, 0, batch_size_ * N_ * 3 * sizeof(*d_du_dx_)));
 

@@ -111,6 +111,29 @@ Constraints<RealType>::Constraints(
   }
   if (num_water_clusters_ > 0) {
     d_water_cluster_ids_.copy_from(water_cluster_ids.data());
+
+    // All waters share the same model geometry, so capture a representative
+    // cluster's constraint lengths and oxygen/hydrogen atom indices, and verify
+    // every other water cluster matches. The canonical layout is local atom 0 =
+    // oxygen, atoms 1/2 = hydrogens, with constraints O-H1, O-H2 (dOH) and
+    // H1-H2 (dHH).
+    const int wid0 = water_cluster_ids[0];
+    const int ab0 = cluster_atom_offsets[wid0];
+    const int cb0 = cluster_constraint_offsets[wid0];
+    water_o_index_ = cluster_atoms[ab0 + 0];
+    water_h_index_ = cluster_atoms[ab0 + 1];
+    water_dOH_ = constraint_r0[cb0];
+    water_dHH_ = constraint_r0[cb0 + 2];
+    for (const int id : water_cluster_ids) {
+      const int cb = cluster_constraint_offsets[id];
+      if (constraint_r0[cb] != water_dOH_ ||
+          constraint_r0[cb + 1] != water_dOH_ ||
+          constraint_r0[cb + 2] != water_dHH_) {
+        throw std::runtime_error(
+            "all water clusters must share the same geometry (equal O-H bond "
+            "lengths dOH and a common H-H distance dHH)");
+      }
+    }
   }
   std::vector<int> general_cluster_ids;
   general_cluster_ids.reserve(static_cast<size_t>(num_general_clusters_));
@@ -125,6 +148,22 @@ Constraints<RealType>::Constraints(
 }
 
 template <typename RealType> Constraints<RealType>::~Constraints() {}
+
+template <typename RealType>
+void Constraints<RealType>::set_water_baoab_scalars(RealType inv_mO,
+                                                    RealType inv_mH,
+                                                    RealType cb_O,
+                                                    RealType cb_H,
+                                                    RealType cc_O,
+                                                    RealType cc_H) {
+  water_inv_mO_ = inv_mO;
+  water_inv_mH_ = inv_mH;
+  water_cb_O_ = cb_O;
+  water_cb_H_ = cb_H;
+  water_cc_O_ = cc_O;
+  water_cc_H_ = cc_H;
+  water_scalars_set_ = true;
+}
 
 template <typename RealType>
 void Constraints<RealType>::apply_position_constraints(
@@ -187,12 +226,18 @@ void Constraints<RealType>::apply_constrained_baoab(
       !no_settle && d_idxs == nullptr && num_water_clusters_ > 0;
 
   if (use_settle) {
+    if (!water_scalars_set_) {
+      throw std::runtime_error(
+          "apply_constrained_baoab: water BAOAB scalars not set; call "
+          "set_water_baoab_scalars() before running SETTLE");
+    }
     dim3 wgrid(ceil_divide(num_water_clusters_, tpb), num_systems);
     k_settle_baoab_water<RealType, 3><<<wgrid, tpb, 0, stream>>>(
         num_systems, N, num_water_clusters_, d_water_cluster_ids_.data,
-        d_cluster_atom_offsets_.data, d_cluster_atoms_.data,
-        d_cluster_constraint_offsets_.data, d_constraint_r0_.data, d_cbs, d_ccs,
-        d_inv_mass, d_rand_states, d_du_dx, d_x, d_v, ca, half_dt);
+        d_cluster_atom_offsets_.data, d_cluster_atoms_.data, d_rand_states,
+        d_du_dx, d_x, d_v, ca, half_dt, water_inv_mO_, water_inv_mH_,
+        water_cb_O_, water_cb_H_, water_cc_O_, water_cc_H_, water_dOH_,
+        water_dHH_);
     gpuErrchk(cudaPeekAtLastError());
 
     if (num_general_clusters_ > 0) {

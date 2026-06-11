@@ -64,6 +64,25 @@ private:
   // the cluster-membership mask consumed by the fused integrator.
   const std::vector<int> h_cluster_atoms_;
 
+  // Representative rigid-water model parameters. All waters share the same
+  // geometry and masses, so the SETTLE kernel uses these scalars instead of
+  // per-atom array lookups. The geometry (constraint lengths and the per-system
+  // global atom indices of a representative oxygen/hydrogen) is derived from the
+  // cluster layout at construction; the dynamics coefficients (inverse masses
+  // and the BAOAB dt/m and noise-scale factors) are supplied by the integrator
+  // via set_water_baoab_scalars, since they depend on dt/friction/temperature.
+  int water_o_index_ = -1;
+  int water_h_index_ = -1;
+  RealType water_dOH_ = 0;
+  RealType water_dHH_ = 0;
+  RealType water_inv_mO_ = 0;
+  RealType water_inv_mH_ = 0;
+  RealType water_cb_O_ = 0;
+  RealType water_cb_H_ = 0;
+  RealType water_cc_O_ = 0;
+  RealType water_cc_H_ = 0;
+  bool water_scalars_set_ = false;
+
 public:
   // cluster_atom_offsets / cluster_constraint_offsets are CSR offset arrays of
   // length num_clusters + 1. cluster_atoms holds the global atom index of each
@@ -86,6 +105,21 @@ public:
 
   int num_clusters() const { return num_clusters_; }
   int num_constraints() const { return num_constraints_; }
+  int num_water_clusters() const { return num_water_clusters_; }
+
+  // Per-system global atom indices (in [0, N)) of a representative rigid-water
+  // oxygen and hydrogen. Valid only when num_water_clusters() > 0. The
+  // integrator uses these to look up the water atoms' BAOAB coefficients.
+  int water_oxygen_index() const { return water_o_index_; }
+  int water_hydrogen_index() const { return water_h_index_; }
+
+  // Supply the BAOAB coefficients (inverse mass, cb = dt/m, cc = noise scale)
+  // for the representative water oxygen and hydrogen. Because all waters share
+  // mass, these scalars apply to every water and let the SETTLE kernel avoid
+  // per-atom array lookups. Must be called before apply_constrained_baoab when
+  // num_water_clusters() > 0.
+  void set_water_baoab_scalars(RealType inv_mO, RealType inv_mH, RealType cb_O,
+                               RealType cb_H, RealType cc_O, RealType cc_H);
 
   // Per-system global atom indices (in [0, N)) of every cluster member. The
   // clusters are disjoint, so these indices are distinct; an atom not in this
