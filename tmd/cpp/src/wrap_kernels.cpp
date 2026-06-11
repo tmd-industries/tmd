@@ -1098,7 +1098,7 @@ void declare_constraints(py::module &m, const char *typestr) {
            py::arg("cluster_atom_offsets"), py::arg("cluster_atoms"),
            py::arg("cluster_constraint_offsets"), py::arg("constraint_local_i"),
            py::arg("constraint_local_j"), py::arg("constraint_r0"),
-           py::arg("water_cluster_ids") = py::array_t<int>(0), py::arg("pos_tol"),
+           py::arg("water_cluster_ids"), py::arg("pos_tol"),
            py::arg("vel_tol"), py::arg("max_iters"))
       .def("num_clusters", &Class::num_clusters)
       .def("num_constraints", &Class::num_constraints);
