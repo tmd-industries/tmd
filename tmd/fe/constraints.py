@@ -31,7 +31,7 @@ repartitioned masses to the integrator.
 """
 
 from collections import OrderedDict, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from numpy.typing import NDArray
@@ -70,6 +70,12 @@ class ConstraintClusters:
         Indices into the original ``bond_idxs`` array of the harmonic bonds that
         were turned into constraints; use :func:`remove_constrained_bonds` (or
         these indices directly) to drop them from the harmonic bond potential.
+    water_cluster_ids:
+        Indices (into the cluster list) of the rigid 3-point water clusters,
+        i.e. clusters with the canonical layout (local atom 0 oxygen, atoms 1/2
+        symmetric hydrogens; constraints O-H1, O-H2, H1-H2). These are eligible
+        for the analytic SETTLE integrator kernel; all other clusters use the
+        iterative SHAKE/RATTLE path.
     """
 
     cluster_atom_offsets: NDArray
@@ -79,6 +85,9 @@ class ConstraintClusters:
     constraint_local_j: NDArray
     constraint_r0: NDArray
     constrained_bond_rows: NDArray
+    water_cluster_ids: NDArray = field(
+        default_factory=lambda: np.zeros(0, dtype=np.int32)
+    )
 
     @property
     def num_clusters(self) -> int:
@@ -112,6 +121,7 @@ class ConstraintClusters:
             self.constraint_local_i.astype(np.int32),
             self.constraint_local_j.astype(np.int32),
             self.constraint_r0.astype(precision),
+            self.water_cluster_ids.astype(np.int32),
             pos_tol,
             vel_tol,
             max_iters,
@@ -197,6 +207,12 @@ def build_constraints(
         cluster["cons"].append((heavy, h, r0))
         constrained_bond_rows.append(b)
 
+    # Heavy atoms whose cluster is a rigid, symmetric 3-point water and is thus
+    # eligible for the analytic SETTLE kernel. SETTLE's closed form assumes the
+    # two O-H bonds are equal, so asymmetric waters are excluded (they remain
+    # rigid via the iterative path).
+    water_heavies: set[int] = set()
+
     if rigid_water:
         angle_lookup: dict[tuple[int, int, int], float] = {}
         if angle_idxs is not None:
@@ -227,6 +243,11 @@ def build_constraints(
             r2 = oh_lengths[h2]
             d_hh = float(np.sqrt(r1 * r1 + r2 * r2 - 2.0 * r1 * r2 * np.cos(theta0)))
             cluster["cons"].append((h1, h2, d_hh))
+            # The canonical water cluster has atoms [O, h1, h2] in this order
+            # (heavy first, then hydrogens in bond order) and constraints in the
+            # order O-h1, O-h2, h1-h2, matching the SETTLE kernel's assumptions.
+            if np.isclose(r1, r2):
+                water_heavies.add(heavy)
 
     # Flatten clusters into CSR arrays with cluster-local constraint indices.
     cluster_atom_offsets = [0]
@@ -235,8 +256,9 @@ def build_constraints(
     constraint_local_i: list[int] = []
     constraint_local_j: list[int] = []
     constraint_r0: list[float] = []
+    water_cluster_ids: list[int] = []
 
-    for cluster in clusters.values():
+    for cluster_id, (heavy, cluster) in enumerate(clusters.items()):
         atoms = cluster["atoms"]
         cons = cluster["cons"]
         if len(atoms) > MAX_CLUSTER_ATOMS:
@@ -257,6 +279,8 @@ def build_constraints(
             constraint_local_j.append(local[b])
             constraint_r0.append(r0)
         cluster_constraint_offsets.append(len(constraint_r0))
+        if heavy in water_heavies:
+            water_cluster_ids.append(cluster_id)
 
     return ConstraintClusters(
         cluster_atom_offsets=np.array(cluster_atom_offsets, dtype=np.int32),
@@ -266,6 +290,7 @@ def build_constraints(
         constraint_local_j=np.array(constraint_local_j, dtype=np.int32),
         constraint_r0=np.array(constraint_r0, dtype=np.float64),
         constrained_bond_rows=np.array(constrained_bond_rows, dtype=np.int64),
+        water_cluster_ids=np.array(water_cluster_ids, dtype=np.int32),
     )
 
 

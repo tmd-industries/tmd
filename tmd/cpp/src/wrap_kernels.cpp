@@ -1067,6 +1067,8 @@ void declare_constraints(py::module &m, const char *typestr) {
                            &constraint_local_j,
                        const py::array_t<RealType, py::array::c_style>
                            &constraint_r0,
+                       const py::array_t<int, py::array::c_style>
+                           &water_cluster_ids,
                        const RealType pos_tol, const RealType vel_tol,
                        const int max_iters) {
              std::vector<int> atom_offsets(
@@ -1087,13 +1089,17 @@ void declare_constraints(py::module &m, const char *typestr) {
              std::vector<RealType> r0(constraint_r0.data(),
                                       constraint_r0.data() +
                                           constraint_r0.size());
+             std::vector<int> water_ids(water_cluster_ids.data(),
+                                        water_cluster_ids.data() +
+                                            water_cluster_ids.size());
              return new Class(atom_offsets, atoms, con_offsets, local_i, local_j,
-                              r0, pos_tol, vel_tol, max_iters);
+                              r0, water_ids, pos_tol, vel_tol, max_iters);
            }),
            py::arg("cluster_atom_offsets"), py::arg("cluster_atoms"),
            py::arg("cluster_constraint_offsets"), py::arg("constraint_local_i"),
            py::arg("constraint_local_j"), py::arg("constraint_r0"),
-           py::arg("pos_tol"), py::arg("vel_tol"), py::arg("max_iters"))
+           py::arg("water_cluster_ids") = py::array_t<int>(0), py::arg("pos_tol"),
+           py::arg("vel_tol"), py::arg("max_iters"))
       .def("num_clusters", &Class::num_clusters)
       .def("num_constraints", &Class::num_constraints);
 }

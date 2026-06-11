@@ -15,6 +15,7 @@
 #include "constraints.hpp"
 #include "gpu_utils.cuh"
 #include "kernels/k_constraints.cuh"
+#include <cstdlib>
 #include <stdexcept>
 
 namespace tmd {
@@ -26,17 +27,26 @@ Constraints<RealType>::Constraints(
     const std::vector<int> &cluster_constraint_offsets,
     const std::vector<int> &constraint_local_i,
     const std::vector<int> &constraint_local_j,
-    const std::vector<RealType> &constraint_r0, const RealType pos_tol,
+    const std::vector<RealType> &constraint_r0,
+    const std::vector<int> &water_cluster_ids, const RealType pos_tol,
     const RealType vel_tol, const int max_iters)
     : num_clusters_(static_cast<int>(cluster_atom_offsets.size()) - 1),
       num_constraints_(static_cast<int>(constraint_r0.size())),
+      num_water_clusters_(static_cast<int>(water_cluster_ids.size())),
+      num_general_clusters_(static_cast<int>(cluster_atom_offsets.size()) - 1 -
+                            static_cast<int>(water_cluster_ids.size())),
       pos_tol_(pos_tol), vel_tol_(vel_tol), max_iters_(max_iters),
       d_cluster_atom_offsets_(cluster_atom_offsets),
       d_cluster_atoms_(cluster_atoms),
       d_cluster_constraint_offsets_(cluster_constraint_offsets),
       d_constraint_local_i_(constraint_local_i),
       d_constraint_local_j_(constraint_local_j),
-      d_constraint_r0_(constraint_r0), h_cluster_atoms_(cluster_atoms) {
+      d_constraint_r0_(constraint_r0),
+      d_water_cluster_ids_(water_cluster_ids.size()),
+      d_general_cluster_ids_(num_general_clusters_ < 0
+                                 ? 0
+                                 : static_cast<size_t>(num_general_clusters_)),
+      h_cluster_atoms_(cluster_atoms) {
 
   if (cluster_atom_offsets.size() < 1) {
     throw std::runtime_error("cluster_atom_offsets must be non-empty");
@@ -75,6 +85,42 @@ Constraints<RealType>::Constraints(
           "cluster has more constraints than "
           "CONSTRAINT_MAX_CLUSTER_CONSTRAINTS");
     }
+  }
+
+  // Validate the water-cluster ids and build the complementary (general)
+  // cluster id list. The SETTLE kernel assumes the canonical water layout, so
+  // each water cluster must have exactly 3 atoms and 3 constraints; ids must be
+  // distinct and in range.
+  std::vector<char> is_water(num_clusters_, 0);
+  for (const int id : water_cluster_ids) {
+    if (id < 0 || id >= num_clusters_) {
+      throw std::runtime_error("water cluster id out of range");
+    }
+    if (is_water[id]) {
+      throw std::runtime_error("duplicate water cluster id");
+    }
+    is_water[id] = 1;
+    const int n_atoms =
+        cluster_atom_offsets[id + 1] - cluster_atom_offsets[id];
+    const int n_cons =
+        cluster_constraint_offsets[id + 1] - cluster_constraint_offsets[id];
+    if (n_atoms != 3 || n_cons != 3) {
+      throw std::runtime_error(
+          "water cluster must have exactly 3 atoms and 3 constraints");
+    }
+  }
+  if (num_water_clusters_ > 0) {
+    d_water_cluster_ids_.copy_from(water_cluster_ids.data());
+  }
+  std::vector<int> general_cluster_ids;
+  general_cluster_ids.reserve(static_cast<size_t>(num_general_clusters_));
+  for (int c = 0; c < num_clusters_; c++) {
+    if (!is_water[c]) {
+      general_cluster_ids.push_back(c);
+    }
+  }
+  if (num_general_clusters_ > 0) {
+    d_general_cluster_ids_.copy_from(general_cluster_ids.data());
   }
 }
 
@@ -128,15 +174,49 @@ void Constraints<RealType>::apply_constrained_baoab(
   if (num_clusters_ == 0) {
     return;
   }
+  // Read once: TMD_NO_SETTLE forces every cluster through the iterative
+  // SHAKE/RATTLE path (A/B baseline for the analytic SETTLE water kernel).
+  static const bool no_settle = std::getenv("TMD_NO_SETTLE") != nullptr;
+
   const size_t tpb = DEFAULT_THREADS_PER_BLOCK;
-  dim3 grid(ceil_divide(num_clusters_, tpb), num_systems);
-  k_constrained_baoab_cluster<RealType, 3><<<grid, tpb, 0, stream>>>(
-      num_systems, N, num_clusters_, d_cluster_atom_offsets_.data,
-      d_cluster_atoms_.data, d_cluster_constraint_offsets_.data,
-      d_constraint_local_i_.data, d_constraint_local_j_.data,
-      d_constraint_r0_.data, d_cbs, d_ccs, d_inv_mass, d_idxs, d_rand_states,
-      d_du_dx, d_x, d_v, ca, half_dt, pos_tol_, vel_tol_, max_iters_);
-  gpuErrchk(cudaPeekAtLastError());
+
+  // SETTLE assumes all three water atoms are mobile, so it is only used in
+  // global MD (d_idxs == null). Under local MD some water atoms may be frozen
+  // anchors, so water is routed through the iterative path with the rest.
+  const bool use_settle =
+      !no_settle && d_idxs == nullptr && num_water_clusters_ > 0;
+
+  if (use_settle) {
+    dim3 wgrid(ceil_divide(num_water_clusters_, tpb), num_systems);
+    k_settle_baoab_water<RealType, 3><<<wgrid, tpb, 0, stream>>>(
+        num_systems, N, num_water_clusters_, d_water_cluster_ids_.data,
+        d_cluster_atom_offsets_.data, d_cluster_atoms_.data,
+        d_cluster_constraint_offsets_.data, d_constraint_r0_.data, d_cbs, d_ccs,
+        d_inv_mass, d_rand_states, d_du_dx, d_x, d_v, ca, half_dt);
+    gpuErrchk(cudaPeekAtLastError());
+
+    if (num_general_clusters_ > 0) {
+      dim3 ggrid(ceil_divide(num_general_clusters_, tpb), num_systems);
+      k_constrained_baoab_cluster<RealType, 3><<<ggrid, tpb, 0, stream>>>(
+          num_systems, N, num_clusters_, d_general_cluster_ids_.data,
+          num_general_clusters_, d_cluster_atom_offsets_.data,
+          d_cluster_atoms_.data, d_cluster_constraint_offsets_.data,
+          d_constraint_local_i_.data, d_constraint_local_j_.data,
+          d_constraint_r0_.data, d_cbs, d_ccs, d_inv_mass, d_idxs,
+          d_rand_states, d_du_dx, d_x, d_v, ca, half_dt, pos_tol_, vel_tol_,
+          max_iters_);
+      gpuErrchk(cudaPeekAtLastError());
+    }
+  } else {
+    dim3 grid(ceil_divide(num_clusters_, tpb), num_systems);
+    k_constrained_baoab_cluster<RealType, 3><<<grid, tpb, 0, stream>>>(
+        num_systems, N, num_clusters_, nullptr, 0, d_cluster_atom_offsets_.data,
+        d_cluster_atoms_.data, d_cluster_constraint_offsets_.data,
+        d_constraint_local_i_.data, d_constraint_local_j_.data,
+        d_constraint_r0_.data, d_cbs, d_ccs, d_inv_mass, d_idxs, d_rand_states,
+        d_du_dx, d_x, d_v, ca, half_dt, pos_tol_, vel_tol_, max_iters_);
+    gpuErrchk(cudaPeekAtLastError());
+  }
 }
 
 template class Constraints<float>;

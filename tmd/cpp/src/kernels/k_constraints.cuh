@@ -531,6 +531,8 @@ cluster_rattle_sweeps(const int con_begin, const int con_end,
 template <typename RealType, int D>
 __global__ void k_constrained_baoab_cluster(
     const int num_systems, const int N, const int num_clusters,
+    const int *__restrict__ active_cluster_ids, // null => clusters [0,num_clusters)
+    const int num_active,                        // #active ids (unused if null)
     const int *__restrict__ cluster_atom_offsets,
     const int *__restrict__ cluster_atoms,
     const int *__restrict__ cluster_constraint_offsets,
@@ -553,14 +555,20 @@ __global__ void k_constrained_baoab_cluster(
     return;
   }
 
-  int cluster_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  while (cluster_idx < num_clusters) {
+  // active_cluster_ids (when non-null) lets a launch process an arbitrary
+  // subset of clusters (e.g. only the non-water clusters, with rigid water
+  // handled by the dedicated SETTLE kernel). When null, every cluster in
+  // [0, num_clusters) is processed.
+  const int n_active = (active_cluster_ids == nullptr) ? num_clusters : num_active;
+  int t = blockIdx.x * blockDim.x + threadIdx.x;
+  while (t < n_active) {
+    const int cluster_idx =
+        (active_cluster_ids == nullptr) ? t : active_cluster_ids[t];
     const int atom_begin = cluster_atom_offsets[cluster_idx];
     const int atom_end = cluster_atom_offsets[cluster_idx + 1];
     const int n_atoms = atom_end - atom_begin;
     const int con_begin = cluster_constraint_offsets[cluster_idx];
     const int con_end = cluster_constraint_offsets[cluster_idx + 1];
-
     int global_atom[CONSTRAINT_MAX_CLUSTER_ATOMS];
     bool frozen[CONSTRAINT_MAX_CLUSTER_ATOMS];
     RealType pos[CONSTRAINT_MAX_CLUSTER_ATOMS][D];
@@ -704,7 +712,318 @@ __global__ void k_constrained_baoab_cluster(
       rand_states[sN] = rng[a];
     }
 
-    cluster_idx += gridDim.x * blockDim.x;
+    t += gridDim.x * blockDim.x;
+  }
+}
+
+template <typename RealType>
+__device__ __forceinline__ RealType settle_dot3(const RealType a[3],
+                                                const RealType b[3]) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+// Analytic SETTLE position projection for a single rigid 3-point water
+// (Miyamoto & Kollman, J. Comput. Chem. 13:952, 1992). Given the rigid
+// reference positions ref (O, H1, H2 at the start of the drift) and the
+// unconstrained drifted positions pos, overwrite pos with the rigid
+// configuration sharing the unconstrained mass-weighted center of mass. This
+// is the closed-form equivalent of fully converged SHAKE for water. Masses are
+// the (post-HMR) dynamical masses so that momentum/COM match the integrator.
+template <typename RealType>
+__device__ __forceinline__ void
+settle_position(const RealType ref[3][3], RealType pos[3][3], const RealType mO,
+                const RealType mH, const RealType dOH, const RealType dHH) {
+  const RealType one = static_cast<RealType>(1.0);
+  const RealType two = static_cast<RealType>(2.0);
+  const RealType half = static_cast<RealType>(0.5);
+  const RealType invM = one / (mO + mH + mH);
+
+  // Per-atom displacements from the reference and reference bond vectors.
+  RealType xp0[3], xp1[3], xp2[3], b0[3], c0[3];
+  for (int d = 0; d < 3; d++) {
+    xp0[d] = pos[0][d] - ref[0][d];
+    xp1[d] = pos[1][d] - ref[1][d];
+    xp2[d] = pos[2][d] - ref[2][d];
+    b0[d] = ref[1][d] - ref[0][d];
+    c0[d] = ref[2][d] - ref[0][d];
+  }
+  // Unconstrained center of mass relative to the reference oxygen.
+  RealType com[3];
+  for (int d = 0; d < 3; d++) {
+    com[d] =
+        (xp0[d] * mO + (b0[d] + xp1[d]) * mH + (c0[d] + xp2[d]) * mH) * invM;
+  }
+  // Unconstrained positions relative to that COM.
+  RealType a1[3], b1[3], c1[3];
+  for (int d = 0; d < 3; d++) {
+    a1[d] = xp0[d] - com[d];
+    b1[d] = b0[d] + xp1[d] - com[d];
+    c1[d] = c0[d] + xp2[d] - com[d];
+  }
+  // Orthonormal frame: Zd is normal to the reference plane, Xd = a1 x Zd,
+  // Yd = Zd x Xd.
+  RealType Zd[3] = {b0[1] * c0[2] - b0[2] * c0[1], b0[2] * c0[0] - b0[0] * c0[2],
+                    b0[0] * c0[1] - b0[1] * c0[0]};
+  RealType Xd[3] = {a1[1] * Zd[2] - a1[2] * Zd[1], a1[2] * Zd[0] - a1[0] * Zd[2],
+                    a1[0] * Zd[1] - a1[1] * Zd[0]};
+  RealType Yd[3] = {Zd[1] * Xd[2] - Zd[2] * Xd[1], Zd[2] * Xd[0] - Zd[0] * Xd[2],
+                    Zd[0] * Xd[1] - Zd[1] * Xd[0]};
+  const RealType invXn = one / sqrt(settle_dot3(Xd, Xd));
+  const RealType invYn = one / sqrt(settle_dot3(Yd, Yd));
+  const RealType invZn = one / sqrt(settle_dot3(Zd, Zd));
+  for (int d = 0; d < 3; d++) {
+    Xd[d] *= invXn;
+    Yd[d] *= invYn;
+    Zd[d] *= invZn;
+  }
+  // Project the reference and unconstrained vectors into the d-frame.
+  const RealType xb0d = settle_dot3(Xd, b0), yb0d = settle_dot3(Yd, b0);
+  const RealType xc0d = settle_dot3(Xd, c0), yc0d = settle_dot3(Yd, c0);
+  const RealType za1d = settle_dot3(Zd, a1);
+  const RealType xb1d = settle_dot3(Xd, b1), yb1d = settle_dot3(Yd, b1),
+                 zb1d = settle_dot3(Zd, b1);
+  const RealType xc1d = settle_dot3(Xd, c1), yc1d = settle_dot3(Yd, c1),
+                 zc1d = settle_dot3(Zd, c1);
+  // Canonical geometry: ra = COM->O, rb = COM->H line, rc = half H-H.
+  const RealType rc = half * dHH;
+  RealType rb = sqrt(dOH * dOH - rc * rc);
+  const RealType ra = rb * (mH + mH) * invM;
+  rb -= ra;
+  // Solve the three rotation angles (phi, psi, theta).
+  const RealType sinphi = za1d / ra;
+  const RealType cosphi = sqrt(one - sinphi * sinphi);
+  const RealType sinpsi = (zb1d - zc1d) / (two * rc * cosphi);
+  const RealType cospsi = sqrt(one - sinpsi * sinpsi);
+  const RealType ya2d = ra * cosphi;
+  RealType xb2d = -rc * cospsi;
+  const RealType yb2d = -rb * cosphi - rc * sinpsi * sinphi;
+  const RealType yc2d = -rb * cosphi + rc * sinpsi * sinphi;
+  const RealType xb2d2 = xb2d * xb2d;
+  const RealType hh2 = static_cast<RealType>(4.0) * xb2d2 +
+                       (yb2d - yc2d) * (yb2d - yc2d) +
+                       (zb1d - zc1d) * (zb1d - zc1d);
+  const RealType deltx =
+      two * xb2d + sqrt(static_cast<RealType>(4.0) * xb2d2 - hh2 + dHH * dHH);
+  xb2d -= deltx * half;
+  const RealType alpha = xb2d * (xb0d - xc0d) + yb0d * yb2d + yc0d * yc2d;
+  const RealType beta = xb2d * (yc0d - yb0d) + xb0d * yb2d + xc0d * yc2d;
+  const RealType gamma = xb0d * yb1d - xb1d * yb0d + xc0d * yc1d - xc1d * yc0d;
+  const RealType al2be2 = alpha * alpha + beta * beta;
+  const RealType sintheta =
+      (alpha * gamma - beta * sqrt(al2be2 - gamma * gamma)) / al2be2;
+  const RealType costheta = sqrt(one - sintheta * sintheta);
+  // Final canonical positions in the d-frame.
+  const RealType a3d[3] = {-ya2d * sintheta, ya2d * costheta, za1d};
+  const RealType b3d[3] = {xb2d * costheta - yb2d * sintheta,
+                           xb2d * sintheta + yb2d * costheta, zb1d};
+  const RealType c3d[3] = {-xb2d * costheta - yc2d * sintheta,
+                           -xb2d * sintheta + yc2d * costheta, zc1d};
+  // Rotate back to the lab frame, placed at the unconstrained COM.
+  for (int d = 0; d < 3; d++) {
+    const RealType base = ref[0][d] + com[d];
+    pos[0][d] = base + Xd[d] * a3d[0] + Yd[d] * a3d[1] + Zd[d] * a3d[2];
+    pos[1][d] = base + Xd[d] * b3d[0] + Yd[d] * b3d[1] + Zd[d] * b3d[2];
+    pos[2][d] = base + Xd[d] * c3d[0] + Yd[d] * c3d[1] + Zd[d] * c3d[2];
+  }
+}
+
+// Analytic SETTLE velocity projection: removes the relative velocity component
+// along each of the three rigid-water constraints (the RATTLE velocity stage),
+// solved in closed form. Equivalent to fully converged iterative RATTLE.
+template <typename RealType>
+__device__ __forceinline__ void settle_velocity(const RealType pos[3][3],
+                                                 RealType vel[3][3],
+                                                 const RealType mO,
+                                                 const RealType mH) {
+  const RealType one = static_cast<RealType>(1.0);
+  const RealType two = static_cast<RealType>(2.0);
+  const RealType mA = mO, mB = mH, mC = mH;
+  RealType eAB[3], eBC[3], eCA[3];
+  for (int d = 0; d < 3; d++) {
+    eAB[d] = pos[1][d] - pos[0][d];
+    eBC[d] = pos[2][d] - pos[1][d];
+    eCA[d] = pos[0][d] - pos[2][d];
+  }
+  const RealType iAB = one / sqrt(settle_dot3(eAB, eAB));
+  const RealType iBC = one / sqrt(settle_dot3(eBC, eBC));
+  const RealType iCA = one / sqrt(settle_dot3(eCA, eCA));
+  for (int d = 0; d < 3; d++) {
+    eAB[d] *= iAB;
+    eBC[d] *= iBC;
+    eCA[d] *= iCA;
+  }
+  RealType dvAB[3], dvBC[3], dvCA[3];
+  for (int d = 0; d < 3; d++) {
+    dvAB[d] = vel[1][d] - vel[0][d];
+    dvBC[d] = vel[2][d] - vel[1][d];
+    dvCA[d] = vel[0][d] - vel[2][d];
+  }
+  const RealType vAB = settle_dot3(dvAB, eAB);
+  const RealType vBC = settle_dot3(dvBC, eBC);
+  const RealType vCA = settle_dot3(dvCA, eCA);
+  const RealType cA = -settle_dot3(eAB, eCA);
+  const RealType cB = -settle_dot3(eAB, eBC);
+  const RealType cC = -settle_dot3(eBC, eCA);
+  const RealType s2A = one - cA * cA, s2B = one - cB * cB, s2C = one - cC * cC;
+  const RealType mABCinv = one / (mA * mB * mC);
+  const RealType M = mA + mB + mC;
+  const RealType denom =
+      (((s2A * mB + s2B * mA) * mC +
+        (s2A * mB * mB + two * (cA * cB * cC + one) * mA * mB + s2B * mA * mA)) *
+           mC +
+       s2C * mA * mB * (mA + mB)) *
+      mABCinv;
+  const RealType tab = ((cB * cC * mA - cA * mB - cA * mC) * vCA +
+                        (cA * cC * mB - cB * mC - cB * mA) * vBC +
+                        (s2C * mA * mA * mB * mB * mABCinv + M) * vAB) /
+                       denom;
+  const RealType tbc = ((cA * cB * mC - cC * mB - cC * mA) * vCA +
+                        (s2A * mB * mB * mC * mC * mABCinv + M) * vBC +
+                        (cA * cC * mB - cB * mA - cB * mC) * vAB) /
+                       denom;
+  const RealType tca = ((s2B * mA * mA * mC * mC * mABCinv + M) * vCA +
+                        (cA * cB * mC - cC * mB - cC * mA) * vBC +
+                        (cB * cC * mA - cA * mB - cA * mC) * vAB) /
+                       denom;
+  const RealType iA = one / mA, iB = one / mB, iC = one / mC;
+  for (int d = 0; d < 3; d++) {
+    vel[0][d] += (eAB[d] * tab - eCA[d] * tca) * iA;
+    vel[1][d] += (eBC[d] * tbc - eAB[d] * tab) * iB;
+    vel[2][d] += (eCA[d] * tca - eBC[d] * tbc) * iC;
+  }
+}
+
+// k_settle_baoab_water performs the full post-force constrained BAOAB step for
+// rigid 3-point water clusters using the analytic SETTLE projection instead of
+// iterative SHAKE/RATTLE. One thread per (water cluster, system). The cluster
+// layout is the canonical one produced by the Python builder: local atom 0 is
+// the oxygen and atoms 1, 2 are the hydrogens; the three constraints are O-H1,
+// O-H2 (length dOH) and H1-H2 (length dHH). Only used in global MD; local MD
+// (with frozen anchors) routes water through the iterative path instead.
+template <typename RealType, int D>
+__global__ void k_settle_baoab_water(
+    const int num_systems, const int N, const int num_water_clusters,
+    const int *__restrict__ water_cluster_ids,
+    const int *__restrict__ cluster_atom_offsets,
+    const int *__restrict__ cluster_atoms,
+    const int *__restrict__ cluster_constraint_offsets,
+    const RealType *__restrict__ constraint_r0,
+    const RealType *__restrict__ cbs,        // [num_systems * N] dt / m
+    const RealType *__restrict__ ccs,        // [num_systems * N] noise scale
+    const RealType *__restrict__ inv_mass,   // [num_systems * N]
+    curandState_t *__restrict__ rand_states, // [num_systems * N]
+    unsigned long long *__restrict__ du_dx,  // [num_systems * N * 3]
+    RealType *__restrict__ x,                // [num_systems * N * 3]
+    RealType *__restrict__ v,                // [num_systems * N * 3]
+    const RealType ca, const RealType half_dt) {
+  static_assert(D == 3);
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+  int t = blockIdx.x * blockDim.x + threadIdx.x;
+  while (t < num_water_clusters) {
+    const int cluster_idx = water_cluster_ids[t];
+    const int atom_begin = cluster_atom_offsets[cluster_idx];
+    const int con_begin = cluster_constraint_offsets[cluster_idx];
+    const int ga[3] = {cluster_atoms[atom_begin + 0],
+                       cluster_atoms[atom_begin + 1],
+                       cluster_atoms[atom_begin + 2]};
+    const RealType dOH = constraint_r0[con_begin];
+    const RealType dHH = constraint_r0[con_begin + 2];
+
+    RealType pos[3][D], vel[3][D], ref[3][D], cb[3], cc[3], winv[3];
+    curandState_t rng[3];
+    for (int a = 0; a < 3; a++) {
+      const int sN = system_idx * N + ga[a];
+      const int base = sN * D;
+      pos[a][0] = x[base + 0];
+      pos[a][1] = x[base + 1];
+      pos[a][2] = x[base + 2];
+      vel[a][0] = v[base + 0];
+      vel[a][1] = v[base + 1];
+      vel[a][2] = v[base + 2];
+      winv[a] = inv_mass[sN];
+      cb[a] = cbs[sN];
+      cc[a] = ccs[sN];
+      rng[a] = rand_states[sN];
+    }
+    const RealType mO = static_cast<RealType>(1.0) / winv[0];
+    const RealType mH = static_cast<RealType>(1.0) / winv[1];
+
+    // B: velocity kick (consume and zero the force on each atom).
+    for (int a = 0; a < 3; a++) {
+      const int base = (system_idx * N + ga[a]) * D;
+      for (int d = 0; d < D; d++) {
+        const RealType force = -FIXED_TO_FLOAT<RealType>(du_dx[base + d]);
+        vel[a][d] += cb[a] * force;
+        du_dx[base + d] = 0;
+      }
+    }
+    settle_velocity<RealType>(pos, vel, mO, mH);
+
+    const RealType inv_half_dt = static_cast<RealType>(1.0) / half_dt;
+
+    // A (first half drift): save reference, drift, SETTLE, constraint-consistent
+    // velocity, then SETTLE velocity projection.
+    for (int a = 0; a < 3; a++) {
+      ref[a][0] = pos[a][0];
+      ref[a][1] = pos[a][1];
+      ref[a][2] = pos[a][2];
+      pos[a][0] += half_dt * vel[a][0];
+      pos[a][1] += half_dt * vel[a][1];
+      pos[a][2] += half_dt * vel[a][2];
+    }
+    settle_position<RealType>(ref, pos, mO, mH, dOH, dHH);
+    for (int a = 0; a < 3; a++) {
+      vel[a][0] = (pos[a][0] - ref[a][0]) * inv_half_dt;
+      vel[a][1] = (pos[a][1] - ref[a][1]) * inv_half_dt;
+      vel[a][2] = (pos[a][2] - ref[a][2]) * inv_half_dt;
+    }
+    settle_velocity<RealType>(pos, vel, mO, mH);
+
+    // O: Ornstein-Uhlenbeck velocity update, then SETTLE velocity projection.
+    for (int a = 0; a < 3; a++) {
+      RealType nx, ny;
+      template_curand_normal2(nx, ny, &rng[a]);
+      const RealType nz = template_curand_normal<RealType>(&rng[a]);
+      vel[a][0] = ca * vel[a][0] + cc[a] * nx;
+      vel[a][1] = ca * vel[a][1] + cc[a] * ny;
+      vel[a][2] = ca * vel[a][2] + cc[a] * nz;
+    }
+    settle_velocity<RealType>(pos, vel, mO, mH);
+
+    // A (second half drift).
+    for (int a = 0; a < 3; a++) {
+      ref[a][0] = pos[a][0];
+      ref[a][1] = pos[a][1];
+      ref[a][2] = pos[a][2];
+      pos[a][0] += half_dt * vel[a][0];
+      pos[a][1] += half_dt * vel[a][1];
+      pos[a][2] += half_dt * vel[a][2];
+    }
+    settle_position<RealType>(ref, pos, mO, mH, dOH, dHH);
+    for (int a = 0; a < 3; a++) {
+      vel[a][0] = (pos[a][0] - ref[a][0]) * inv_half_dt;
+      vel[a][1] = (pos[a][1] - ref[a][1]) * inv_half_dt;
+      vel[a][2] = (pos[a][2] - ref[a][2]) * inv_half_dt;
+    }
+    settle_velocity<RealType>(pos, vel, mO, mH);
+
+    // Writeback.
+    for (int a = 0; a < 3; a++) {
+      const int sN = system_idx * N + ga[a];
+      const int base = sN * D;
+      x[base + 0] = pos[a][0];
+      x[base + 1] = pos[a][1];
+      x[base + 2] = pos[a][2];
+      v[base + 0] = vel[a][0];
+      v[base + 1] = vel[a][1];
+      v[base + 2] = vel[a][2];
+      rand_states[sN] = rng[a];
+    }
+
+    t += gridDim.x * blockDim.x;
   }
 }
 

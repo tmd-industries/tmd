@@ -39,6 +39,8 @@ template <typename RealType> class Constraints {
 private:
   const int num_clusters_;
   const int num_constraints_;
+  const int num_water_clusters_;
+  const int num_general_clusters_;
   const RealType pos_tol_;
   const RealType vel_tol_;
   const int max_iters_;
@@ -51,6 +53,13 @@ private:
   DeviceBuffer<int> d_constraint_local_j_;         // [num_constraints]
   DeviceBuffer<RealType> d_constraint_r0_;         // [num_constraints]
 
+  // Cluster ids of the rigid 3-point water clusters (handled by the analytic
+  // SETTLE kernel) and the complementary set of all other clusters (handled by
+  // the iterative SHAKE/RATTLE kernel). Together they partition [0,
+  // num_clusters).
+  DeviceBuffer<int> d_water_cluster_ids_;   // [num_water_clusters_]
+  DeviceBuffer<int> d_general_cluster_ids_; // [num_general_clusters_]
+
   // Host copy of the cluster member atom indices (one system), used to build
   // the cluster-membership mask consumed by the fused integrator.
   const std::vector<int> h_cluster_atoms_;
@@ -60,15 +69,18 @@ public:
   // length num_clusters + 1. cluster_atoms holds the global atom index of each
   // cluster member. constraint_local_{i,j} index into a cluster's own atom list
   // (i.e. in [0, n_atoms_in_cluster)). constraint_r0 holds the target bond
-  // length for each constraint.
+  // length for each constraint. water_cluster_ids lists the clusters that are
+  // rigid 3-point water (canonical layout: local atom 0 oxygen, 1/2 hydrogens;
+  // constraints O-H1, O-H2, H1-H2) and are eligible for the analytic SETTLE
+  // kernel; every such cluster must have exactly 3 atoms and 3 constraints.
   Constraints(const std::vector<int> &cluster_atom_offsets,
               const std::vector<int> &cluster_atoms,
               const std::vector<int> &cluster_constraint_offsets,
               const std::vector<int> &constraint_local_i,
               const std::vector<int> &constraint_local_j,
               const std::vector<RealType> &constraint_r0,
-              const RealType pos_tol, const RealType vel_tol,
-              const int max_iters);
+              const std::vector<int> &water_cluster_ids, const RealType pos_tol,
+              const RealType vel_tol, const int max_iters);
 
   ~Constraints();
 

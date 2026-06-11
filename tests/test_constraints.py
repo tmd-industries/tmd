@@ -99,6 +99,34 @@ def test_build_constraints_clusters():
     assert has_hh
 
 
+def test_water_cluster_classification():
+    """Rigid, symmetric 3-point water is flagged for the analytic SETTLE kernel;
+    other clusters (and non-rigid or asymmetric water) are not."""
+    masses, _, bond_idxs, bond_params, angle_idxs, angle_params = _build_test_system()
+
+    # Cluster 0 is the water (heavy atom 0, seen first in bond_idxs); cluster 1
+    # is methane. Only the water is SETTLE-eligible.
+    clusters = cst.build_constraints(
+        bond_idxs, bond_params, masses, angle_idxs, angle_params, rigid_water=True
+    )
+    assert clusters.water_cluster_ids.tolist() == [0]
+
+    # Without the rigid-water H-H constraint there is no rigid water to settle.
+    no_rigid = cst.build_constraints(
+        bond_idxs, bond_params, masses, angle_idxs, angle_params, rigid_water=False
+    )
+    assert no_rigid.water_cluster_ids.tolist() == []
+
+    # Asymmetric water (unequal O-H lengths) violates SETTLE's symmetry
+    # assumption and must fall back to the iterative path.
+    asym_params = bond_params.copy()
+    asym_params[1, 1] = bond_params[0, 1] * 1.05
+    asym = cst.build_constraints(
+        bond_idxs, asym_params, masses, angle_idxs, angle_params, rigid_water=True
+    )
+    assert asym.water_cluster_ids.tolist() == []
+
+
 @pytest.mark.parametrize(
     "precision, constraints_cls, integrator_cls, context_cls, dist_atol, rv_atol",
     [
