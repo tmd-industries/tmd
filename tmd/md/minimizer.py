@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,12 +23,13 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.optimize
 from numpy.typing import NDArray
+from openmm.app import Element
 from rdkit import Chem
 
 from tmd.constants import BOLTZ, DEFAULT_PRESSURE, DEFAULT_TEMP, MAX_FORCE_NORM, NBParamIdx
 from tmd.fe import topology
 from tmd.fe.model_utils import apply_hmr
-from tmd.fe.utils import get_romol_conf, set_romol_conf
+from tmd.fe.utils import get_mol_masses, get_romol_conf, set_romol_conf
 from tmd.ff import Forcefield
 from tmd.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops
 from tmd.md.barker import BarkerProposal
@@ -64,7 +65,7 @@ class FireMinimizationConfig:
 
     n_steps: int
     dt_start: float = 1e-5
-    dt_max: float = 1e-3
+    dt_max: float = 1e-4
     n_min: float = 5
     f_inc: float = 1.1
     f_dec: float = 0.5
@@ -209,7 +210,7 @@ def local_equilibrate(
     dt: float = 1.5e-3,
     seed: int = 2025,
     temperature: float = DEFAULT_TEMP,
-):
+) -> NDArray:
     """Equilibrate a subset of a system using a LangevinIntegrator.
 
     Parameters
@@ -294,18 +295,19 @@ def pre_equilibrate_host(
     minimizer_steps_per_window: int = 500,
     minimizer_windows: int = 2,
     minimizer_max_lambda: float = 0.1,
-    equilibration_steps: int = 1_000,
+    equilibration_steps: int = 10_000,
     pressure: float = DEFAULT_PRESSURE,
     temperature: float = DEFAULT_TEMP,
     barostat_interval: int = 10,
     seed: int = 2024,
     use_hmr: bool = True,
     water_sampling_interval: int = 600,
+    equilibrate_mols: bool = True,
 ) -> tuple[NDArray, NDArray]:
     """pre_equilibrate_host is a utility function that performs minimization than some amount of equilibration.
 
-    The intention of this function is to resolve any potential clashes in the system, then to equilibrate the box size, all while
-    keeping the ligand fixed. This helps set up up simulations where the local region around the ligand is optimized over a set of windows.
+    The intention of this function is to resolve any potential clashes in the system, then to equilibrate the box size, while optionally
+    keeping the mols fixed. This helps set up up simulations where the local region around the ligand is optimized over a set of windows.
 
     Note that the ligand charges will be scaled down by the number of molecules.
 
@@ -355,6 +357,11 @@ def pre_equilibrate_host(
         If >0 then enables water sampling around the mols provided. Assumes molecules are in the same region.
         Disabled for solvent hosts regardless of setting.
 
+    equilibrate_mols: bool
+        Whether to minimize and equilibrate the mols or to keep them frozen. Equilibrating the molecules
+        provides a better starting point and will modify the RDKit molecule's coordinates. The final coordinates
+        may no longer be aligned for RBFE and should be handled accordingly.
+
     Returns
     -------
     2-tuple of host coordinates and box
@@ -365,37 +372,30 @@ def pre_equilibrate_host(
     box = host_config.box
     assert box.shape == (3, 3)
 
-    minimized_host_coords = fire_minimize_host(
-        mols,
-        host_config,
-        ff,
-        mol_coords=mol_coords,
-        n_windows=minimizer_windows,
-        n_steps_per_window=minimizer_steps_per_window,
-        max_lambda=minimizer_max_lambda,
-    )
+    if not equilibrate_mols:
+        minimized_host_coords = fire_minimize_host(
+            mols,
+            host_config,
+            ff,
+            mol_coords=mol_coords,
+            n_windows=minimizer_windows,
+            n_steps_per_window=minimizer_steps_per_window,
+            max_lambda=minimizer_max_lambda,
+        )
+    else:
+        minimized_host_coords = fire_minimize_system(
+            mols,
+            host_config,
+            ff,
+            mol_coords=mol_coords,
+            n_windows=minimizer_windows,
+            n_steps_per_window=minimizer_steps_per_window,
+            max_lambda=minimizer_max_lambda,
+        )
 
-    num_host_atoms = host_config.conf.shape[0]
-
-    top = topology.MultiTopology(mols, ff)
-
-    mass_list = [np.array(host_config.masses)]
-    conf_list = [minimized_host_coords]
-    for mol in mols:
-        # Set ligand masses to inf to ensure ligands don't move
-        mass_list.append(np.ones(mol.GetNumAtoms()) * np.inf)
-
-    if mol_coords is None:
-        mol_coords = [get_romol_conf(mol) for mol in mols]
-    for mc in mol_coords:
-        conf_list.append(mc)
-
-    combined_masses = np.concatenate(mass_list)
-    combined_coords = np.concatenate(conf_list)
-
-    hgt = topology.HostGuestTopology(
-        host_config.host_system.get_U_fns(), top, host_config.num_water_atoms, ff, host_config.omm_topology
-    )
+    num_host_atoms = minimized_host_coords.shape[0]
+    hgt, combined_coords, combined_masses = combine_mols_and_host(mols, host_config, ff, mol_coords=mol_coords)
+    combined_coords[:num_host_atoms] = minimized_host_coords
 
     potentials, params = parameterize_system(hgt, ff, 0.0)
 
@@ -418,22 +418,19 @@ def pre_equilibrate_host(
     x0 = combined_coords
     v0 = np.zeros_like(x0)
 
-    num_host_atoms = minimized_host_coords.shape[0]
-
-    # Disallow the barostat from scaling the ligand coords, scale all of the other molecules to
-    # reduce 'air bubbles' within the system. Less efficient than scaling the entire system, but
-    # don't want to adjust the ligand coordinates at all.
-    non_ligand_group_idxs = [group for group in group_idxs if np.all(group < num_host_atoms)]
-
     bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
 
     movers = []
     if barostat_interval > 0:
+        # Disallow the barostat from scaling the ligand coords if not equilibrating mols, scale all of the other molecules to
+        # reduce 'air bubbles' within the system. Less efficient than scaling the entire system, but
+        # important if the mol coordinates are expected to be fixed
+        baro_group_indices = [group for group in group_idxs if equilibrate_mols or np.all(group < num_host_atoms)]
         baro = MonteCarloBarostat(
             x0.shape[0],
             pressure,
             temperature,
-            non_ligand_group_idxs,
+            baro_group_indices,
             barostat_interval,
             seed + 1,
         )
@@ -469,15 +466,111 @@ def pre_equilibrate_host(
     x = xs[-1]
     box = boxes[-1]
 
-    assert np.all(x[num_host_atoms:] == np.concatenate(mol_coords)), "Ligand atoms unexpectedly moved"
+    if not equilibrate_mols:
+        assert np.all(x[num_host_atoms:] == combined_coords[num_host_atoms:]), "Ligand atoms unexpectedly moved"
 
-    # Only evaluate the host forces, the mols may be strained at this stage. No change is made to the mols
-    # which means evaluating the mols forces may trigger spurious failures
     for impl in bound_impls:
         du_dx, _ = impl.execute(x, box, compute_u=False)
-        check_force_norm(-du_dx[:num_host_atoms])
+        if not equilibrate_mols:
+            # Only evaluate the host forces, the mols may be strained at this stage. No change is made to the mols
+            # which means evaluating the mols forces may trigger spurious failures
+            check_force_norm(-du_dx[:num_host_atoms])
+        else:
+            check_force_norm(-du_dx)
+    if equilibrate_mols:
+        offset = host_config.conf.shape[0]
+        # Update the mol coordinates in place
+        for mol in mols:
+            set_romol_conf(mol, x[offset : offset + mol.GetNumAtoms()])
+            offset += mol.GetNumAtoms()
 
     return x[:num_host_atoms], box
+
+
+def fire_minimize_system(
+    mols: list[Chem.Mol],
+    host_config: HostConfig,
+    ff: Forcefield,
+    mol_coords: Optional[list[NDArray]] = None,
+    n_steps_per_window: int = 500,
+    max_lambda: float = 0.1,
+    n_windows: int = 2,
+) -> NDArray:
+    """
+    Minimize a system using the Fire minimizer.
+
+    The mol coordinates are free during minimization, use fire_minimize_host if you only want to minimize the host.
+    Updates the mol coordinates on each RDKit Mol.
+
+    Parameters
+    ----------
+    mols: list of Chem.Mol
+        Ligands to be inserted. This must be of length 1 or 2 for now.
+
+    host_config: HostConfig
+        Represents the host system.
+
+    ff: ff.Forcefield
+        Wrapper class around a list of handlers
+
+    mol_coords: list of np.ndarray
+        Pre-specify a list of mol coords. Else use the mol.GetConformer(0)
+
+    n_steps_per_window: integer
+        Number of steps to run the FIRE minimizer with at each window
+
+    max_lambda: float
+        The largest lambda value to run a window at. If the value is 1.0 the mols will be
+        completely decoupled. Between lambda 1.0 and 0.0 the 4D coordinate of the mols are linearly
+        interpolated from nonbonded cutoff to 0.0, no others parameters are modified.
+
+    n_windows: integer
+        The number of windows to linearly interpolate between the max_lambda value and 0.0.
+
+    Returns
+    -------
+    np.ndarray
+        the minimized host_coords. Updates the ligand coordinates in place
+
+    """
+
+    assert 1.0 >= max_lambda > 0.0, "Max lambda must be greater than 0.0 and less than or equal to 1.0"
+
+    hgt, combined_coords, combined_masses = combine_mols_and_host(mols, host_config, ff, mol_coords=mol_coords)
+    hydrogen_element = Element.getBySymbol("H")
+    hydrogen_atoms = np.array(
+        [atom.index for atom in host_config.omm_topology.atoms() if atom.element == hydrogen_element], np.int32
+    )
+    offset = len(host_config.conf)
+    for mol in mols:
+        hydrogen_idxs = np.array([atom.GetIdx() for atom in mol.GetAtoms() if atom.GetAtomicNum() == 1], dtype=np.int32)
+        hydrogen_idxs += offset
+        hydrogen_atoms = np.concatenate([hydrogen_atoms, hydrogen_idxs])
+        offset += mol.GetNumAtoms()
+
+    config = FireMinimizationConfig(n_steps_per_window)
+
+    x = combined_coords
+
+    for lamb in np.linspace(max_lambda, 0.0, n_windows):
+        # Minimize just hydrogens
+        du_dx_fxn = make_du_dx_fxn(hgt, host_config, mols, x0=np.array(x), free_idxs=hydrogen_atoms, lamb=lamb)
+        x[hydrogen_atoms] = fire_minimize(x[hydrogen_atoms], du_dx_fxn, config)
+
+        # Minimize everything
+        du_dx_fxn = make_du_dx_fxn(hgt, host_config, mols, lamb=lamb)
+        x = fire_minimize(x, du_dx_fxn, config)
+
+    du_dx = du_dx_fxn(x)
+    check_force_norm(-du_dx)
+    x_host = x[: host_config.conf.shape[0]]
+    offset = host_config.conf.shape[0]
+    # Update the mol coordinates in place
+    for mol in mols:
+        set_romol_conf(mol, x[offset : offset + mol.GetNumAtoms()])
+        offset += mol.GetNumAtoms()
+
+    return x_host
 
 
 def fire_minimize_host(
@@ -529,10 +622,14 @@ def fire_minimize_host(
     assert 1.0 >= max_lambda > 0.0, "Max lambda must be greater than 0.0 and less than or equal to 1.0"
     x_host = np.asarray(host_config.conf, dtype=np.float32)
 
+    hgt, combined_coords, _ = combine_mols_and_host(mols, host_config, ff, mol_coords=mol_coords)
+
     config = FireMinimizationConfig(n_steps_per_window)
 
+    free_idxs = np.arange(x_host.shape[0], dtype=np.int32)
+
     for lamb in np.linspace(max_lambda, 0.0, n_windows):
-        du_dx_fxn = make_host_du_dx_fxn(mols, host_config, ff, mol_coords=mol_coords, lamb=lamb)
+        du_dx_fxn = make_du_dx_fxn(hgt, host_config, mols, x0=np.array(combined_coords), free_idxs=free_idxs, lamb=lamb)
         x_host = fire_minimize(x_host, du_dx_fxn, config)
 
     du_dx = du_dx_fxn(x_host)
@@ -541,20 +638,15 @@ def fire_minimize_host(
     return x_host
 
 
-def make_host_du_dx_fxn(
+def combine_mols_and_host(
     mols: list[Chem.Mol],
     host_config: HostConfig,
     ff: Forcefield,
     mol_coords: Optional[list[NDArray]] = None,
-    lamb: float = 0.0,
-):
-    """construct function to compute du_dx w.r.t. host coords, given fixed mols and box
-
-    Scales down the charges of the provided molecules by the number of molecules. IE 2 mols will result in the charges being scaled by half."""
+    equilibrate_mols: bool = False,
+) -> tuple[topology.HostGuestTopology, NDArray, NDArray]:
     assert len(mols) > 0
     assert host_config.box.shape == (3, 3)
-
-    num_host_atoms = len(host_config.conf)
 
     top = topology.MultiTopology(mols, ff)
 
@@ -563,14 +655,19 @@ def make_host_du_dx_fxn(
     )
 
     # read conformers from mol_coords if given, or each mol's conf0 otherwise
-    conf_list = [np.asarray(host_config.conf)]
+    mass_list = [np.array(host_config.masses)]
+    conf_list = [host_config.conf]
+    for mol in mols:
+        if not equilibrate_mols:
+            # Set ligand masses to inf to ensure ligands don't move
+            mass_list.append(np.ones(mol.GetNumAtoms()) * np.inf)
+        else:
+            mass_list.append(get_mol_masses(mol))
 
-    if mol_coords is not None:
-        for mc in mol_coords:
-            conf_list.append(mc)
-    else:
-        for mol in mols:
-            conf_list.append(get_romol_conf(mol))
+    if mol_coords is None:
+        mol_coords = [get_romol_conf(mol) for mol in mols]
+    for mc in mol_coords:
+        conf_list.append(mc)
 
     # check conf_list consistent with mols
     assert len(conf_list[1:]) == len(mols)
@@ -578,26 +675,47 @@ def make_host_du_dx_fxn(
         assert conf.shape == (mol.GetNumAtoms(), 3)
 
     combined_coords = np.concatenate(conf_list)
+    combined_masses = np.concatenate(mass_list)
+    return hgt, combined_coords, combined_masses
+
+
+def make_du_dx_fxn(
+    hgt: topology.HostGuestTopology,
+    host_config: HostConfig,
+    mols: list[Chem.Mol],
+    lamb: float = 0.0,
+    x0: NDArray | None = None,
+    free_idxs: NDArray[np.int32] | None = None,
+):
+    """construct function to compute du_dx, given a box
+
+    Scales down the charges of the provided molecules by the number of molecules. IE 2 mols will result in the charges being scaled by half."""
+    assert host_config.box.shape == (3, 3)
+
+    num_host_atoms = len(host_config.conf)
 
     # bound impls of potentials @ lam
-    potentials, params = parameterize_system(hgt, ff, lamb)
+    potentials, params = parameterize_system(hgt, hgt.ff, lamb)
 
     bps = [pot.bind(p) for pot, p in zip(potentials, params)]
 
     _adjust_mol_parameters_for_minimization(bps, num_host_atoms, mols)
 
     gpu_impl = make_summed_potential(bps).to_gpu(np.float32).bound_impl
+    if free_idxs is None:
+        free_idxs = np.arange(hgt.get_num_atoms(), dtype=np.int32)
 
     # wrap gpu_impl, partially applying box, mol coords
-    def du_dx_host_fxn(x_host):
-        x = np.array(combined_coords)
-        x[:num_host_atoms] = x_host
-
+    def du_dx_fxn(x_free):
+        if x0 is None:
+            x = x_free
+        else:
+            x = np.array(x0)
+        x[free_idxs] = x_free
         du_dx, _ = gpu_impl.execute(x, host_config.box, compute_u=False)
-        du_dx_host = du_dx[:num_host_atoms]
-        return du_dx_host
+        return du_dx[free_idxs]
 
-    return du_dx_host_fxn
+    return du_dx_fxn
 
 
 def equilibrate_host_barker(
@@ -627,7 +745,12 @@ def equilibrate_host_barker(
 
     assert 0 < proposal_stddev <= 0.0001, "not tested with Metropolis correction omitted for larger proposal_stddevs"
 
-    du_dx_host_fxn = make_host_du_dx_fxn(mols, host_config, ff, mol_coords)
+    hgt, combined_coords, _ = combine_mols_and_host(mols, host_config, ff, mol_coords=mol_coords)
+
+    host_idxs = np.arange(len(host_config.conf), dtype=np.int32)
+
+    du_dx_host_fxn = make_du_dx_fxn(hgt, host_config, mols, x0=np.array(combined_coords), free_idxs=host_idxs, lamb=0.0)
+
     grad_log_q = lambda x_host: -du_dx_host_fxn(x_host) / (BOLTZ * temperature)
 
     # TODO: if needed, revisit choice to omit Metropolis correction
