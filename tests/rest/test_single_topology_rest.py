@@ -324,6 +324,7 @@ def test_single_topology_rest_propers_identity():
     assert len(set(st.candidate_propers.values())) == 9 * 6 + 6
 
 
+@pytest.mark.nogpu
 def test_indane_to_indole_rest_region():
     """Verify that fused rings aren't expanded to"""
 
@@ -336,13 +337,19 @@ def test_indane_to_indole_rest_region():
     core = get_core(indole, indane)
     st = get_single_topology_rest(indole, indane, core, 2.0, "exponential")
 
-    print(st.base_rest_region_atom_idxs)
+    # Previously the entire system would be included
+    assert len(st.rest_region_atom_idxs) != st.get_num_atoms()
 
-    from tmd.fe.rest.plots import plot_rest_region
+    alchemical_mol = st.mol(0.0)
+    alchem_mol = convert_to_nx(alchemical_mol)
 
-    svg = plot_rest_region(st)
-    with open("rest_region.svg", "w") as ofs:
-        ofs.write(svg)
+    cycles = nx.cycle_basis(alchem_mol)
+    assert len(cycles) == 2
+    five_member_ring_atoms = next(cycle for cycle in cycles if len(cycle) == 5)
+    six_member_ring_atoms = next(cycle for cycle in cycles if len(cycle) == 6)
+    assert st.rest_region_atom_idxs.issuperset(five_member_ring_atoms)
+    # Two atoms are shared between both rings, so the six member will have two atoms in the rest region.
+    assert len(st.rest_region_atom_idxs.intersection(six_member_ring_atoms)) == 2
 
 
 @pytest.mark.nogpu
