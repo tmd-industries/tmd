@@ -176,6 +176,7 @@ class LocalMDParams:
         assert 0.1 <= self.min_radius <= self.max_radius
         assert self.local_steps > 0
         assert 1.0 <= self.k <= 1.0e6
+        assert self.local_steps // self.iterations >= 1
 
 
 @dataclass(frozen=True)
