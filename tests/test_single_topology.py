@@ -22,10 +22,11 @@ import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 import pytest
-from common import ligand_from_smiles
+from common import convert_quaternion_for_scipy, ligand_from_smiles
 from hypothesis import event, given, seed
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from scipy.spatial.transform import Rotation
 
 from tmd import potentials
 from tmd.constants import (
@@ -36,6 +37,7 @@ from tmd.constants import (
 from tmd.fe import atom_mapping, single_topology
 from tmd.fe.dummy import MultipleAnchorWarning, canonicalize_bond
 from tmd.fe.single_topology import (
+    AtomMapFlags,
     AtomMapMixin,
     ChargePertubationError,
     CoreBondChangeWarning,
@@ -538,6 +540,97 @@ def test_canonicalize_improper_idxs():
     assert canonicalize_improper_idxs((1, 5, 0, 3)) == (1, 5, 3, 0)
     assert canonicalize_improper_idxs((3, 5, 1, 0)) == (3, 5, 0, 1)
     assert canonicalize_improper_idxs((0, 5, 3, 1)) == (0, 5, 1, 3)
+
+
+@pytest.mark.nogpu
+def test_combine_confs_alignment():
+    """Test that combine_confs will perform RMSD alignment on the atoms associated with the dummy atoms
+
+    For lambda < 0.5, mol b atoms will be aligned to mol_a
+    and lambda >= 0.5 mol_a atoms will be aligned to mol_b
+    """
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
+        mols = read_sdf(path_to_ligand)
+
+    rng = np.random.default_rng(2026)
+
+    rng.shuffle(mols)
+
+    all_pairs = [[mols[i], mols[j]] for i in range(len(mols)) for j in range(i + 1, len(mols))]
+
+    subset = rng.choice(all_pairs, size=5)
+
+    compute_distance_matrix = functools.partial(pairwise_distances, box=None)
+
+    def get_max_distance(x0):
+        dij = compute_distance_matrix(x0)
+        return jnp.amax(dij)
+
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    for mol_a, mol_b in subset:
+        core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+
+        st = SingleTopology(mol_a, mol_b, core, ff)
+
+        ref_conf_a = get_romol_conf(mol_a)
+        ref_conf_b = get_romol_conf(mol_b)
+
+        identity = np.arange(st.get_num_atoms(), dtype=np.int32)
+
+        core_idxs = identity[st.c_flags == AtomMapFlags.CORE]
+        a_idxs = identity[st.c_flags == AtomMapFlags.MOL_A]
+        b_idxs = identity[st.c_flags == AtomMapFlags.MOL_B]
+
+        c_to_core_a = np.array([st.c_to_a[idx] for idx in core_idxs])
+        c_to_core_b = np.array([st.c_to_b[idx] for idx in core_idxs])
+        c_to_a_idxs = np.array([st.c_to_a[idx] for idx in a_idxs])
+        c_to_b_idxs = np.array([st.c_to_b[idx] for idx in b_idxs])
+
+        def combine_and_validate(conf_a, conf_b, lamb):
+            combined_conf = st.combine_confs(conf_a, conf_b, lamb=lamb)
+            if lamb < 0.5:
+                if len(a_idxs) > 0:
+                    assert np.all(combined_conf[a_idxs] == conf_a[c_to_a_idxs])
+                assert np.all(combined_conf[core_idxs] == conf_a[c_to_core_a])
+            else:
+                if len(b_idxs) > 0:
+                    assert np.all(combined_conf[b_idxs] == conf_b[c_to_b_idxs])
+                assert np.all(combined_conf[core_idxs] == conf_b[c_to_core_b])
+            return combined_conf
+
+        # Test the base case where the conformers are the input poses
+        for lamb in np.linspace(0.0, 1.0, 4):
+            combine_and_validate(ref_conf_a, ref_conf_b, lamb)
+
+        # Rotate and shift the ligand randomly. Verify molecules are RMSD aligned
+        quaternion = rng.normal(loc=0.0, scale=1.0, size=(1, 4))
+        rotation = Rotation.from_quat(convert_quaternion_for_scipy(quaternion))
+        updated_a = rotation.apply(ref_conf_a) + rng.uniform(4.0, 10.0, size=(3))
+        assert np.all(updated_a != ref_conf_a)
+
+        quaternion = rng.normal(loc=0.0, scale=1.0, size=(1, 4))
+        rotation = Rotation.from_quat(convert_quaternion_for_scipy(quaternion))
+        updated_b = rotation.apply(ref_conf_b) + rng.uniform(4.0, 10.0, size=(3))
+        assert np.all(updated_b != ref_conf_b)
+
+        ref_max_dist = get_max_distance(np.concatenate([updated_a, updated_b]))
+
+        for lamb in np.linspace(0.0, 1.0, 4):
+            combined_conf = combine_and_validate(updated_a, updated_b, lamb=lamb)
+            if lamb < 0.5:
+                if len(b_idxs) > 0:
+                    assert np.all(combined_conf[b_idxs] != updated_b[c_to_b_idxs])
+                assert np.all(combined_conf[core_idxs] != updated_b[c_to_core_b])
+            else:
+                if len(a_idxs) > 0:
+                    assert np.all(combined_conf[a_idxs] != updated_a[c_to_a_idxs])
+                assert np.all(combined_conf[core_idxs] != updated_a[c_to_core_a])
+
+            # The distance within the combined conf should be less than the distances
+            # of the two rotated confs
+            final_dist = get_max_distance(combined_conf)
+            assert final_dist < ref_max_dist
 
 
 @pytest.mark.nogpu

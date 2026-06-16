@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025 Forrest York
+# Modifications Copyright 2025-2026 Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -56,6 +56,7 @@ from tmd.potentials import (
     NonbondedPairListPrecomputed,
     PeriodicTorsion,
 )
+from tmd.potentials.rmsd import get_optimal_rotation_and_translation
 
 OpenMMTopology = Any
 
@@ -1506,7 +1507,9 @@ class SingleTopology(AtomMapMixin):
 
         return mol_c_masses
 
-    def combine_confs(self, x_a: NDArray, x_b: NDArray, lamb: float = 1.0) -> NDArray:
+    def combine_confs(
+        self, x_a: NDArray, x_b: NDArray, lamb: float = 1.0, equilibrate_dummy_atoms: int = 1000
+    ) -> NDArray:
         """
         Combine conformations of two molecules.
 
@@ -1524,16 +1527,33 @@ class SingleTopology(AtomMapMixin):
             if lamb > 0.5, map atoms from x_a first, then overwrite with x_b,
             otherwise use opposite order. Defaults to 1.0
 
+        equilibrate_dummy_atoms: int
+            Number of steps to spend equilibrating the dummy atoms. Will run minimization followed
+            by the number of steps. Minimization is always run
+
         Returns
         -------
         np.array of shape (self.num_atoms,3)
             Combined conformation
 
         """
+
         if lamb < 0.5:
             return self.combine_confs_lhs(x_a, x_b)
         else:
             return self.combine_confs_rhs(x_a, x_b)
+
+    def _align_confs_by_core(self, x_a: NDArray, x_b: NDArray, core: NDArray) -> NDArray:
+        """Aligns the coordinates of x_b onto x_b using RMSD by the core
+
+        Useful for ensuring that the coordinates are not across periodic boundary conditions
+        """
+        rot, t = get_optimal_rotation_and_translation(x_a[core[:, 0]], x_b[core[:, 1]])
+
+        aligned_com = np.mean(x_b[core[:, 1]], axis=0)
+        aligned_x_b = (x_b - aligned_com) @ rot - t + aligned_com
+        assert aligned_x_b.shape == x_b.shape
+        return np.array(aligned_x_b)
 
     def combine_confs_rhs(self, x_a: NDArray, x_b: NDArray) -> NDArray:
         """
@@ -1543,6 +1563,9 @@ class SingleTopology(AtomMapMixin):
         assert x_a.shape == (self.mol_a.GetNumAtoms(), 3)
         assert x_b.shape == (self.mol_b.GetNumAtoms(), 3)
         x0 = np.zeros((self.get_num_atoms(), 3))
+
+        x_a = self._align_confs_by_core(x_b, x_a, self.core[:, ::-1])
+
         for src, dst in enumerate(self.a_to_c):
             x0[dst] = x_a[src]
         for src, dst in enumerate(self.b_to_c):
@@ -1558,6 +1581,9 @@ class SingleTopology(AtomMapMixin):
         assert x_a.shape == (self.mol_a.GetNumAtoms(), 3)
         assert x_b.shape == (self.mol_b.GetNumAtoms(), 3)
         x0 = np.zeros((self.get_num_atoms(), 3))
+
+        x_b = self._align_confs_by_core(x_a, x_b, self.core)
+
         for src, dst in enumerate(self.b_to_c):
             x0[dst] = x_b[src]
         for src, dst in enumerate(self.a_to_c):
