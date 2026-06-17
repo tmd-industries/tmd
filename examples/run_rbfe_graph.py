@@ -39,6 +39,12 @@ def main():
     parser.add_argument("--n_frames", default=2000, type=int, help="Number of frames to simulate")
     parser.add_argument("--steps_per_frame", default=400, type=int, help="Steps per frame")
     parser.add_argument(
+        "--hrex_iterations_per_frame",
+        default=1,
+        type=int,
+        help="Number of HREX iterations to run before collecting a frame. This will run steps_per_frame per each iteration, so it is suggested to reduce n_frames if increasing this value",
+    )
+    parser.add_argument(
         "--n_windows", default=DEFAULT_NUM_WINDOWS, type=int, help="Max number of windows from bisection"
     )
     parser.add_argument("--min_overlap", default=0.667, type=float, help="Overlap to target in bisection")
@@ -185,6 +191,7 @@ def main():
                     args.rest_temperature_scale_interpolation,
                     args.rest_smarts_patterns,
                 ),
+                iterations_per_frame=args.hrex_iterations_per_frame,
             ),
             local_md_params=LocalMDParams(
                 args.local_md_steps,
