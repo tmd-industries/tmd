@@ -1079,6 +1079,7 @@ def estimate_relative_free_energy_bisection_hrex_impl(
             hrex_diagnostics,
             hrex_plots,
             water_sampling_diagnostics=ws_diagnostics,
+            iterations_per_frame=md_params.hrex_params.iterations_per_frame,
         )
 
     except Exception as err:
