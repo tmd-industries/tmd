@@ -905,6 +905,7 @@ def local_minimize(
         assert restraint_k > 0.0, "Restraint k must be greater than 0.0 if restrained indices provided"
         assert set(restrained_idxs).issubset(set(local_idxs)), "Restrained indices must be a subset of local indices"
 
+    assert len(minimizer_config) >= 1
     assert len(local_idxs) == len(set(local_idxs))
     n_frozen = len(x0) - len(local_idxs)
 
