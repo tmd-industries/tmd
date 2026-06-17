@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 from common import ligand_from_smiles
 from numpy.typing import NDArray
-from rdkit.Chem import rdMolDescriptors
+from rdkit.Chem import AllChem, rdMolDescriptors
 
 from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS
 from tmd.fe import atom_mapping
@@ -322,6 +322,34 @@ def test_single_topology_rest_propers_identity():
     phenylcyclohexane = ligand_from_smiles("c1ccc(C2CCCCC2)cc1")
     st = get_identity_transformation(phenylcyclohexane)
     assert len(set(st.candidate_propers.values())) == 9 * 6 + 6
+
+
+@pytest.mark.nogpu
+def test_indane_to_indole_rest_region():
+    """Verify that fused rings aren't expanded to"""
+
+    indole = ligand_from_smiles("C12=C(C=CN2)C=CC=C1")
+    indane = ligand_from_smiles("c1ccc2c(c1)CCC2")
+
+    atom_map = ((0, 3), (1, 4), (2, 6), (3, 7), (4, 8), (5, 5), (6, 0), (7, 1), (8, 2))
+    AllChem.AlignMol(indole, indane, atomMap=atom_map)
+
+    core = get_core(indole, indane)
+    st = get_single_topology_rest(indole, indane, core, 2.0, "exponential")
+
+    # Previously the entire system would be included
+    assert len(st.rest_region_atom_idxs) != st.get_num_atoms()
+
+    alchemical_mol = st.mol(0.0)
+    alchem_mol = convert_to_nx(alchemical_mol)
+
+    cycles = nx.cycle_basis(alchem_mol)
+    assert len(cycles) == 2
+    five_member_ring_atoms = next(cycle for cycle in cycles if len(cycle) == 5)
+    six_member_ring_atoms = next(cycle for cycle in cycles if len(cycle) == 6)
+    assert st.rest_region_atom_idxs.issuperset(five_member_ring_atoms)
+    # Two atoms are shared between both rings, so the six member will have two atoms in the rest region.
+    assert len(st.rest_region_atom_idxs.intersection(six_member_ring_atoms)) == 2
 
 
 @pytest.mark.nogpu
