@@ -468,7 +468,10 @@ def compute_total_ns(res: SimulationResult | HREXSimulationResult, md_params: MD
     else:
         total_steps += md_params.n_eq_steps * n_windows
 
-    total_steps += md_params.steps_per_frame * md_params.n_frames * n_windows
+    steps_per_production_frame = md_params.steps_per_frame
+    if md_params.hrex_params is not None:
+        steps_per_production_frame *= md_params.hrex_params.iterations_per_frame
+    total_steps += steps_per_production_frame * md_params.n_frames * n_windows
 
     dt = res.final_result.initial_states[0].integrator.dt
     dt_in_fs = 1000 * dt

@@ -1045,9 +1045,21 @@ def test_compute_total_ns(hif2a_ligand_pair_single_topology_lam0_state):
 
     total_ns_with_intermediate = free_energy.compute_total_ns(sim_res, hrex_md_params)
 
+    assert total_ns_with_intermediate == free_energy.compute_total_ns(sim_res, hrex_md_params)
     assert total_ns_with_intermediate > total_ns
 
     assert total_ns_with_intermediate == (n_intermediate_windows * 1.1) + n_final_windows * 0.1
+
+    iterations_per_frame = 2
+    multi_iter_hrex_md_params = replace(
+        hrex_md_params, hrex_params=replace(hrex_md_params.hrex_params, iterations_per_frame=iterations_per_frame)
+    )
+
+    total_ns_multi_hrex_iter = free_energy.compute_total_ns(sim_res, multi_iter_hrex_md_params)
+
+    np.allclose(
+        total_ns_multi_hrex_iter, (n_intermediate_windows * 1.1) + (n_final_windows * 0.1) * iterations_per_frame
+    )
 
 
 @pytest.mark.nogpu
