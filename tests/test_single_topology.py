@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,6 +36,9 @@ from tmd.constants import (
 )
 from tmd.fe import atom_mapping, single_topology
 from tmd.fe.dummy import MultipleAnchorWarning, canonicalize_bond
+from tmd.fe.rbfe import _get_default_state_minimization_configs
+from tmd.fe.rest.bond import mkproper
+from tmd.fe.rest.queries import get_rotatable_bonds
 from tmd.fe.single_topology import (
     AtomMapFlags,
     AtomMapMixin,
@@ -53,7 +56,9 @@ from tmd.fe.single_topology import (
 from tmd.fe.system import minimize_scipy, simulate_system
 from tmd.fe.utils import get_mol_name, get_romol_conf, read_sdf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
+from tmd.md import minimizer
 from tmd.md.builders import build_water_system
+from tmd.potentials.bonded import signed_torsion_angle
 from tmd.potentials.jax_utils import pairwise_distances
 from tmd.utils import path_to_internal_file
 
@@ -631,6 +636,99 @@ def test_combine_confs_alignment():
             # of the two rotated confs
             final_dist = get_max_distance(combined_conf)
             assert final_dist < ref_max_dist
+
+
+@pytest.mark.nogpu
+def test_combine_confs_alignment_modified_torsions():
+    """Test that combine_confs will handles building conformers given the original core even if the torsions have flipped.
+
+    For lambda < 0.5, mol b atoms will be aligned to mol_a
+    and lambda >= 0.5 mol_a atoms will be aligned to mol_b
+    """
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
+        mols = read_sdf(path_to_ligand)
+
+    rng = np.random.default_rng(2026)
+
+    rng.shuffle(mols)
+
+    n_pairs = 3
+    n_confs = 5
+
+    all_pairs = [[mols[i], mols[j]] for i in range(len(mols)) for j in range(i + 1, len(mols))]
+
+    subset = rng.choice(all_pairs, size=n_pairs)
+
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    # Minimization should be handled by the default RBFE minimization protocol
+    minimizer_config = _get_default_state_minimization_configs()
+
+    for mol_a, mol_b in subset:
+        core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+
+        st = SingleTopology(mol_a, mol_b, core, ff)
+
+        rotatable_bonds_a = get_rotatable_bonds(mol_a)
+        torsions_a = [
+            mkproper(*idxs)
+            for idxs in st.src_system.proper.potential.idxs
+            for bond in rotatable_bonds_a
+            if mkproper(*idxs).idxs[1:3] == bond.idxs
+        ]
+        assert len(torsions_a) > 0
+
+        rotatable_bonds_b = get_rotatable_bonds(mol_a)
+        torsions_b = [
+            mkproper(*idxs)
+            for idxs in st.dst_system.proper.potential.idxs
+            for bond in rotatable_bonds_b
+            if mkproper(*idxs).idxs[1:3] == bond.idxs
+        ]
+        assert len(torsions_b) > 0
+
+        confs_a = [get_romol_conf(mol_a)]
+        confs_b = [get_romol_conf(mol_b)]
+
+        AllChem.EmbedMultipleConfs(mol_a, numConfs=n_confs, randomSeed=int(rng.integers(np.iinfo(np.int32).max)))
+        AllChem.EmbedMultipleConfs(mol_b, numConfs=n_confs, randomSeed=int(rng.integers(np.iinfo(np.int32).max)))
+
+        for i in range(n_confs):
+            confs_a.append(get_romol_conf(mol_a, conf_id=i))
+            confs_b.append(get_romol_conf(mol_b, conf_id=i))
+
+        box = np.eye(3) * 100.0
+
+        # Verify that at least one torsion has rotated
+        def verify_torsion_flipped(torsions, confs):
+            flipped = False
+            for torsion in torsions:
+                angles = []
+                for conf in confs:
+                    angles.append(signed_torsion_angle(*conf[torsion.idxs, :], box))
+                sorted_angles = sorted(angles)
+                flipped = np.abs(np.rad2deg(sorted_angles[0] - sorted_angles[-1])) > 180.0
+                if flipped:
+                    break
+            assert flipped
+
+        verify_torsion_flipped(torsions_a, confs_a)
+        verify_torsion_flipped(torsions_b, confs_b)
+
+        free_idxs = np.arange(st.get_num_atoms(), dtype=np.int32)
+
+        for lamb in [0.0, 1.0]:
+            state = st.setup_intermediate_state(lamb)
+
+            val_and_grad_fn = jax.jit(jax.value_and_grad(state.get_U_fn()))
+
+            for conf_a in confs_a:
+                for conf_b in confs_b:
+                    combined_conf = st.combine_confs(conf_a, conf_b, lamb=lamb)
+                    new_conf = minimizer.local_minimize(
+                        combined_conf, box, val_and_grad_fn, free_idxs, minimizer_config, verbose=False
+                    )
+                    assert np.any(combined_conf != new_conf)
 
 
 @pytest.mark.nogpu

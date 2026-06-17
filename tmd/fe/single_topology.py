@@ -1507,13 +1507,13 @@ class SingleTopology(AtomMapMixin):
 
         return mol_c_masses
 
-    def combine_confs(
-        self, x_a: NDArray, x_b: NDArray, lamb: float = 1.0, equilibrate_dummy_atoms: int = 1000
-    ) -> NDArray:
+    def combine_confs(self, x_a: NDArray, x_b: NDArray, lamb: float = 1.0) -> NDArray:
         """
         Combine conformations of two molecules.
 
-        TODO: interpolate confs based on the lambda value?
+        Note that the expectation is that the 0.0 -> 0.5 and 1.0 -> 0.5 minimization
+        is performed. The conformers returned may be difficult to minimize at lambda = 0.5
+        due to poor alignment of ligands.
 
         Parameters
         ----------
@@ -1526,10 +1526,6 @@ class SingleTopology(AtomMapMixin):
         lamb: optional float
             if lamb > 0.5, map atoms from x_a first, then overwrite with x_b,
             otherwise use opposite order. Defaults to 1.0
-
-        equilibrate_dummy_atoms: int
-            Number of steps to spend equilibrating the dummy atoms. Will run minimization followed
-            by the number of steps. Minimization is always run
 
         Returns
         -------
