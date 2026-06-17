@@ -431,15 +431,23 @@ def main():
         "--output_dir", default=None, help="Directory to output results, else generates a directory based on the time"
     )
     parser.add_argument("--legs", default=[COMPLEX_LEG, SOLVENT_LEG], nargs="+")
+    parser.add_argument(
+        "--bisection_frames", type=int, default=100, help="Number of frames to collect during bisection"
+    )
     parser.add_argument("--local_md_k", default=10_000.0, type=float, help="Local MD k parameter")
     parser.add_argument("--local_md_radius", default=1.2, type=float, help="Local MD radius")
     parser.add_argument("--local_md_free_reference", action="store_true")
-    parser.add_argument("--bisection_frames", type=int, default=100)
     parser.add_argument(
         "--local_md_steps",
         default=0,
         type=int,
         help="Number of steps to run with Local MD. Must be less than or equal to --steps_per_frame. If set to 0, no local MD is run",
+    )
+    parser.add_argument(
+        "--local_md_iterations",
+        default=1,
+        type=int,
+        help="Number of independent local MD iterations to make. local_md_steps // local_md_iterations steps per iteration",
     )
     parser.add_argument(
         "--store_trajectories",
@@ -521,6 +529,7 @@ def main():
                 min_radius=args.local_md_radius,
                 max_radius=args.local_md_radius,
                 freeze_reference=not args.local_md_free_reference,
+                iterations=args.local_md_iterations,
             )
             if args.local_md_steps > 0
             else None,
