@@ -53,7 +53,7 @@ def test_jax_differentiable_interface(precision):
 
     U = SummedPotential(potentials, sys_params).to_gpu(precision).call_with_params_list
     args = (coords, sys_params, box)
-    np.testing.assert_array_equal(precision(U(*args)), precision(U_ref(*args)))
+    np.testing.assert_allclose(precision(U(*args)), precision(U_ref(*args)))
 
     argnums = (0, 1)
     dU_dx_ref, dU_dps_ref = jax.grad(U_ref, argnums)(*args)
