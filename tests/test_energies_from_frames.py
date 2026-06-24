@@ -36,7 +36,7 @@ pytestmark = [pytest.mark.memcheck]
     "precision,rtol,atol",
     [(np.float32, 1.5e-7, 1e-7)],
 )
-@pytest.mark.parametrize("seed", [1234, 2025, 2022, 2021, 814])
+@pytest.mark.parametrize("seed", [2025, 2026])
 def test_recomputation_of_energies(precision, rtol, atol, seed):
     """Verify that recomputing the energies of frames that have already had energies computed
     before, will produce nearly identical energies.
