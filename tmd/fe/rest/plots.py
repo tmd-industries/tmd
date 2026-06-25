@@ -35,7 +35,6 @@ def plot_rest_region(single_top: SingleTopologyREST) -> Draw.MolsToGridImage:
             if idx not in alchemical_rest_idxs:
                 weakened_torsion_idxs.add(idx)
 
-    # print(weakened_torsion_idxs)
     rest_region_color = (238 / 255, 144 / 255, 144 / 255)  # red
     weakened_torsion_color = (144 / 255, 144 / 255, 200 / 255)  # blue
 
