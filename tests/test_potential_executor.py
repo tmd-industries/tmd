@@ -55,16 +55,17 @@ def get_potentials_and_frames(host_name: str | None, precision):
         host_config = builders.build_water_system(4.0, ff.water_ff, mols=[mol_a, mol_b], box_margin=0.1)
 
     ligand_masses = st.combine_masses()
-    x0 = st.combine_confs(get_romol_conf(mol_a), get_romol_conf(mol_b), lamb=0.0).astype(precision)
     if host_config is not None:
         host_config = setup_optimized_host(host_config, [mol_a, mol_b], ff)
         hgs = st.combine_with_host(host_config.host_system, lamb, host_config.num_water_atoms, host_config.omm_topology)
 
-        x0 = np.concatenate([host_config.conf, x0])
+        lig_conf = st.combine_confs(get_romol_conf(mol_a), get_romol_conf(mol_b), lamb=0.0).astype(precision)
+        x0 = np.concatenate([host_config.conf, lig_conf])
         box = host_config.box
         masses = np.concatenate([host_config.masses, ligand_masses])
         u_fns = hgs.get_U_fns()
     else:
+        x0 = st.combine_confs(get_romol_conf(mol_a), get_romol_conf(mol_b), lamb=0.0).astype(precision)
         masses = np.array(ligand_masses)
         u_fns = st.setup_intermediate_state(0.0).get_U_fns()
         box = np.eye(3, dtype=precision) * 10.0
