@@ -1,5 +1,6 @@
 from rdkit import Chem
 from rdkit.Chem import AllChem, Draw, rdDepictor
+from rdkit.Geometry import Point2D
 
 from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.utils import get_mol_name
@@ -16,12 +17,31 @@ def plot_rest_region(single_top: SingleTopologyREST) -> Draw.MolsToGridImage:
     mol_a = Chem.Mol(single_top.mol_a)
     mol_b = Chem.Mol(single_top.mol_b)
 
-    rdDepictor.SetPreferCoordGen(True)
-
     mol_a.RemoveAllConformers()
     mol_b.RemoveAllConformers()
+
     AllChem.Compute2DCoords(mol_a)
-    AllChem.Compute2DCoords(mol_b)
+    rdDepictor.NormalizeDepiction(mol_a)
+
+    # Re-use the heavy atom core to align the images
+    mapped_2d_coords = {}
+    mol_a_conf = mol_a.GetConformer()
+    for idx, atom in enumerate(mol_a.GetAtoms()):
+        if atom.GetAtomicNum() == 1:
+            continue
+        c_idx = single_top.a_to_c[idx]
+        if c_idx not in single_top.c_to_b:
+            continue
+        b_idx = single_top.c_to_b[c_idx]
+        b_atom = mol_b.GetAtomWithIdx(b_idx)
+        if b_atom.GetAtomicNum() == 1:
+            continue
+        if atom.IsInRing() != b_atom.IsInRing():
+            continue
+        point = mol_a_conf.GetAtomPosition(idx)
+        mapped_2d_coords[b_idx] = Point2D(point.x, point.y)
+
+    AllChem.Compute2DCoords(mol_b, coordMap=mapped_2d_coords)
 
     alchemical_rest_idxs = single_top.rest_region_atom_idxs
 
