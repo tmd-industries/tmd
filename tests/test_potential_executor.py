@@ -30,8 +30,6 @@ from tmd.potentials.potential import get_bound_potential_by_type
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 from tmd.utils import path_to_internal_file
 
-pytestmark = [pytest.mark.memcheck]
-
 
 def get_potentials_and_frames(host_name: str | None, precision):
     dt = 1.5e-3
@@ -110,10 +108,10 @@ def get_potentials_and_frames(host_name: str | None, precision):
 @pytest.fixture(
     scope="module",
     params=[
-        (None, np.float32, 1e-4, 1e-5),
-        ("solvent", np.float32, 1e-4, 1e-5),
+        pytest.param((None, np.float32, 1e-4, 1e-5), marks=pytest.mark.memcheck),
+        pytest.param(("solvent", np.float32, 1e-4, 1e-5), marks=pytest.mark.memcheck),
         ("complex", np.float32, 1e-4, 1e-5),
-        (None, np.float64, 1e-6, 1e-8),
+        pytest.param((None, np.float64, 1e-6, 1e-8), marks=pytest.mark.memcheck),
         ("solvent", np.float64, 1e-6, 1e-8),
         ("complex", np.float64, 1e-6, 1e-8),
     ],
