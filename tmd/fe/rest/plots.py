@@ -1,5 +1,5 @@
 from rdkit import Chem
-from rdkit.Chem import AllChem, Draw, rdDepictor
+from rdkit.Chem import AllChem, Draw, rdDepictor, rdFMCS
 from rdkit.Geometry import Point2D
 
 from tmd.fe.rest.single_topology import SingleTopologyREST
@@ -23,23 +23,25 @@ def plot_rest_region(single_top: SingleTopologyREST) -> Draw.MolsToGridImage:
     AllChem.Compute2DCoords(mol_a)
     rdDepictor.NormalizeDepiction(mol_a)
 
-    # Re-use the heavy atom core to align the images
+    params = rdFMCS.MCSParameters()
+    params.BondCompareParameters.CompleteRingsOnly = True
+    params.BondCompareParameters.RingMatchesRingOnly = True
+    params.AtomCompareParameters.CompleteRingsOnly = True
+    params.AtomCompareParameters.RingMatchesRingOnly = True
+    params.AtomTyper = rdFMCS.AtomCompare.CompareAnyHeavyAtom
+    params.Timeout = 2
     mapped_2d_coords = {}
-    mol_a_conf = mol_a.GetConformer()
-    for idx, atom in enumerate(mol_a.GetAtoms()):
-        if atom.GetAtomicNum() == 1:
-            continue
-        c_idx = single_top.a_to_c[idx]
-        if c_idx not in single_top.c_to_b:
-            continue
-        b_idx = single_top.c_to_b[c_idx]
-        b_atom = mol_b.GetAtomWithIdx(b_idx)
-        if b_atom.GetAtomicNum() == 1:
-            continue
-        if atom.IsInRing() != b_atom.IsInRing():
-            continue
-        point = mol_a_conf.GetAtomPosition(idx)
-        mapped_2d_coords[b_idx] = Point2D(point.x, point.y)
+    try:
+        mcs = rdFMCS.FindMCS([mol_a, mol_b], params)
+        mol_a_matches = mol_a.GetSubstructMatches(mcs.queryMol)[0]
+        mol_b_matches = mol_b.GetSubstructMatches(mcs.queryMol)[0]
+        assert len(mol_a_matches) == len(mol_b_matches)
+        mol_a_conf = mol_a.GetConformer()
+        for a, b in zip(mol_a_matches, mol_b_matches):
+            point = mol_a_conf.GetAtomPosition(a)
+            mapped_2d_coords[b] = Point2D(point.x, point.y)
+    except Exception:
+        pass
 
     AllChem.Compute2DCoords(mol_b, coordMap=mapped_2d_coords)
 
