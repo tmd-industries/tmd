@@ -1,5 +1,6 @@
 from rdkit import Chem
-from rdkit.Chem import AllChem, Draw, rdDepictor
+from rdkit.Chem import AllChem, Draw, rdDepictor, rdFMCS
+from rdkit.Geometry import Point2D
 
 from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.utils import get_mol_name
@@ -16,12 +17,33 @@ def plot_rest_region(single_top: SingleTopologyREST) -> Draw.MolsToGridImage:
     mol_a = Chem.Mol(single_top.mol_a)
     mol_b = Chem.Mol(single_top.mol_b)
 
-    rdDepictor.SetPreferCoordGen(True)
-
     mol_a.RemoveAllConformers()
     mol_b.RemoveAllConformers()
+
     AllChem.Compute2DCoords(mol_a)
-    AllChem.Compute2DCoords(mol_b)
+    rdDepictor.NormalizeDepiction(mol_a)
+
+    params = rdFMCS.MCSParameters()
+    params.BondCompareParameters.CompleteRingsOnly = True
+    params.BondCompareParameters.RingMatchesRingOnly = True
+    params.AtomCompareParameters.CompleteRingsOnly = True
+    params.AtomCompareParameters.RingMatchesRingOnly = True
+    params.AtomTyper = rdFMCS.AtomCompare.CompareAnyHeavyAtom
+    params.Timeout = 2
+    mapped_2d_coords = {}
+    try:
+        mcs = rdFMCS.FindMCS([mol_a, mol_b], params)
+        mol_a_matches = mol_a.GetSubstructMatches(mcs.queryMol)[0]
+        mol_b_matches = mol_b.GetSubstructMatches(mcs.queryMol)[0]
+        assert len(mol_a_matches) == len(mol_b_matches)
+        mol_a_conf = mol_a.GetConformer()
+        for a, b in zip(mol_a_matches, mol_b_matches):
+            point = mol_a_conf.GetAtomPosition(a)
+            mapped_2d_coords[b] = Point2D(point.x, point.y)
+    except Exception:
+        pass
+
+    AllChem.Compute2DCoords(mol_b, coordMap=mapped_2d_coords)
 
     alchemical_rest_idxs = single_top.rest_region_atom_idxs
 
@@ -35,7 +57,6 @@ def plot_rest_region(single_top: SingleTopologyREST) -> Draw.MolsToGridImage:
             if idx not in alchemical_rest_idxs:
                 weakened_torsion_idxs.add(idx)
 
-    # print(weakened_torsion_idxs)
     rest_region_color = (238 / 255, 144 / 255, 144 / 255)  # red
     weakened_torsion_color = (144 / 255, 144 / 255, 200 / 255)  # blue
 
