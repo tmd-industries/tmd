@@ -309,9 +309,9 @@ class SepTopFreeEnergy(AbsoluteFreeEnergy):
         box0: NDArray | None = None,
         rst_params: RestraintParams | None = None,
         central_atoms: tuple[int, int] | None = None,
-        decharge_interval: tuple[float, float] = (0.0, 0.2),
-        eps_scale_interval: tuple[float, float] = (0.2, 0.4),
-        w_interval: tuple[float, float] = (0.0, 1.0),
+        decharge_interval: tuple[float, float] = (0.25, 0.75),
+        eps_scale_interval: tuple[float, float] = (0.0, 0.25),
+        w_interval: tuple[float, float] = (0.5, 1.0),
     ):
         # ``mol`` exists on the parent class; treat A as the canonical
         # AbsoluteFreeEnergy.mol so existing helpers (e.g. those that read

@@ -145,7 +145,7 @@ def test_septop_lambda_drives_two_ligands_oppositely(hif2a_pair_in_water):
     # mol_a fully coupled -> charges intact, W=0
     assert np.any(nb0[sl_a, NBParamIdx.Q_IDX] != 0.0)
     np.testing.assert_array_equal(nb0[sl_a, NBParamIdx.W_IDX], 0.0)
-    # mol_b decoupled -> charges zero (past decharge_interval=(0.0, 0.2)), W>0
+    # mol_b decoupled -> charges zero (past decharge_interval=(0.25, 0.75)), W>0
     np.testing.assert_array_equal(nb0[sl_b, NBParamIdx.Q_IDX], 0.0)
     assert np.all(nb0[sl_b, NBParamIdx.W_IDX] > 0)
 
