@@ -128,13 +128,19 @@ class SingleTopologyREST(SingleTopology):
             if self._maximum_ring_size is None or len(cycle) < self._maximum_ring_size
         ]
 
-    # expand REST region to include complete ring groups
     @staticmethod
-    def expand_rest_region_in_mol(atom_idxs, cycles, mol):
+    def expand_rest_region_in_mol(atom_idxs, cycles, mol, dummy_atoms):
+        """expand REST region to include complete ring groups when there is a dummy atom in the ring
+        or if the dummy atom is connected to the ring.
+
+        Will also expand to include all terminal atoms in the ring as well as nitriles and hydroxyls
+        """
         region = set()
-        for atom_idx in atom_idxs:
+        for atom_idx in dummy_atoms:
+            atom = mol.GetAtomWithIdx(atom_idx)
+            nb_idxs = [nb.GetIdx() for nb in atom.GetNeighbors()] + [atom_idx]
             for cycle in cycles:
-                if atom_idx in cycle:
+                if any([idx in cycle for idx in nb_idxs]):
                     for cycle_atom in cycle:
                         region.add(cycle_atom)
 
@@ -219,8 +225,12 @@ class SingleTopologyREST(SingleTopology):
     def rest_region_atom_idxs(self) -> set[int]:
         mol_a_idxs, mol_b_idxs = self.split_combined_idxs(self.base_rest_region_atom_idxs)
 
-        expanded_set_a = self.expand_rest_region_in_mol(mol_a_idxs, self._cycles_a, self.mol_a)
-        expanded_set_b = self.expand_rest_region_in_mol(mol_b_idxs, self._cycles_b, self.mol_b)
+        expanded_set_a = self.expand_rest_region_in_mol(
+            mol_a_idxs, self._cycles_a, self.mol_a, [self.c_to_a[idx] for idx in self.get_dummy_atoms_a()]
+        )
+        expanded_set_b = self.expand_rest_region_in_mol(
+            mol_b_idxs, self._cycles_b, self.mol_b, [self.c_to_b[idx] for idx in self.get_dummy_atoms_b()]
+        )
 
         final_idxs = set([self.a_to_c[x] for x in expanded_set_a]).union([self.b_to_c[x] for x in expanded_set_b])
 

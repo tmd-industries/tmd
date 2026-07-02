@@ -378,6 +378,31 @@ def test_sample_max_buffer_frames_with_local_md(
     assert len(traj.frames) == n_frames
 
 
+def test_sample_multiple_iterations_local_md(solvent_hif2a_ligand_pair_single_topology_lam0_state):
+    """Verify that running local md with multiple iterations results no frozen atoms in the local region."""
+    steps_per_frame = 800
+    n_eq_steps = 0
+
+    md_params = MDParams(
+        1, n_eq_steps, steps_per_frame, 2026, local_md_params=LocalMDParams(local_steps=steps_per_frame, iterations=1)
+    )
+    x0 = solvent_hif2a_ligand_pair_single_topology_lam0_state.x0
+    lig_idxs = solvent_hif2a_ligand_pair_single_topology_lam0_state.ligand_idxs
+    traj = sample(solvent_hif2a_ligand_pair_single_topology_lam0_state, md_params, md_params.n_frames)
+    assert isinstance(traj.frames, StoredArrays)
+    assert len(traj.frames) == 1
+    # There should be a single position (3 coordinates)
+    assert np.sum(traj.frames[-1][lig_idxs] == x0[lig_idxs]) == 3
+
+    md_params = replace(md_params, local_md_params=replace(md_params.local_md_params, iterations=10))
+
+    traj = sample(solvent_hif2a_ligand_pair_single_topology_lam0_state, md_params, md_params.n_frames)
+    assert isinstance(traj.frames, StoredArrays)
+    assert len(traj.frames) == 1
+    # None of the ligand particles should be frozen
+    assert np.sum(traj.frames[-1][lig_idxs] == x0[lig_idxs]) == 0
+
+
 @pytest.mark.nocuda
 @given(integers(min_value=1))
 @seed(2023)
