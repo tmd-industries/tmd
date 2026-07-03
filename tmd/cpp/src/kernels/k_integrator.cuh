@@ -20,21 +20,24 @@ namespace tmd {
 
 template <typename RealType, int D>
 __global__ void
-k_update_forward_baoab(const int num_systems, const int N, const RealType ca,
+k_update_forward_baoab(const int num_systems, const int N, const RealType dt,
+                       const RealType ca,
                        const unsigned int *__restrict__ idxs,   // N
                        const RealType *__restrict__ cbs,        // N
                        const RealType *__restrict__ ccs,        // N
                        curandState_t *__restrict__ rand_states, // N
                        RealType *__restrict__ x_t,              // N x 3
                        RealType *__restrict__ v_t,              // N x 3
-                       unsigned long long *__restrict__ du_dx,  // N x 3
-                       const RealType dt) {
+                       unsigned long long *__restrict__ du_dx   // N x 3
+) {
   static_assert(D == 3);
 
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
     return;
   }
+
+  const RealType half_dt = static_cast<RealType>(0.5) * dt;
 
   int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (kernel_idx < N) {
@@ -66,6 +69,12 @@ k_update_forward_baoab(const int num_systems, const int N, const RealType ca,
       RealType v_mid_z =
           v_t[system_idx * N * D + atom_idx * D + 2] + atom_cbs * force_z;
 
+      // Zero out the forces after using them to avoid having to memset the
+      // forces later
+      du_dx[system_idx * N * D + atom_idx * D + 0] = 0;
+      du_dx[system_idx * N * D + atom_idx * D + 1] = 0;
+      du_dx[system_idx * N * D + atom_idx * D + 2] = 0;
+
       RealType noise_x;
       RealType noise_y;
       template_curand_normal2(noise_x, noise_y, &local_state);
@@ -79,20 +88,11 @@ k_update_forward_baoab(const int num_systems, const int N, const RealType ca,
           atom_ccs * template_curand_normal<RealType>(&local_state);
 
       x_t[system_idx * N * D + atom_idx * D + 0] +=
-          static_cast<RealType>(0.5) * dt *
-          (v_mid_x + v_t[system_idx * N * D + atom_idx * D + 0]);
+          half_dt * (v_mid_x + v_t[system_idx * N * D + atom_idx * D + 0]);
       x_t[system_idx * N * D + atom_idx * D + 1] +=
-          static_cast<RealType>(0.5) * dt *
-          (v_mid_y + v_t[system_idx * N * D + atom_idx * D + 1]);
+          half_dt * (v_mid_y + v_t[system_idx * N * D + atom_idx * D + 1]);
       x_t[system_idx * N * D + atom_idx * D + 2] +=
-          static_cast<RealType>(0.5) * dt *
-          (v_mid_z + v_t[system_idx * N * D + atom_idx * D + 2]);
-
-      // Zero out the forces after using them to avoid having to memset the
-      // forces later
-      du_dx[system_idx * N * D + atom_idx * D + 0] = 0;
-      du_dx[system_idx * N * D + atom_idx * D + 1] = 0;
-      du_dx[system_idx * N * D + atom_idx * D + 2] = 0;
+          half_dt * (v_mid_z + v_t[system_idx * N * D + atom_idx * D + 2]);
 
       // Write the random state back into memory
       rand_states[system_idx * N + atom_idx] = local_state;
