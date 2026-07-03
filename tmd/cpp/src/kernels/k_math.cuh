@@ -1,4 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
+// Modifications Copyright 2026, Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,6 +33,16 @@ inline __device__ void cross_product(const RealType a[3], const RealType b[3],
   c[0] = rmul_rn(a[1], b[2]) - rmul_rn(a[2], b[1]);
   c[1] = rmul_rn(a[2], b[0]) - rmul_rn(a[0], b[2]);
   c[2] = rmul_rn(a[0], b[1]) - rmul_rn(a[1], b[0]);
+}
+
+template <typename RealType>
+__global__ void k_invert_array(const size_t N, RealType *__restrict__ arr) {
+  int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (kernel_idx < N) {
+    arr[kernel_idx] = 1 / arr[kernel_idx];
+
+    kernel_idx += gridDim.x * blockDim.x;
+  }
 }
 
 } // namespace tmd

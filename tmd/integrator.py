@@ -301,6 +301,8 @@ class ConstraintSolver:
         """
         if len(self.constraint_groups) == 0:
             return x.copy(), v.copy()
+        x = x.copy()
+        v = v.copy()
         v = self.apply_velocity_constraints(x, v)
         x = self.apply_positional_constraints(x)
         return x, v
