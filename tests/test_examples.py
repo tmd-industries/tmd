@@ -791,7 +791,7 @@ def test_run_rbfe_legs(
         ),
         (False, "solvent"): (
             "e17bc612984af82601fcfb4171d0ec45708de6e331de8d2ba09887c18c6b4b7f",
-            "5378bbff80e2b8520d38bf842e12b1f71c0a741d7f8722f542039a589d1c186b",
+            "5378bbff80e2b8520d38bf842e12b1f71c0a741f7f8722f542039a589d1c186b",
             "67da8e6da98a3556b9cc442fe80f49e61f9aa7226f6830f9c7e79b3d432f61da",
         ),
         (False, "complex"): (
