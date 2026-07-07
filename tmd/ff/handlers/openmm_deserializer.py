@@ -17,7 +17,7 @@ from collections import defaultdict
 import numpy as np
 import openmm as mm
 from numpy.typing import NDArray
-from openmm import unit
+from openmm import app, unit
 
 from tmd import constants, potentials
 from tmd.ff.handlers.utils import canonicalize_bond
@@ -285,8 +285,14 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
     return bps, np.array(masses)
 
 
-def deserialize_constraints(system: mm.System) -> tuple[list[list[int]], list[list[float]]]:
-    """Extract constraint groups from an OpenMM system.
+def deserialize_constraints(
+    topology: app.Topology,
+    coords: NDArray,
+) -> tuple[list[list[int]], list[list[float]]]:
+    """Construct constraint groups from an OpenMM topology and coordinates.
+
+    Identifies hydrogen-heavy atom bonds from the topology and uses the
+    provided coordinates to compute bond distances.
 
     Returns constraint groups in the same format as get_hydrogen_bond_constraint_groups,
     with each group having the heavy atom first followed by hydrogen indices,
@@ -294,8 +300,10 @@ def deserialize_constraints(system: mm.System) -> tuple[list[list[int]], list[li
 
     Parameters
     ----------
-    system: openmm.System
-        A system object containing constraints
+    topology: openmm.app.Topology
+        An OpenMM topology object with bond information.
+    coords: numpy.ndarray
+        N x 3 array of atom coordinates (nm) from which distances are computed.
 
     Returns
     -------
@@ -304,39 +312,29 @@ def deserialize_constraints(system: mm.System) -> tuple[list[list[int]], list[li
     distances : list of list of float
         Bond distances from the heavy atom to each hydrogen in the group.
     """
-    num_constraints = system.getNumConstraints()
-    if num_constraints == 0:
-        return [], []
+    # Determine which atoms are hydrogens
+    is_hydrogen = [atom.element.atomic_number == 1 for atom in topology.atoms()]
 
-    constraints = []
-    for i in range(num_constraints):
-        i_idx, j_idx, distance = system.getConstraintParameters(i)
-        distance = value(distance)
-        constraints.append((i_idx, j_idx, distance))
-
-    hydrogen_mass_threshold = 1.5
-
-    is_hydrogen = []
-    for p in range(system.getNumParticles()):
-        is_hydrogen.append(value(system.getParticleMass(p)) < hydrogen_mass_threshold)
-
-    heavy_to_hydrogens = defaultdict(list)
-    for i_idx, j_idx, distance in constraints:
+    # Build set of H-heavy bonds from topology
+    h_heavy_bonds = []
+    for bond in topology.bonds():
+        i_idx = bond[0].index
+        j_idx = bond[1].index
         i_is_h = is_hydrogen[i_idx]
         j_is_h = is_hydrogen[j_idx]
 
         if i_is_h and not j_is_h:
-            heavy_atom = j_idx
-            hydrogen_atom = i_idx
+            h_heavy_bonds.append((i_idx, j_idx))
         elif j_is_h and not i_is_h:
-            heavy_atom = i_idx
-            hydrogen_atom = j_idx
-        elif not i_is_h and not j_is_h:
-            assert False, f"Unexpected got two heavy atoms with constraints: {i_idx} -> {j_idx}"
-        else:
-            continue
+            h_heavy_bonds.append((j_idx, i_idx))
+        elif j_is_h and i_is_h:
+            assert False, "Unexpected hydrogen bonded to a hydrogen"
 
-        heavy_to_hydrogens[heavy_atom].append((hydrogen_atom, distance))
+    # Compute distances from coordinates and group by heavy atom
+    heavy_to_hydrogens = defaultdict(list)
+    for hydrogen_atom, heavy_atom in h_heavy_bonds:
+        dist = np.linalg.norm(coords[hydrogen_atom] - coords[heavy_atom])
+        heavy_to_hydrogens[heavy_atom].append((hydrogen_atom, float(dist)))
 
     groups = []
     distances = []

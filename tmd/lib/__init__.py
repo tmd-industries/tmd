@@ -48,34 +48,53 @@ class LangevinIntegrator:
 
 
 @dataclass
-class ConstrainedLangevinIntegrator:
-    temperature: float
-    dt: float
-    friction: float
-    masses: NDArray[np.float64]
-    seed: int
-    constraint_groups: list[list[int]]
-    constraint_distances: list[list[float]]
-    tolerance: float = 1e-8
+class ConstraintGroups:
+    groups: list[list[int]]
+    distances: list[list[float]]
+    water_group_indices: NDArray[np.int_]
+    tolerance: float = 1e-5
     max_iter: int = 15
 
-    def impl(self, precision=np.float32):
-        klass: (
-            type[custom_ops.ConstrainedLangevinIntegrator_f32] | type[custom_ops.ConstrainedLangevinIntegrator_f64]
-        ) = custom_ops.ConstrainedLangevinIntegrator_f32
-        if precision == np.float64:
-            klass = custom_ops.ConstrainedLangevinIntegrator_f64
-        return klass(
-            np.array(self.masses, dtype=precision),
-            self.temperature,
-            self.dt,
-            self.friction,
-            self.seed,
-            self.constraint_groups,
-            [[d for d in dists] for dists in self.constraint_distances],
-            self.tolerance,
-            self.max_iter,
+    def __post_init__(self):
+        assert len(self.groups) == len(self.distances)
+        assert len(set(self.water_group_indices)) == len(self.water_group_indices)
+        if len(self.water_group_indices) > 0:
+            assert np.min(self.water_group_indices) >= 0
+            assert np.max(self.water_group_indices) < len(self.groups)
+        for group, dists in zip(self.groups, self.distances):
+            assert len(group) > 1
+            assert len(group) - 1 == len(dists)
+
+    def sort(self) -> "ConstraintGroups":
+        n_groups = len(self.groups)
+        if n_groups == 0:
+            return ConstraintGroups([], [], np.array([], dtype=np.int_))
+
+        non_water_indices = np.delete(np.arange(n_groups, dtype=np.int_), self.water_group_indices)
+
+        # Sort the water indices, probably redundant
+        water_indices = np.sort(self.water_group_indices)
+
+        sorted_indices = np.concatenate([water_indices, non_water_indices], dtype=np.int_)
+
+        sorted_groups = [self.groups[i] for i in sorted_indices]
+        sorted_distances = [self.distances[i] for i in sorted_indices]
+        sorted_water_indices = np.arange(len(water_indices), dtype=np.int_)
+
+        return ConstraintGroups(sorted_groups, sorted_distances, sorted_water_indices, self.tolerance, self.max_iter)
+
+    def concatenate(self, other: "ConstraintGroups") -> "ConstraintGroups":
+        if not isinstance(other, ConstraintGroups):
+            raise TypeError("Can only concatenate other constraint groups")
+        num_starting_groups = len(self.groups)
+        new_group = ConstraintGroups(
+            self.groups + other.groups,
+            self.distances + other.distances,
+            np.concatenate([self.water_group_indices, other.water_group_indices + num_starting_groups]),
+            tolerance=max(self.tolerance, other.tolerance),
+            max_iter=max(self.max_iter, other.max_iter),
         )
+        return new_group.sort()
 
 
 @dataclass

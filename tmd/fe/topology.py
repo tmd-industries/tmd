@@ -27,6 +27,7 @@ from tmd.fe.system import GuestSystem
 from tmd.fe.utils import get_romol_conf
 from tmd.ff import Forcefield
 from tmd.ff.handlers import nonbonded
+from tmd.lib import ConstraintGroups
 from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups
 from tmd.potentials import ChiralAtomRestraint, ChiralBondRestraint
 from tmd.potentials.jax_utils import get_all_pairs_indices
@@ -262,7 +263,7 @@ class BaseTopology:
         """
         return [np.arange(self.get_num_atoms())]
 
-    def get_constraint_groups(self) -> tuple[list[list[int]], list[list[float]]]:
+    def get_constraint_groups(self) -> ConstraintGroups:
         """Return the hydrogen-bond constraint groups for the molecule."""
         return get_hydrogen_bond_constraint_groups(self.mol)
 
@@ -514,17 +515,17 @@ class MultiTopology(BaseTopology):
             offset += mol.GetNumAtoms()
         return component_idxs
 
-    def get_constraint_groups(self) -> tuple[list[list[int]], list[list[float]]]:
+    def get_constraint_groups(self) -> ConstraintGroups:
         """Return the hydrogen-bond constraint groups for the molecules."""
-        combined_groups = []
-        combined_dists = []
-        offset = 0
+        combined_group = None
         for mol in self.mols:
-            groups, dists = get_hydrogen_bond_constraint_groups(mol)
-            combined_groups.extend([(np.array(group) + offset).tolist() for group in groups])
-            combined_dists.extend(dists)
-            offset += mol.GetNumAtoms()
-        return combined_groups, combined_dists
+            constraint_group = get_hydrogen_bond_constraint_groups(mol)
+            if combined_group is None:
+                combined_group = constraint_group
+            else:
+                combined_group = combined_group.concatenate(constraint_group)
+        assert combined_group is not None
+        return combined_group
 
     def _parameterize_nonbonded(
         self,

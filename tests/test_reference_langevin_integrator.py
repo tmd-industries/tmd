@@ -207,7 +207,7 @@ def test_constrained_langevin_multiple_water_molecules():
     v0 = np.zeros_like(x0)
 
     # Verify the constraint groups from the system are reasonable
-    constraint_groups, constraint_distances = deserialize_constraints(omm_system)
+    constraint_groups, constraint_distances = deserialize_constraints(modeller.topology, x0, omm_system)
     atoms_by_idx = list(modeller.topology.atoms())
     for group in constraint_groups:
         assert len(group) == len(set(group))

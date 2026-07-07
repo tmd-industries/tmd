@@ -1,11 +1,13 @@
 import networkx as nx
+import numpy as np
 from rdkit import Chem
 
 from tmd.fe.utils import get_romol_conf
+from tmd.lib import ConstraintGroups
 from tmd.potentials.jax_utils import distance
 
 
-def get_hydrogen_bond_constraint_groups(mol: Chem.Mol) -> tuple[list[list[int]], list[list[float]]]:
+def get_hydrogen_bond_constraint_groups(mol: Chem.Mol) -> ConstraintGroups:
     """Return hydrogen-bond constraint groups for a molecule.
 
     Builds connected components of heavy atoms and their bonded hydrogens.
@@ -13,10 +15,7 @@ def get_hydrogen_bond_constraint_groups(mol: Chem.Mol) -> tuple[list[list[int]],
 
     Returns
     -------
-    groups : list of list of int
-        Atom index groups with heavy atom first.
-    distances : list of list of float
-        Bond distances from the heavy atom to each hydrogen in the group.
+    ConstraintGroups object
     """
     graph = nx.Graph()
     for atom in mol.GetAtoms():
@@ -37,9 +36,9 @@ def get_hydrogen_bond_constraint_groups(mol: Chem.Mol) -> tuple[list[list[int]],
     conf = get_romol_conf(mol)
     distances = []
     for group in constraint_groups:
-        # Only support up to 3 bonds (+1 for the heavy atom)
-        assert 1 < len(group) <= 4
+        # Only support up to 6 bonds (+1 for the heavy atom)
+        assert 1 < len(group) <= 7
         heavy = group[0]
-        group_dist = [abs(distance(conf[heavy], conf[idx], None)) for idx in group[1:]]
+        group_dist = [float(distance(conf[heavy], conf[idx], None)) for idx in group[1:]]
         distances.append(group_dist)
-    return constraint_groups, distances
+    return ConstraintGroups(constraint_groups, distances, np.array([], dtype=np.int_))
