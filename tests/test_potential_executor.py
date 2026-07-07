@@ -30,8 +30,6 @@ from tmd.potentials.potential import get_bound_potential_by_type
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 from tmd.utils import path_to_internal_file
 
-pytestmark = [pytest.mark.memcheck]
-
 
 def get_potentials_and_frames(host_name: str | None, precision):
     dt = 1.5e-3
@@ -55,16 +53,17 @@ def get_potentials_and_frames(host_name: str | None, precision):
         host_config = builders.build_water_system(4.0, ff.water_ff, mols=[mol_a, mol_b], box_margin=0.1)
 
     ligand_masses = st.combine_masses()
-    x0 = st.combine_confs(get_romol_conf(mol_a), get_romol_conf(mol_b), lamb=0.0).astype(precision)
     if host_config is not None:
         host_config = setup_optimized_host(host_config, [mol_a, mol_b], ff)
         hgs = st.combine_with_host(host_config.host_system, lamb, host_config.num_water_atoms, host_config.omm_topology)
 
-        x0 = np.concatenate([host_config.conf, x0])
+        lig_conf = st.combine_confs(get_romol_conf(mol_a), get_romol_conf(mol_b), lamb=0.0).astype(precision)
+        x0 = np.concatenate([host_config.conf, lig_conf])
         box = host_config.box
         masses = np.concatenate([host_config.masses, ligand_masses])
         u_fns = hgs.get_U_fns()
     else:
+        x0 = st.combine_confs(get_romol_conf(mol_a), get_romol_conf(mol_b), lamb=0.0).astype(precision)
         masses = np.array(ligand_masses)
         u_fns = st.setup_intermediate_state(0.0).get_U_fns()
         box = np.eye(3, dtype=precision) * 10.0
@@ -109,10 +108,10 @@ def get_potentials_and_frames(host_name: str | None, precision):
 @pytest.fixture(
     scope="module",
     params=[
-        (None, np.float32, 1e-4, 1e-5),
-        ("solvent", np.float32, 1e-4, 1e-5),
+        pytest.param((None, np.float32, 1e-4, 1e-5), marks=pytest.mark.memcheck),
+        pytest.param(("solvent", np.float32, 1e-4, 1e-5), marks=pytest.mark.memcheck),
         ("complex", np.float32, 1e-4, 1e-5),
-        (None, np.float64, 1e-6, 1e-8),
+        pytest.param((None, np.float64, 1e-6, 1e-8), marks=pytest.mark.memcheck),
         ("solvent", np.float64, 1e-6, 1e-8),
         ("complex", np.float64, 1e-6, 1e-8),
     ],

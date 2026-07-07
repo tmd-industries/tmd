@@ -98,7 +98,7 @@ def _get_default_state_minimization_configs() -> Sequence[minimizer.Minimization
 
 
 def setup_optimized_host(
-    config: HostConfig, mols: list[Chem.Mol], forcefield: Forcefield, equilibration_steps: int = 1000, seed: int = 2024
+    config: HostConfig, mols: list[Chem.Mol], forcefield: Forcefield, equilibration_steps: int = 10000, seed: int = 2024
 ) -> HostConfig:
     """
     Optimize a host config host using pre_equilibrate_host
