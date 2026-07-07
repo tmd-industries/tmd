@@ -1470,6 +1470,12 @@ void declare_potential(py::module &m, const char *typestr) {
                   "Boxes must have same number of batches as coords");
             }
 
+            if (batches != pot.num_systems()) {
+              throw std::runtime_error(
+                  "Potential::execute_dim provided with different number of "
+                  "systems than expected");
+            }
+
             const long unsigned int N = coords.shape(1);
             const long unsigned int D = coords.shape(2);
 
@@ -1618,11 +1624,14 @@ void declare_bound_potential(py::module &m, const char *typestr) {
              bool compute_du_dx, bool compute_u) -> py::tuple {
             long unsigned int N;
             long unsigned int D;
+            int input_systems;
             if (coords.ndim() == 2) {
+              input_systems = 1;
               N = coords.shape()[0];
               D = coords.shape()[1];
               verify_coords_and_box(coords, box);
             } else if (coords.ndim() == 3) {
+              input_systems = coords.shape(0);
               N = coords.shape(1);
               D = coords.shape(2);
             } else {
@@ -1632,6 +1641,11 @@ void declare_bound_potential(py::module &m, const char *typestr) {
                   "BoundPotential::execute failed for unknown reason");
             }
             const int num_systems = bp.potential->num_systems();
+            if (input_systems != num_systems) {
+              throw std::runtime_error(
+                  "BoundPotential::execute provided with different number of "
+                  "systems than expected");
+            }
             // initialize with fixed garbage values for debugging convenience
             // (these should be overwritten by `execute_host`)
             std::vector<unsigned long long> du_dx;
