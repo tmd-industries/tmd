@@ -47,6 +47,9 @@ def write_trajectory_as_cif(mol_a, mol_b, core, all_frames, host_topology, out_p
 
 
 def run_edge(mol_a, mol_b, protein_path, n_windows):
+    # Create copies of molecules to avoid minimization from adjusting the 3D coords
+    mol_a = Chem.Mol(mol_a)
+    mol_b = Chem.Mol(mol_b)
     all_cores = atom_mapping.get_cores(
         mol_a,
         mol_b,
