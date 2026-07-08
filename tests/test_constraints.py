@@ -40,15 +40,15 @@ def test_empty_constraints(precision, simple_mol):
 def test_single_group_constraints(precision, water_mol, ff):
     bt = BaseTopology(water_mol, ff)
     masses = get_mol_masses(water_mol).astype(precision)
-    constraint_groups, constraint_distances = bt.get_constraint_groups()
+    constraints_obj = bt.get_constraint_groups()
 
     constraints = (
         custom_ops.ConstraintGroups_f32(
-            masses, constraint_groups, [[float(x) for x in d] for d in constraint_distances], 15, 1e-8
+            masses, constraints_obj.groups, [[float(x) for x in d] for d in constraints_obj.distances], 15, 1e-8
         )
         if precision == np.float32
         else custom_ops.ConstraintGroups_f64(
-            masses, constraint_groups, [[float(x) for x in d] for d in constraint_distances], 15, 1e-8
+            masses, constraints_obj.groups, [[float(x) for x in d] for d in constraints_obj.distances], 15, 1e-8
         )
     )
     assert constraints.num_systems() == 1
@@ -81,38 +81,36 @@ def test_group_too_small(simple_mol):
 
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 def test_constrain_positions_empty(precision, simple_mol, ff):
-    bt = BaseTopology(simple_mol, ff)
     masses = get_mol_masses(simple_mol).astype(precision)
-    constraint_groups, constraint_distances = bt.get_constraint_groups()
 
     # Create constraints with empty groups
-    constraints = (
-        custom_ops.ConstraintGroups_f32(masses, [], [], 15, 1e-8)
-        if precision == np.float32
-        else custom_ops.ConstraintGroups_f64(masses, [], [], 15, 1e-8)
-    )
+    klass = custom_ops.ConstraintGroups_f32
+    if precision == np.float64:
+        klass = custom_ops.ConstraintGroups_f64
+    constraints = klass(masses, [], [], 15, 1e-8)
 
     x0 = get_romol_conf(simple_mol).astype(precision)
     original_coords = x0.copy()
 
     constrained = constraints.constrain_positions(x0)
 
-    np.testing.assert_allclose(constrained, original_coords, rtol=1e-5)
+    # There should be no change
+    np.testing.assert_equal(constrained, original_coords)
 
 
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 def test_constrain_positions_water(precision, water_mol, ff):
     bt = BaseTopology(water_mol, ff)
     masses = get_mol_masses(water_mol).astype(precision)
-    constraint_groups, constraint_distances = bt.get_constraint_groups()
+    constraints_obj = bt.get_constraint_groups()
 
     constraints = (
         custom_ops.ConstraintGroups_f32(
-            masses, constraint_groups, [[float(x) for x in d] for d in constraint_distances], 15, 1e-8
+            masses, constraints_obj.groups, [[float(x) for x in d] for d in constraints_obj.distances], 15, 1e-8
         )
         if precision == np.float32
         else custom_ops.ConstraintGroups_f64(
-            masses, constraint_groups, [[float(x) for x in d] for d in constraint_distances], 15, 1e-8
+            masses, constraints_obj.groups, [[float(x) for x in d] for d in constraints_obj.distances], 15, 1e-8
         )
     )
 
@@ -129,7 +127,7 @@ def test_constrain_positions_water(precision, water_mol, ff):
     tol = 1e-5
     if precision == np.float64:
         tol = 1e-8
-    for group, dists in zip(constraint_groups, constraint_distances):
+    for group, dists in zip(constraints_obj.groups, constraints_obj.distances):
         anchor = group[0]
         for atom, target_dist in zip(group[1:], dists):
             dist = np.linalg.norm(constrained[anchor] - constrained[atom])
@@ -142,15 +140,15 @@ def test_constrain_positions_water(precision, water_mol, ff):
 def test_constrain_positions_already_satisfied(precision, water_mol, ff):
     bt = BaseTopology(water_mol, ff)
     masses = get_mol_masses(water_mol).astype(precision)
-    constraint_groups, constraint_distances = bt.get_constraint_groups()
+    constraints_obj = bt.get_constraint_groups()
 
     constraints = (
         custom_ops.ConstraintGroups_f32(
-            masses, constraint_groups, [[float(x) for x in d] for d in constraint_distances], 15, 1e-8
+            masses, constraints_obj.groups, [[float(x) for x in d] for d in constraints_obj.distances], 15, 1e-8
         )
         if precision == np.float32
         else custom_ops.ConstraintGroups_f64(
-            masses, constraint_groups, [[float(x) for x in d] for d in constraint_distances], 15, 1e-8
+            masses, constraints_obj.groups, [[float(x) for x in d] for d in constraints_obj.distances], 15, 1e-8
         )
     )
 
@@ -183,15 +181,15 @@ def test_constrain_velocities_empty(precision, simple_mol):
 def test_constrain_velocities_water(precision, water_mol, ff):
     bt = BaseTopology(water_mol, ff)
     masses = get_mol_masses(water_mol).astype(precision)
-    constraint_groups, constraint_distances = bt.get_constraint_groups()
+    constraints_obj = bt.get_constraint_groups()
 
     constraints = (
         custom_ops.ConstraintGroups_f32(
-            masses, constraint_groups, [[float(x) for x in d] for d in constraint_distances], 15, 1e-8
+            masses, constraints_obj.groups, [[float(x) for x in d] for d in constraints_obj.distances], 15, 1e-8
         )
         if precision == np.float32
         else custom_ops.ConstraintGroups_f64(
-            masses, constraint_groups, [[float(x) for x in d] for d in constraint_distances], 15, 1e-8
+            masses, constraints_obj.groups, [[float(x) for x in d] for d in constraints_obj.distances], 15, 1e-8
         )
     )
 
@@ -202,7 +200,7 @@ def test_constrain_velocities_water(precision, water_mol, ff):
 
     # Verify velocity constraints: (v_anchor - v_atom) . delta_r = 0
     tol = 1e-4 if precision == np.float32 else 1e-7
-    for group in constraint_groups:
+    for group in constraints_obj.groups:
         anchor = group[0]
         for atom in group[1:]:
             delta_r = x0[anchor] - x0[atom]
@@ -212,39 +210,41 @@ def test_constrain_velocities_water(precision, water_mol, ff):
                 f"Velocity constraint violated: |dot| = {np.abs(dot_product):.2e} for atoms ({anchor}, {atom})"
             )
 
-    @pytest.mark.parametrize("precision", [np.float32, np.float64])
-    def test_dataclass_impl(precision, water_mol, ff):
-        bt = BaseTopology(water_mol, ff)
-        masses = get_mol_masses(water_mol)
-        constraint_groups, constraint_distances = bt.get_constraint_groups()
 
-        constraints = ConstraintGroups(
-            constraint_groups=constraint_groups,
-            constraint_distances=constraint_distances,
-            water_group_indices=np.array([]),
-            tolerance=1e-8,
-            max_iter=15,
-        )
+@pytest.mark.parametrize("precision", [np.float32, np.float64])
+def test_dataclass_impl(precision, water_mol, ff):
+    bt = BaseTopology(water_mol, ff)
+    masses = get_mol_masses(water_mol)
+    constraints_obj = bt.get_constraint_groups()
 
-        impl = constraints.impl(masses, precision)
-        if precision == np.float32:
-            assert isinstance(impl, custom_ops.ConstraintGroups_f32)
-        else:
-            assert isinstance(impl, custom_ops.ConstraintGroups_f64)
-        assert impl.num_systems() == 1
+    constraints = ConstraintGroups(
+        groups=constraints_obj.groups,
+        distances=constraints_obj.distances,
+        water_group_indices=np.array([]),
+        tolerance=1e-8,
+        max_iter=15,
+    )
 
-    @pytest.mark.parametrize("precision", [np.float32, np.float64])
-    def test_dataclass_sort(precision, water_mol, ff):
-        bt = BaseTopology(water_mol, ff)
-        constraint_groups, constraint_distances = bt.get_constraint_groups()
+    impl = constraints.impl(masses, precision)
+    if precision == np.float32:
+        assert isinstance(impl, custom_ops.ConstraintGroups_f32)
+    else:
+        assert isinstance(impl, custom_ops.ConstraintGroups_f64)
+    assert impl.num_systems() == 1
 
-        # Create constraints with water group index
-        constraints = ConstraintGroups(
-            constraint_groups=constraint_groups,
-            constraint_distances=constraint_distances,
-            water_group_indices=np.array([0]),
-        )
 
-        sorted_constraints = constraints.sort()
-        assert sorted_constraints.water_group_indices[0] == 0
-        assert sorted_constraints.n_groups() == constraints.n_groups()
+@pytest.mark.parametrize("precision", [np.float32, np.float64])
+def test_dataclass_sort(precision, water_mol, ff):
+    bt = BaseTopology(water_mol, ff)
+    constraints_obj = bt.get_constraint_groups()
+
+    # Create constraints with water group index
+    constraints = ConstraintGroups(
+        groups=constraints_obj.groups,
+        distances=constraints_obj.distances,
+        water_group_indices=np.array([0]),
+    )
+
+    sorted_constraints = constraints.sort()
+    assert sorted_constraints.water_group_indices[0] == 0
+    assert len(sorted_constraints.groups) == len(constraints.groups)

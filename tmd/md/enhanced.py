@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -442,8 +443,6 @@ def get_solvent_phase_system(
     minimize_energy: bool
         whether to apply fire_minimize_host
     """
-
-    # construct water box
     host_config = builders.build_water_system(box_width, ff.water_ff, mols=[mol], box_margin=margin)
     # construct alchemical system
     bt = topology.BaseTopology(mol, ff)
@@ -457,8 +456,7 @@ def get_solvent_phase_system(
         coords = np.concatenate([new_water_coords, ligand_coords])
     else:
         coords = np.concatenate([host_config.conf, ligand_coords])
-
-    return potentials, params, masses, coords, host_config.box
+    return potentials, params, masses, coords, host_config
 
 
 def equilibrate_solvent_phase(
@@ -573,10 +571,10 @@ def pregenerate_samples(
     pressure=1.0,
     num_workers=None,
 ):
-    potentials, params, masses, coords, box = get_solvent_phase_system(mol, ff, lamb)
+    potentials, params, masses, coords, host_config = get_solvent_phase_system(mol, ff, lamb)
     print(f"Generating {n_solvent_samples} solvent samples")
     solvent_xvbs = generate_solvent_samples(
-        coords, box, masses, potentials, params, temperature, pressure, seed, n_solvent_samples, num_workers
+        coords, host_config.box, masses, potentials, params, temperature, pressure, seed, n_solvent_samples, num_workers
     )
 
     print("Generating ligand samples")

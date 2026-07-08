@@ -48,7 +48,7 @@ from tmd.fe.rest.single_topology import InterpolationFxnName
 from tmd.fe.stored_arrays import StoredArrays
 from tmd.fe.utils import get_mol_masses, get_romol_conf
 from tmd.ff import Forcefield, ForcefieldParams
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops
+from tmd.lib import ConstrainedLangevinIntegrator, ConstraintGroups, LangevinIntegrator, MonteCarloBarostat, custom_ops
 from tmd.lib.custom_ops import BoundPotential_f32, Context_f32, SummedPotential_f32
 from tmd.md.barostat.utils import compute_box_center, get_bond_list, get_group_indices
 from tmd.md.builders import HostConfig
@@ -198,6 +198,7 @@ class MDParams:
     hrex_params: HREXParams | None = None
     # Setting water_sampling_params to None disables water sampling.
     water_sampling_params: WaterSamplingParams | None = None
+    dt: float = 4.0e-3
 
     def __post_init__(self):
         assert self.steps_per_frame > 0
@@ -216,7 +217,7 @@ class InitialState:
     """
 
     potentials: list[BoundPotential]
-    integrator: LangevinIntegrator
+    integrator: LangevinIntegrator | ConstrainedLangevinIntegrator
     barostat: Optional[MonteCarloBarostat]
     x0: NDArray
     v0: NDArray
@@ -661,6 +662,20 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
         combined_masses = self._combine(ligand_masses, np.array(host_config.masses))
         return combined_potentials, tuple(combined_params), combined_masses
 
+    def combine_constraints(self, host_config: HostConfig) -> ConstraintGroups:
+        if host_config.constraints is None:
+            raise RuntimeError("HostConfig has no constraints")
+        vacuum_constraints = self.top.get_constraint_groups()
+        num_host_atoms = len(host_config.conf)
+        ligand_constraints = ConstraintGroups(
+            [[idx + num_host_atoms for idx in group] for group in vacuum_constraints.groups],
+            vacuum_constraints.distances,
+            vacuum_constraints.water_group_indices,
+            vacuum_constraints.tolerance,
+            vacuum_constraints.max_iter,
+        )
+        return host_config.constraints.concatenate(ligand_constraints).sort()
+
     def prepare_vacuum_edge(self, ff: Forcefield) -> tuple[tuple[Potential, ...], tuple, NDArray]:
         """
         Prepares the vacuum system
@@ -759,14 +774,27 @@ def get_batched_context(initial_states: Sequence[InitialState], md_params: Optio
 
     bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
 
-    assert isinstance(initial_states[0].integrator, LangevinIntegrator)
-    intg = LangevinIntegrator(
-        initial_states[0].integrator.temperature,
-        initial_states[0].integrator.dt,
-        initial_states[0].integrator.friction,
-        np.array([initial_states[0].integrator.masses for _ in range(len(initial_states))]),
-        initial_states[0].integrator.seed,
-    )
+    intg = initial_states[0].integrator
+    assert isinstance(intg, (LangevinIntegrator, ConstrainedLangevinIntegrator))
+    if isinstance(intg, LangevinIntegrator):
+        intg = LangevinIntegrator(
+            intg.temperature,
+            intg.dt,
+            intg.friction,
+            np.array([intg.masses for _ in range(len(initial_states))]),
+            intg.seed,
+        )
+    elif isinstance(intg, ConstrainedLangevinIntegrator):
+        intg = ConstrainedLangevinIntegrator(
+            intg.temperature,
+            intg.dt,
+            intg.friction,
+            np.array([intg.masses for _ in range(len(initial_states))]),
+            intg.seed,
+            intg.constraints,
+        )
+    else:
+        raise TypeError(f"Unknown integrator type: {type(intg)}")
     intg_impl = intg.impl(np.float32)
     movers = []
     if initial_states[0].barostat is not None:
@@ -1914,6 +1942,10 @@ def assert_ensembles_compatible(state_a: InitialState, state_b: InitialState):
 
     assert (intg_a.masses == intg_b.masses).all()
     assert intg_a.temperature == intg_b.temperature
+    assert intg_a.dt == intg_b.dt
+    assert type(intg_a) is type(intg_b)
+    if isinstance(intg_a, ConstrainedLangevinIntegrator):
+        assert intg_a.constraints == intg_b.constraints  # type: ignore
 
     # assert same pressure (or same volume)
     assert (state_a.barostat is None) == (state_b.barostat is None), "should both be NVT or both be NPT"

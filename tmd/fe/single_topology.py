@@ -46,6 +46,8 @@ from tmd.fe.system import GuestSystem, HostGuestSystem, HostSystem
 from tmd.fe.topology import exclude_all_ligand_ligand_ixns
 from tmd.ff import Forcefield
 from tmd.graph_utils import convert_to_nx
+from tmd.lib import ConstraintGroups
+from tmd.md.builders import HostConfig
 from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups
 from tmd.potentials import (
     BoundPotential,
@@ -1508,23 +1510,31 @@ class SingleTopology(AtomMapMixin):
 
         return mol_c_masses
 
-    def get_constraint_groups(self) -> tuple[list[list[int]], list[list[float]]]:
+    def get_constraint_groups(self) -> ConstraintGroups:
         """Return the hydrogen-bond constraint groups for the combined topology."""
 
         # Assert there are no heavy -> hydrogen mappings
         for a, b in self.core:
             if self.mol_a.GetAtomWithIdx(int(a)).GetAtomicNum() == 1:
-                assert self.mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() == 1
+                assert self.mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() == 1, (
+                    f"Mapping from {a} to {b} is invalid with constraints"
+                )
             else:
-                assert self.mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() != 1
+                assert self.mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() != 1, (
+                    f"Mapping from {a} to {b} is invalid with constraints"
+                )
 
-        groups_a, dists_a = get_hydrogen_bond_constraint_groups(self.mol_a)
+        result_a = get_hydrogen_bond_constraint_groups(self.mol_a)
+        groups_a = result_a.groups
+        dists_a = result_a.distances
         groups_c_anchor_to_groups = {
             self.a_to_c[group[0]]: [self.a_to_c[atom] for atom in group[1:]] for group in groups_a
         }
         groups_c_anchor_to_dists = {self.a_to_c[group[0]]: dists for group, dists in zip(groups_a, dists_a)}
 
-        groups_b, dists_b = get_hydrogen_bond_constraint_groups(self.mol_b)
+        result_b = get_hydrogen_bond_constraint_groups(self.mol_b)
+        groups_b = result_b.groups
+        dists_b = result_b.distances
         groups_b_anchor_to_hydrogens = {
             self.b_to_c[group[0]]: [self.b_to_c[atom] for atom in group[1:]] for group in groups_b
         }
@@ -1548,9 +1558,27 @@ class SingleTopology(AtomMapMixin):
         groups_c = []
         dists_c = []
         for anchor, hydrogens in groups_c_anchor_to_groups.items():
-            groups_c.append([anchor * hydrogens])
+            groups_c.append([anchor, *hydrogens])
             dists_c.append(groups_c_anchor_to_dists[anchor])
-        return groups_c, dists_c
+        return ConstraintGroups(
+            groups=groups_c,
+            distances=dists_c,
+            water_group_indices=np.array([], dtype=np.int_),
+        )
+
+    def combine_constraints(self, host_config: HostConfig) -> ConstraintGroups:
+        if host_config.constraints is None:
+            raise RuntimeError("HostConfig has no constraints")
+        vacuum_constraints = self.get_constraint_groups()
+        num_host_atoms = len(host_config.conf)
+        ligand_constraints = ConstraintGroups(
+            [[idx + num_host_atoms for idx in group] for group in vacuum_constraints.groups],
+            vacuum_constraints.distances,
+            vacuum_constraints.water_group_indices,
+            vacuum_constraints.tolerance,
+            vacuum_constraints.max_iter,
+        )
+        return host_config.constraints.concatenate(ligand_constraints).sort()
 
     def combine_confs(self, x_a: NDArray, x_b: NDArray, lamb: float = 1.0) -> NDArray:
         """

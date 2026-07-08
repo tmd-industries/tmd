@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -209,7 +210,8 @@ def make_ahfe_test_system():
     n_snapshots_0 = 10
     n_snapshots_1 = 20
 
-    ubps, params, masses, conf, box = get_solvent_phase_system(mol, ff, 0.0)
+    ubps, params, masses, conf, host_config = get_solvent_phase_system(mol, ff, 0.0)
+    box = host_config.box
 
     lambda_offset_idxs = ubps[-1].get_lambda_offset_idxs()
     ligand_indices = np.where(lambda_offset_idxs == 1)[0]

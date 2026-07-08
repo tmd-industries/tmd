@@ -548,16 +548,14 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
     elif integrator_klass is ConstrainedLangevinIntegrator:
         friction = 1.0
         dt = 4e-3
-        constraint_groups, constraint_distances = bt.get_constraint_groups()
+        constraints = bt.get_constraint_groups()
         intg = ConstrainedLangevinIntegrator(
-            constants.DEFAULT_TEMP,
-            dt,
-            friction,
-            [masses for _ in range(num_systems)],
-            seed,
-            constraint_groups=constraint_groups,
-            constraint_distances=constraint_distances,
-            tolerance=1e-5,
+            temperature=constants.DEFAULT_TEMP,
+            dt=dt,
+            friction=friction,
+            masses=[masses for _ in range(num_systems)],
+            seed=seed,
+            constraints=constraints,
         )
         intg_impl = intg.impl(precision)
     else:
@@ -1004,7 +1002,10 @@ def test_multiple_steps_local_consistency(freeze_reference):
     num_steps = 500
     x_interval = 100
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=True)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=True
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
     bps = []
     for p, pot in zip(sys_params, unbound_potentials):
@@ -1093,7 +1094,10 @@ def test_get_movers():
     friction = 0.0
     seed = 2022
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
     bps = []
     for p, pot in zip(sys_params, unbound_potentials):
@@ -1135,7 +1139,10 @@ def test_multiple_steps_local_entire_system(freeze_reference):
     radius = np.inf
     num_steps = 5
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
     bps = []
     for p, pot in zip(sys_params, unbound_potentials):
@@ -1512,7 +1519,10 @@ def test_setup_context_with_references():
     seed = 2022
     pressure = constants.DEFAULT_PRESSURE
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 1.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 1.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     def build_context(barostat_interval):
@@ -1634,9 +1644,10 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference):
     friction = 1.0
     seed = 2025
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
         mol, ff, 1.0, margin=0.1, minimize_energy=False
     )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     bonded_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
@@ -1751,7 +1762,10 @@ def test_context_invalid_boxes(precision):
     steps = 1
     rng = np.random.default_rng(seed)
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     host_idxs = np.arange(len(coords) - mol.GetNumAtoms(), dtype=np.int32)
@@ -1801,7 +1815,10 @@ def test_context_invalid_boxes_without_nonbonded_potentials():
     seed = 2022
     steps = 1
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     bps = []
@@ -1833,7 +1850,10 @@ def test_unstable_simulation_failure():
     seed = 2024
     steps = 10
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     rng = np.random.default_rng(seed)
@@ -1874,7 +1894,10 @@ def test_local_md_potential_truncation(k, radius, freeze_reference):
 
     rng = np.random.default_rng(seed)
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     bps = []
@@ -1975,7 +1998,10 @@ def test_local_md_potential_truncation_more_scales_than_params(k, radius, freeze
 
     rng = np.random.default_rng(seed)
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     bps = []

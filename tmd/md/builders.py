@@ -144,8 +144,11 @@ def get_box_from_coords(coords: NDArray[np.float64]) -> NDArray[np.float64]:
 
 def _build_constraint_groups(topology: app.Topology, coords: NDArray) -> ConstraintGroups:
     constraint_groups, constraint_distances = openmm_deserializer.deserialize_constraints(topology, coords)
+    water_atom_idxs = set(
+        [atom.index for res in topology.residues() for atom in res.atoms() if res.name == WATER_RESIDUE_NAME]
+    )
     water_group_indices = np.array(
-        [i for i in range(len(constraint_groups)) if len(constraint_groups[i]) == 3], dtype=np.int_
+        [i for i in range(len(constraint_groups)) if constraint_groups[i][0] in water_atom_idxs], dtype=np.int_
     )
     return ConstraintGroups(constraint_groups, constraint_distances, water_group_indices)
 

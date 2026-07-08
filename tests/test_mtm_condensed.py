@@ -205,7 +205,8 @@ def test_nvt_box():
     mol, _ = testsystems.ligands.get_biphenyl()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
-    ubps, params, masses, coords, box = enhanced.get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    ubps, params, masses, coords, host_config = enhanced.get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    box = host_config.box
     bps = []
     for p, bp in zip(params, ubps):
         bps.append(bp.bind(p))

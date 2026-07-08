@@ -66,6 +66,7 @@ class ConstraintGroups:
             assert len(group) - 1 == len(dists)
 
     def sort(self) -> "ConstraintGroups":
+        """Sort the constraint groups such that the water groups are at moved to the front of the constraint groups"""
         n_groups = len(self.groups)
         if n_groups == 0:
             return ConstraintGroups([], [], np.array([], dtype=np.int_))
@@ -95,6 +96,60 @@ class ConstraintGroups:
             max_iter=max(self.max_iter, other.max_iter),
         )
         return new_group.sort()
+
+    def impl(self, masses: NDArray, precision=np.float32):
+        klass: type[custom_ops.ConstraintGroups_f32] | type[custom_ops.ConstraintGroups_f64] = (
+            custom_ops.ConstraintGroups_f32
+        )
+        if precision == np.float64:
+            klass = custom_ops.ConstraintGroups_f64
+        # Water indices are currently dropped
+        return klass(
+            np.array(masses, dtype=precision),
+            self.groups,
+            self.distances,
+            self.max_iter,
+            self.tolerance,
+        )
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, ConstraintGroups):
+            raise TypeError("Can't only compare to other constraint groups")
+
+        def group_sets(obj):
+            heavy_to_sets = {}
+            for group in obj.groups:
+                heavy_to_sets[group[0]] = set(group[1:])
+            return heavy_to_sets
+
+        self_groups = group_sets(self)
+        comp_groups = group_sets(other)
+        return all(comp_groups.get(anchor, set()) == light_group for anchor, light_group in self_groups.items())
+
+
+@dataclass
+class ConstrainedLangevinIntegrator:
+    temperature: float
+    dt: float
+    friction: float
+    masses: NDArray[np.float64]
+    seed: int
+    constraints: ConstraintGroups
+
+    def impl(self, precision=np.float32):
+        klass: (
+            type[custom_ops.ConstrainedLangevinIntegrator_f32] | type[custom_ops.ConstrainedLangevinIntegrator_f64]
+        ) = custom_ops.ConstrainedLangevinIntegrator_f32
+        if precision == np.float64:
+            klass = custom_ops.ConstrainedLangevinIntegrator_f64
+        return klass(
+            np.array(self.masses, dtype=precision),
+            self.temperature,
+            self.dt,
+            self.friction,
+            self.seed,
+            self.constraints.impl(self.masses, precision),
+        )
 
 
 @dataclass
