@@ -479,9 +479,13 @@ def main():
         action="store_true",
         help="Add a POPC membrane to the protein. Refer to OpenMM for preparing proteins for adding Membranes",
     )
+    parser.add_argument("--dt_fs", default=4.0, type=float, help="Timestep in femptoseconds")
     args = parser.parse_args()
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
     np.random.seed(args.seed)
+
+    assert args.dt_fs > 0.0
+    dt = args.dt_fs * 1e-3
 
     output_dir = args.output_dir
     if output_dir is None:
@@ -525,6 +529,7 @@ def main():
             n_frames=args.n_frames,
             steps_per_frame=args.steps_per_frame,
             seed=args.seed,
+            dt=dt,
             hrex_params=HREXParams(
                 optimize_target_overlap=args.target_overlap,
                 n_frames_bisection=args.bisection_frames,
