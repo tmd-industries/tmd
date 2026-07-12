@@ -123,6 +123,7 @@ def plot_batch_times(steps_per_batch: int, dt: float, batch_times: list[float], 
     fig.tight_layout()
     fig.savefig(f"{label}.png", dpi=150)
     plt.clf()
+    plt.close()
 
 
 @pytest.fixture(scope="module")
