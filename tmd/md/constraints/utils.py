@@ -21,10 +21,11 @@ def get_hydrogen_bond_constraint_groups(mol: Chem.Mol) -> ConstraintGroups:
     for atom in mol.GetAtoms():
         if atom.GetAtomicNum() == 1:
             graph.add_node(atom.GetIdx(), **{"hydrogen": True})
+    starting_nodes = set(graph.nodes)
     for bond in mol.GetBonds():
         start_idx = bond.GetBeginAtomIdx()
         end_idx = bond.GetEndAtomIdx()
-        if start_idx in graph.nodes or end_idx in graph.nodes:
+        if start_idx in starting_nodes or end_idx in starting_nodes:
             graph.add_edge(start_idx, end_idx)
     constraint_groups = []
     for component in nx.connected_components(graph):

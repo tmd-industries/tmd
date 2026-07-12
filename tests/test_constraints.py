@@ -1,11 +1,13 @@
 import numpy as np
 import pytest
 from common import ligand_from_smiles
+from rdkit import Chem
 
 from tmd.fe.topology import BaseTopology
 from tmd.fe.utils import get_mol_masses, get_romol_conf
 from tmd.ff import Forcefield
 from tmd.lib import ConstraintGroups, custom_ops
+from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups
 
 
 @pytest.fixture(scope="module")
@@ -21,6 +23,119 @@ def water_mol():
 @pytest.fixture(scope="module")
 def ff():
     return Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+
+@pytest.mark.nogpu
+def test_constraint_groups_from_mol(simple_mol, water_mol):
+    constraints = get_hydrogen_bond_constraint_groups(simple_mol)
+    assert len(constraints.groups) == 0
+
+    constraints = get_hydrogen_bond_constraint_groups(water_mol)
+    assert len(constraints.groups) == 1
+    assert constraints.groups[0] == [0, 1, 2]
+    assert len(constraints.distances[0]) == 2
+
+    rng = np.random.default_rng(2026)
+    # Verify that molecules with bonds that don't have hydrogens at the end function correctly
+    mol = Chem.MolFromMolBlock(
+        """7
+     RDKit          3D
+
+ 40 41  0  0  1  0  0  0  0  0999 V2000
+    1.7170    8.4485   31.3627 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6267    7.7483   30.9663 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0102    8.1187   29.8231 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4951    9.1722   29.0211 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5948    9.9235   29.4650 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2509    9.5513   30.6577 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.3867   10.1680   31.1426 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.9158   11.2978   30.4450 C   0  0  0  0  0  0  0  0  0  0  0  0
+    5.3491   11.5734   30.8875 C   0  0  0  0  0  0  0  0  0  0  0  0
+    5.6713   12.6161   31.7877 C   0  0  0  0  0  0  0  0  0  0  0  0
+    6.9888   12.7648   32.2651 C   0  0  0  0  0  0  0  0  0  0  0  0
+    8.0031   11.8972   31.8217 C   0  0  0  0  0  0  0  0  0  0  0  0
+    7.7063   10.9065   30.8723 C   0  0  0  0  0  0  0  0  0  0  0  0
+    6.3927   10.7566   30.3985 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0434    9.4184   28.0734 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.9249   10.7488   28.8542 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.2629   12.1550   30.6040 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.9394   11.1387   29.3677 H   0  0  0  0  0  0  0  0  0  0  0  0
+    4.4951   13.7761   32.2650 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+    7.2266   13.5581   32.9605 H   0  0  0  0  0  0  0  0  0  0  0  0
+    9.0139   12.0044   32.1832 H   0  0  0  0  0  0  0  0  0  0  0  0
+    8.4896   10.2611   30.5016 H   0  0  0  0  0  0  0  0  0  0  0  0
+    6.0950    9.5937   29.1711 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+    2.1858    8.1127   32.2760 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.1308    7.3813   29.4659 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2070    6.5310   30.0143 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.4486    8.0373   29.4835 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.7504    8.5820   30.9069 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.7190    7.7762   31.6405 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0064    9.3161   31.2192 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.0222    9.1937   30.9889 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.9249   10.1254   30.8267 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.5398    9.1644   28.4412 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.2181    8.8144   27.4650 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.5550    9.5521   28.3399 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.9052    9.9936   28.7262 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.5054    6.9821   29.0980 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.2673    6.5056   28.1465 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.5949    6.2008   29.8498 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.4959    7.4269   28.9991 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  1  6  1  0
+  1 24  1  0
+  2  3  1  0
+  3  4  2  0
+  3 25  1  0
+  4  5  1  0
+  4 15  1  0
+  5  6  2  0
+  5 16  1  0
+  6  7  1  0
+  7  8  1  0
+  8  9  1  0
+  8 17  1  0
+  8 18  1  0
+  9 10  2  0
+  9 14  1  0
+ 10 11  1  0
+ 10 19  1  0
+ 11 12  2  0
+ 11 20  1  0
+ 12 13  1  0
+ 12 21  1  0
+ 13 14  2  0
+ 13 22  1  0
+ 14 23  1  0
+ 25 26  1  0
+ 25 27  1  0
+ 27 28  1  0
+ 27 33  1  0
+ 27 37  1  0
+ 28 29  1  0
+ 28 30  1  0
+ 28 31  1  0
+ 31 32  1  0
+ 33 34  1  0
+ 33 35  1  0
+ 33 36  1  0
+ 37 38  1  0
+ 37 39  1  0
+ 37 40  1  0
+M  END""",
+        removeHs=False,
+    )
+    constraints = get_hydrogen_bond_constraint_groups(mol)
+    assert len(constraints.groups) == 12
+
+    # Shuffling the atom order shouldn't change the results
+    for _ in range(10):
+        atom_ordering = np.arange(mol.GetNumAtoms())
+        rng.shuffle(atom_ordering)
+        mol = Chem.RenumberAtoms(mol, atom_ordering.tolist())
+        constraints = get_hydrogen_bond_constraint_groups(mol)
+        assert len(constraints.groups) == 12
 
 
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
