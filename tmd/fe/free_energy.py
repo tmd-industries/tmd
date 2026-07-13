@@ -198,7 +198,7 @@ class MDParams:
     hrex_params: HREXParams | None = None
     # Setting water_sampling_params to None disables water sampling.
     water_sampling_params: WaterSamplingParams | None = None
-    dt: float = 4.0e-3
+    dt: float = 2.5e-3
 
     def __post_init__(self):
         assert self.steps_per_frame > 0
