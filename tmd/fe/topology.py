@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
 from typing import Any, Optional
 
 import jax.numpy as jnp
@@ -518,12 +519,18 @@ class MultiTopology(BaseTopology):
     def get_constraint_groups(self) -> ConstraintGroups:
         """Return the hydrogen-bond constraint groups for the molecules."""
         combined_group = None
+        offset = 0
         for mol in self.mols:
             constraint_group = get_hydrogen_bond_constraint_groups(mol)
+            if offset > 0:
+                constraint_group = replace(
+                    constraint_group, groups=[[g + offset for g in group] for group in constraint_group.groups]
+                )
             if combined_group is None:
                 combined_group = constraint_group
             else:
                 combined_group = combined_group.concatenate(constraint_group)
+            offset += mol.GetNumAtoms()
         assert combined_group is not None
         return combined_group
 
