@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "bound_potential.hpp"
+#include "constraint_groups.hpp"
 #include "curand.h"
 #include "flat_bottom_bond.hpp"
 #include "local_md_utils.hpp"
@@ -37,6 +38,7 @@ public:
       const int num_systems, const int N,
       const std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
       const std::vector<std::shared_ptr<Potential<RealType>>> &nonbonded_pots,
+      const std::shared_ptr<ConstraintGroups<RealType>> constraints,
       const bool freeze_reference = true,
       const RealType temperature = static_cast<RealType>(0.0),
       const RealType nblist_padding = DEFAULT_NBLIST_PADDING);
@@ -108,7 +110,7 @@ private:
   // The size of the indices associated with each potential.
   // For potentials that don't have indices the size will be zero,
   // for all others it will be pot->get_num_idxs() * pot->IDXS_DIM
-  // Neccessary for truncating the indices of potentials such that only
+  // Necessary for truncating the indices of potentials such that only
   // the free-free and free-frozen interactions are computed.
   const std::vector<int> idxs_sizes_;
 
@@ -126,6 +128,8 @@ private:
   DeviceBuffer<RealType> d_params_temp_; // Temporary buffer for setting up the
                                          // subset of parameters for bonds
 
+  const std::shared_ptr<ConstraintGroups<RealType>> constraints_;
+
   int *m_counter_; // mapped, zero-copy memory
   int *d_counter_; // device version
 
@@ -134,7 +138,7 @@ private:
 
   void _truncate_potentials(cudaStream_t stream);
 
-  void _setup_free_idxs_given_parittions(const RealType radius,
+  void _setup_free_idxs_given_partitions(const RealType radius,
                                          const RealType k, cudaStream_t stream);
 
   void _truncate_nonbonded_ixn_group(const int *d_num_free_idxs,

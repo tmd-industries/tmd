@@ -75,6 +75,34 @@ void __global__ k_update_index(T *__restrict__ d_array, std::size_t idx,
   d_array[idx] = val;
 }
 
+void __global__ k_adjust_constraint_groups(
+    const size_t num_systems, const size_t N, const int num_groups,
+    const int *__restrict__ group_offsets,
+    const int *__restrict__ group_indices, char *__restrict__ flags) {
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+
+  const int system_idxs_offset = system_idx * N;
+
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (idx < num_groups) {
+    const int group_start = group_offsets[idx];
+    const int group_end = group_offsets[idx + 1];
+
+    // The heavy atom determines if the whole group is free or frozen.
+    const char new_flag =
+        flags[system_idxs_offset + group_indices[group_start]] > 0 ? 1 : 0;
+    for (int i = 0; i < (group_end - group_start); i++) {
+      const int atom_idx = group_indices[group_start + i];
+      flags[system_idxs_offset + atom_idx] = new_flag;
+    }
+
+    idx += gridDim.x * blockDim.x;
+  }
+}
+
 template <bool FREEZE_REF>
 void __global__ k_setup_free_indices_from_partitions(
     const size_t num_systems, const size_t N,

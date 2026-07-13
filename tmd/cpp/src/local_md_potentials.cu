@@ -152,6 +152,7 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
     const int num_systems, const int N,
     const std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
     const std::vector<std::shared_ptr<Potential<RealType>>> &nonbonded_pots,
+    const std::shared_ptr<ConstraintGroups<RealType>> constraints,
     const bool freeze_reference, const RealType temperature,
     const RealType nblist_padding)
     : freeze_reference(freeze_reference), temperature(temperature),
@@ -171,7 +172,8 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
       idxs_sizes_(get_indices_buffer_sizes_from_bps(bps_)),
       d_scales_buffer_(get_scales_buffer_length_from_bps(bps_)),
       d_idxs_flags_(0), d_idxs_buffer_(0), d_idxs_temp_(0),
-      d_system_idxs_buffer_(0), d_system_idxs_temp_(0), d_params_temp_(0) {
+      d_system_idxs_buffer_(0), d_system_idxs_temp_(0), d_params_temp_(0),
+      constraints_(constraints) {
 
   if (temperature <= static_cast<RealType>(0.0)) {
     throw std::runtime_error("temperature must be greater than 0");
@@ -333,7 +335,7 @@ void LocalMDPotentials<RealType>::setup_from_idxs(
           d_box_t, d_probability_buffer_.data, d_flags_.data);
   gpuErrchk(cudaPeekAtLastError());
 
-  this->_setup_free_idxs_given_parittions(radius, k, stream);
+  this->_setup_free_idxs_given_partitions(radius, k, stream);
 }
 
 // setup_from_selection takes a set of idxs, flat-bottom restraint parameters
@@ -387,14 +389,24 @@ void LocalMDPotentials<RealType>::setup_from_selection(
       <<<1, 1, 0, stream>>>(d_flags_.data, reference_idxs[0], 1);
   gpuErrchk(cudaPeekAtLastError());
 
-  this->_setup_free_idxs_given_parittions(radius, k, stream);
+  this->_setup_free_idxs_given_partitions(radius, k, stream);
 }
 
 template <typename RealType>
-void LocalMDPotentials<RealType>::_setup_free_idxs_given_parittions(
+void LocalMDPotentials<RealType>::_setup_free_idxs_given_partitions(
     const RealType radius, const RealType k, cudaStream_t stream) {
   const int tpb = DEFAULT_THREADS_PER_BLOCK;
 
+  // If constraints are being applied, we must include the entire group. Whether
+  // the anchor atom is free or frozen defines the state of the whole group.
+  if (constraints_ != nullptr && constraints_->n_groups() > 0) {
+    k_adjust_constraint_groups<<<
+        dim3(ceil_divide(constraints_->n_groups(), tpb), num_systems_), tpb, 0,
+        stream>>>(num_systems_, N_, constraints_->n_groups(),
+                  constraints_->get_group_offsets(),
+                  constraints_->get_group_indices(), d_flags_.data);
+    gpuErrchk(cudaPeekAtLastError());
+  }
   for (int i = 0; i < num_systems_; i++) {
     // Partition the flagged indices, separating the free and frozen indices.
     // Each system will be partitioned separately
@@ -694,8 +706,8 @@ void LocalMDPotentials<RealType>::_truncate_bonded_potential_idxs(
  * indices to the free atoms (which always includes the reference) and the
  * column indices to the free atoms followed by the frozen. Note that this
  * function is reliant on the permutation set up in
- * _setup_free_idxs_given_parittions. TBD: Clean so the code is more
- * flexible and not tied to _setup_free_idxs_given_parittions
+ * _setup_free_idxs_given_partitions. TBD: Clean so the code is more
+ * flexible and not tied to _setup_free_idxs_given_partitions
  */
 template <typename RealType>
 void LocalMDPotentials<RealType>::_truncate_nonbonded_ixn_group(

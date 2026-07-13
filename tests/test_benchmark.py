@@ -366,19 +366,15 @@ def run_single_topology_benchmarks(
             )
 
         if host_config is not None:
-            # Local MD has some poor interplay with Constraints
-            if isinstance(initial_state.integrator, LangevinIntegrator):
-                benchmark_initial_state(
-                    config,
-                    f"{stage}-rbfe-local",
-                    initial_state,
-                    replace(
-                        config.get_md_params(),
-                        local_md_params=LocalMDParams(
-                            config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0
-                        ),
-                    ),
-                )
+            benchmark_initial_state(
+                config,
+                f"{stage}-rbfe-local",
+                initial_state,
+                replace(
+                    config.get_md_params(),
+                    local_md_params=LocalMDParams(config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0),
+                ),
+            )
 
             # Only in the case where the ligand is in complex do we want to look at water sampling
             if host_config.num_water_atoms < host_config.conf.shape[0]:
