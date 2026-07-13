@@ -65,7 +65,9 @@ def test_constrained_langevin_single_water():
     v0 = np.zeros_like(x0)
     masses = np.array(get_mol_masses(mol), dtype=np.float64)
 
-    constraint_groups, constraint_distances = bt.get_constraint_groups()
+    constraints = bt.get_constraint_groups()
+    constraint_groups = constraints.groups
+    constraint_distances = constraints.distances
 
     force = _force_from_topology(bt)
 
@@ -109,7 +111,9 @@ def test_constrained_langevin_water_hmr(dt, n_steps):
     masses = np.array(get_mol_masses(mol), dtype=np.float64)
     v0 = sample_velocities(masses, DEFAULT_TEMP, seed)
 
-    constraint_groups, constraint_distances = bt.get_constraint_groups()
+    constraints = bt.get_constraint_groups()
+    constraint_groups = constraints.groups
+    constraint_distances = constraints.distances
 
     # Build bond list from constraint groups for HMR
     bond_list = []
@@ -163,7 +167,9 @@ def test_constrained_langevin_inf_mass_atoms(seed):
     masses = np.array(get_mol_masses(mol), dtype=np.float64)
     masses[frozen_idxs] = np.inf
 
-    constraint_groups, constraint_distances = bt.get_constraint_groups()
+    constraints = bt.get_constraint_groups()
+    constraint_groups = constraints.groups
+    constraint_distances = constraints.distances
 
     force = _force_from_topology(bt)
 
@@ -207,7 +213,8 @@ def test_constrained_langevin_multiple_water_molecules():
     v0 = np.zeros_like(x0)
 
     # Verify the constraint groups from the system are reasonable
-    constraint_groups, constraint_distances = deserialize_constraints(modeller.topology, x0, omm_system)
+    constraint_groups, constraint_distances = deserialize_constraints(modeller.topology, x0)
+
     atoms_by_idx = list(modeller.topology.atoms())
     for group in constraint_groups:
         assert len(group) == len(set(group))
@@ -294,7 +301,9 @@ def test_constrained_langevin_deterministic(dt):
     v0 = np.zeros_like(x0)
     masses = np.array(get_mol_masses(mol), dtype=np.float64)
 
-    constraint_groups, constraint_distances = bt.get_constraint_groups()
+    constraints = bt.get_constraint_groups()
+    constraint_groups = constraints.groups
+    constraint_distances = constraints.distances
 
     rng1 = np.random.default_rng(123)
     rng2 = np.random.default_rng(123)
@@ -553,7 +562,9 @@ def test_reference_constrained_langevin_integrator_with_custom_ops(dt):
         return np.linalg.norm(force(coords))
 
     # Build constraint groups for hydrogen bonds
-    constraint_groups, constraint_distances = st.get_constraint_groups()
+    constraints = st.get_constraint_groups()
+    constraint_groups = constraints.groups
+    constraint_distances = constraints.distances
 
     friction = 10.0
 
@@ -635,8 +646,9 @@ def test_solver_does_not_mutate_inputs():
     masses = np.array(get_mol_masses(mol), dtype=np.float64)
 
     # Get coords and constraint info from the molecule
-    constraint_groups, constraint_distances = bt.get_constraint_groups()
-
+    constraints = bt.get_constraint_groups()
+    constraint_groups = constraints.groups
+    constraint_distances = constraints.distances
     x = np.array(get_romol_conf(mol), dtype=np.float64)
 
     # Non-zero velocities that violate velocity constraints

@@ -80,7 +80,9 @@ def test_base_topology_get_constraint_groups():
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     for mol in all_mols:
         bt = topology.BaseTopology(mol, ff)
-        atom_groups, distances = bt.get_constraint_groups()
+        constraints = bt.get_constraint_groups()
+        atom_groups = constraints.groups
+        distances = constraints.distances
         assert len(atom_groups) == len(distances)
         for group, dist in zip(atom_groups, distances):
             assert len(dist) == len(group) - 1
@@ -103,22 +105,23 @@ def test_multi_topology_get_constraint_groups(n_mols):
     for mols in combinations(all_mols[: n_mols * 2], n_mols):
         assert len(mols) == n_mols
         mol_offsets = []
+        offset = 0
         for i, mol in enumerate(mols):
-            offset = mol.GetNumAtoms()
-            if i > 0:
-                offset += mol_offsets[-1]
             mol_offsets.append(offset)
+            offset += mol.GetNumAtoms()
+        mol_offsets.append(offset)
 
         bt = topology.MultiTopology(mols, ff)
-        atom_groups, distances = bt.get_constraint_groups()
+        constraints = bt.get_constraint_groups()
+        atom_groups = constraints.groups
+        distances = constraints.distances
         assert len(atom_groups) == len(distances)
         for group, dist in zip(atom_groups, distances):
             heavy_atom = group[0]
-            mol_idx = next(i for i in range(len(mols)) if heavy_atom + 1 < mol_offsets[i])
+            mol_idx = next(i for i in range(len(mols)) if heavy_atom < mol_offsets[i + 1])
             src_mol = mols[mol_idx]
-            offset = 0
-            if mol_idx > 0:
-                offset = mol_offsets[mol_idx - 1]
+            offset = mol_offsets[mol_idx]
+
             assert len(dist) == len(group) - 1
             assert np.all(np.array(dist) > 0)
             assert src_mol.GetAtomWithIdx(heavy_atom - offset).GetAtomicNum() > 1

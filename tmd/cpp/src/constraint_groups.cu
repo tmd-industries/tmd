@@ -111,6 +111,9 @@ void ConstraintGroups<RealType>::constrain_positions(
     const unsigned int *idxs, const bool store_current_x,
     cudaStream_t stream) const {
 
+  if (n_groups_ == 0) {
+    return;
+  }
   this->run_shake(num_systems, N, d_x_t, idxs, store_current_x, stream);
 }
 
@@ -228,6 +231,9 @@ template <typename RealType>
 void ConstraintGroups<RealType>::constrain_velocities(
     const int num_systems, const int N, const RealType *d_x_t, RealType *d_v_t,
     const unsigned int *idxs, cudaStream_t stream) const {
+  if (n_groups_ == 0) {
+    return;
+  }
   this->run_rattle(num_systems, N, d_x_t, d_v_t, idxs, stream);
 }
 
