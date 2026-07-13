@@ -1549,7 +1549,7 @@ class SingleTopology(AtomMapMixin):
                 groups_c_anchor_to_dists[anchor] = group_dists_b
             else:
                 hydrogen_b_to_idx = {atom: idx for idx, atom in enumerate(hydrogens_b)}
-                new_hydrogens = set(groups_c_anchor_to_groups[anchor]).difference(hydrogens_b)
+                new_hydrogens = set(hydrogens_b).difference(groups_c_anchor_to_groups[anchor])
                 for atom in new_hydrogens:
                     idx = hydrogen_b_to_idx[atom]
                     groups_c_anchor_to_groups[anchor].append(atom)

@@ -165,6 +165,69 @@ def test_constrained_langevin_integrator_single_topology():
     np.testing.assert_array_equal(boxes, boxes2)
 
 
+def test_constrained_langevin_integrator_single_topology_7_atom_group():
+    """Test ConstrainedLangevinIntegrator with the maximum sized atom group which is a carbon
+    bonded to 6 hydrogens"""
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    seed = 2026
+    precision = np.float32
+    # Construct a toulene, and map everything to itself except the methyl hydrogens
+    mol = ligand_from_smiles("Cc1ccccc1")
+    identity_core = np.tile(np.arange(mol.GetNumAtoms())[:, None], (1, 2))
+    methyl_hydrogen_indices = []
+    methyl_carbon = next(atom for atom in mol.GetAtoms() if atom.GetAtomicNum() == 6 and not atom.IsInRing())
+    methyl_hydrogen_indices = set([atom.GetIdx() for atom in methyl_carbon.GetNeighbors() if atom.GetAtomicNum() == 1])
+    assert len(methyl_hydrogen_indices) == 3
+    core = np.array([pair for pair in identity_core if pair[0] not in methyl_hydrogen_indices])
+    st = SingleTopology(mol, mol, core, ff)
+
+    constraints = st.get_constraint_groups()
+    assert len(constraints.groups) == 6
+    assert len(max(constraints.groups, key=lambda x: len(x))) == 7
+    masses = np.array(st.combine_masses(use_hmr=True))
+
+    x0 = st.combine_confs(get_romol_conf(mol), get_romol_conf(mol), lamb=0.0)
+    v0 = np.zeros_like(x0)
+    box0 = np.eye(3) * 100.0
+
+    guest_system = st.setup_intermediate_state(0.0)
+
+    bps = []
+    for pot in guest_system.get_U_fns():
+        bp = pot.to_gpu(precision).bound_impl
+        bps.append(bp)
+
+    constraints = st.get_constraint_groups()
+
+    intg = ConstrainedLangevinIntegrator(
+        temperature=DEFAULT_TEMP,
+        dt=4e-3,
+        friction=1.0,
+        masses=masses.astype(np.float64),
+        seed=seed,
+        constraints=constraints,
+    )
+    intg_impl = intg.impl(np.float32)
+    assert intg_impl.num_systems() == 1
+
+    ctxt = Context(x0, v0, box0, intg_impl, bps, precision=precision)
+
+    steps = 1000
+    interval = steps // 10
+    xs, boxes = ctxt.multiple_steps(steps, store_x_interval=interval)
+
+    assert np.all(np.isfinite(xs))
+    assert np.all(np.isfinite(boxes))
+
+    verify_constraints(constraints, xs)
+
+    # Determinism check
+    ctxt2 = Context(x0, v0, box0, intg.impl(precision), bps, precision=precision)
+    xs2, boxes2 = ctxt2.multiple_steps(steps, store_x_interval=interval)
+    np.testing.assert_array_equal(xs, xs2)
+    np.testing.assert_array_equal(boxes, boxes2)
+
+
 def test_constrained_langevin_integrator_multi_topology(mols_by_name):
     """Test creation with MultiTopology (multiple ligands)."""
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
