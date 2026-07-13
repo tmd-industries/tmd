@@ -110,15 +110,117 @@ void ConstraintGroups<RealType>::constrain_positions(
     const int num_systems, const int N, RealType *d_x_t,
     const unsigned int *idxs, const bool store_current_x,
     cudaStream_t stream) const {
+
+  this->run_shake(num_systems, N, d_x_t, idxs, store_current_x, stream);
+}
+
+template <typename RealType>
+void ConstraintGroups<RealType>::run_rattle(const int num_systems, const int N,
+                                            const RealType *d_x_t,
+                                            RealType *d_v_t,
+                                            const unsigned int *idxs,
+                                            cudaStream_t stream) const {
   constexpr int D = 3;
   constexpr int tpb = DEFAULT_THREADS_PER_BLOCK;
   const dim3 constraint_dim(ceil_divide(max(1, n_groups_), tpb), num_systems);
 
-  k_apply_shake<RealType, D, 7><<<constraint_dim, tpb, 0, stream>>>(
-      num_systems, N, iterations_, n_groups_, tolerance_, idxs,
-      d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
-      d_inv_masses_, d_x_t,
-      store_current_x ? d_unadjusted_group_coords_ : nullptr);
+  // Apply velocity constraints with RATTLE
+  switch (max_group_size_) {
+  case 2:
+    k_apply_rattle<RealType, D, 2><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_inv_masses_, d_x_t, d_v_t);
+    break;
+  case 3:
+    k_apply_rattle<RealType, D, 3><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_inv_masses_, d_x_t, d_v_t);
+    break;
+  case 4:
+    k_apply_rattle<RealType, D, 4><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_inv_masses_, d_x_t, d_v_t);
+    break;
+  case 5:
+    k_apply_rattle<RealType, D, 5><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_inv_masses_, d_x_t, d_v_t);
+    break;
+  case 6:
+    k_apply_rattle<RealType, D, 6><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_inv_masses_, d_x_t, d_v_t);
+    break;
+  case 7:
+    k_apply_rattle<RealType, D, 7><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_inv_masses_, d_x_t, d_v_t);
+    break;
+  default:
+    throw std::runtime_error("Unexpected group size " +
+                             std::to_string(max_group_size_));
+  }
+  gpuErrchk(cudaPeekAtLastError());
+}
+
+template <typename RealType>
+void ConstraintGroups<RealType>::run_shake(const int num_systems, const int N,
+                                           RealType *d_x_t,
+                                           const unsigned int *idxs,
+                                           const bool store_current_x,
+                                           cudaStream_t stream) const {
+  constexpr int D = 3;
+  constexpr int tpb = DEFAULT_THREADS_PER_BLOCK;
+  const dim3 constraint_dim(ceil_divide(max(1, n_groups_), tpb), num_systems);
+
+  // Apply positional constraints with SHAKE
+  switch (max_group_size_) {
+  case 2:
+    k_apply_shake<RealType, D, 2><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
+        d_inv_masses_, d_x_t,
+        store_current_x ? d_unadjusted_group_coords_ : nullptr);
+    break;
+  case 3:
+    k_apply_shake<RealType, D, 3><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
+        d_inv_masses_, d_x_t,
+        store_current_x ? d_unadjusted_group_coords_ : nullptr);
+    break;
+  case 4:
+    k_apply_shake<RealType, D, 4><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
+        d_inv_masses_, d_x_t,
+        store_current_x ? d_unadjusted_group_coords_ : nullptr);
+    break;
+  case 5:
+    k_apply_shake<RealType, D, 5><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
+        d_inv_masses_, d_x_t,
+        store_current_x ? d_unadjusted_group_coords_ : nullptr);
+    break;
+  case 6:
+    k_apply_shake<RealType, D, 6><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
+        d_inv_masses_, d_x_t,
+        store_current_x ? d_unadjusted_group_coords_ : nullptr);
+    break;
+  case 7:
+    k_apply_shake<RealType, D, 7><<<constraint_dim, tpb, 0, stream>>>(
+        num_systems, N, iterations_, n_groups_, tolerance_, idxs,
+        d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
+        d_inv_masses_, d_x_t,
+        store_current_x ? d_unadjusted_group_coords_ : nullptr);
+    break;
+  default:
+    throw std::runtime_error("Unexpected group size " +
+                             std::to_string(max_group_size_));
+  }
   gpuErrchk(cudaPeekAtLastError());
 }
 
@@ -126,15 +228,7 @@ template <typename RealType>
 void ConstraintGroups<RealType>::constrain_velocities(
     const int num_systems, const int N, const RealType *d_x_t, RealType *d_v_t,
     const unsigned int *idxs, cudaStream_t stream) const {
-  constexpr int D = 3;
-  constexpr int tpb = DEFAULT_THREADS_PER_BLOCK;
-  const dim3 constraint_dim(ceil_divide(max(1, n_groups_), tpb), num_systems);
-
-  // Apply velocity constraints with RATTLE
-  k_apply_rattle<RealType, D, 7><<<constraint_dim, tpb, 0, stream>>>(
-      num_systems, N, iterations_, n_groups_, tolerance_, idxs,
-      d_group_offsets_, d_group_indices_, d_inv_masses_, d_x_t, d_v_t);
-  gpuErrchk(cudaPeekAtLastError());
+  this->run_rattle(num_systems, N, d_x_t, d_v_t, idxs, stream);
 }
 
 template <typename RealType>

@@ -71,6 +71,15 @@ public:
                                       const RealType *h_coords,
                                       const RealType *h_velocities,
                                       const unsigned int *h_idxs) const;
+
+private:
+  void run_rattle(const int num_systems, const int N, const RealType *d_x_t,
+                  RealType *d_v_t, const unsigned int *idxs,
+                  cudaStream_t stream) const;
+
+  void run_shake(const int num_systems, const int N, RealType *d_x_t,
+                 const unsigned int *idxs, const bool store_current_x,
+                 cudaStream_t stream) const;
 };
 
 } // namespace tmd
