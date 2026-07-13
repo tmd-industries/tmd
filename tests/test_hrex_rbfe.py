@@ -431,7 +431,7 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
     host_name, (mol_a, mol_b, core, forcefield, host_config) = hif2a_single_topology_leg
 
     target_overlap = 0.667
-    overlap_diff = 0.1
+    overlap_diff = 0.2
 
     md_params = MDParams(
         n_frames=100,
