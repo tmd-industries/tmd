@@ -164,7 +164,7 @@ def initial_state_from_host_config(
     return InitialState(system.get_U_fns(), intg, baro, x0, v0, host_config.box, 0.0, ligand_idxs, protein_idxs)
 
 
-def generate_hif2a_frames(n_frames: int, frame_interval: int, seed=None, barostat_interval: int = 5):
+def generate_hif2a_frames(n_frames: int, frame_interval: int, seed: int = 2022, barostat_interval: int = 5):
     mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
     forcefield = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     st = SingleTopology(mol_a, mol_b, core, forcefield)
@@ -172,7 +172,7 @@ def generate_hif2a_frames(n_frames: int, frame_interval: int, seed=None, barosta
     # build the protein system.
     with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_solv_equil.pdb") as path_to_pdb:
         host_config = builders.load_pdb_system(str(path_to_pdb), forcefield.protein_ff, forcefield.water_ff)
-    initial_state = setup_initial_state(st, 0.1, host_config, constants.DEFAULT_TEMP, 2022, True)
+    initial_state = setup_initial_state(st, 0.1, host_config, constants.DEFAULT_TEMP, seed, True)
 
     intg = initial_state.integrator.impl()
 
@@ -221,13 +221,13 @@ def benchmark_potential(
     else:
         label = label + "_f64"
     unbound = potential.to_gpu(precision=precision).unbound_impl
-    start = time.time()
+    start = time.perf_counter()
     batch_times = []
     frames = coords.shape[0]
     param_batches = params.shape[0]
     runs_per_batch = frames * param_batches
     for _ in range(config.num_batches):
-        batch_start = time.time()
+        batch_start = time.perf_counter()
         _, _, _ = unbound.execute_batch(
             coords,
             params,
@@ -236,7 +236,7 @@ def benchmark_potential(
             compute_du_dp,
             compute_u,
         )
-        batch_end = time.time()
+        batch_end = time.perf_counter()
         delta = batch_end - batch_start
 
         batch_times.append(delta)
@@ -245,7 +245,7 @@ def benchmark_potential(
         if config.verbose:
             print(f"executions per second: {runs_per_second:.3f}")
     print(
-        f"{label}: N={coords.shape[1]} Frames={frames} Params={param_batches} speed: {runs_per_second:.2f} executions/seconds (ran {runs_per_batch * config.num_batches} potentials in {(time.time() - start):.2f}s)",
+        f"{label}: N={coords.shape[1]} Frames={frames} Params={param_batches} speed: {runs_per_second:.2f} executions/seconds (ran {runs_per_batch * config.num_batches} potentials in {(time.perf_counter() - start):.2f}s)",
         f"du_dp={compute_du_dp}, du_dx={compute_du_dx}, u={compute_u}",
     )
 
@@ -260,17 +260,18 @@ def benchmark_initial_state(
     else:
         ctxt = get_batched_context([state] * num_systems, md_params)
 
-    expected_movers = 0
-    if state.barostat is not None:
-        expected_movers += 1
-        label += f"-barostat-interval-{state.barostat.interval}"
-    if md_params.water_sampling_params is not None:
-        water_sampling_interval = md_params.water_sampling_params.interval
-        expected_movers += 1
-        label += f"-water-sampling-interval-{water_sampling_interval}"
-        if config.steps_per_batch < water_sampling_interval:
-            print("Warning::Not running water sampling every batch, interval is too large")
-    assert len(ctxt.get_movers()) == expected_movers
+    if md_params.local_md_params is None:
+        expected_movers = 0
+        if state.barostat is not None:
+            expected_movers += 1
+            label += f"-barostat-interval-{state.barostat.interval}"
+        if md_params.water_sampling_params is not None:
+            water_sampling_interval = md_params.water_sampling_params.interval
+            expected_movers += 1
+            label += f"-water-sampling-interval-{water_sampling_interval}"
+            if config.steps_per_batch < water_sampling_interval:
+                print("Warning::Not running water sampling every batch, interval is too large")
+        assert len(ctxt.get_movers()) == expected_movers
 
     if md_params.local_md_params is not None:
         assert md_params.local_md_params.min_radius == md_params.local_md_params.max_radius
@@ -316,6 +317,7 @@ def benchmark_initial_state(
         if config.verbose:
             print(f"steps per second: {steps_per_second:.3f}")
             print(f"ns per day: {ns_per_day:.3f}")
+    end = time.perf_counter()
 
     assert np.all(np.abs(ctxt.get_x_t()) < 1000)
 
@@ -323,13 +325,13 @@ def benchmark_initial_state(
 
     if md_params.local_md_params is None:
         print(
-            f"{label}: Systems={num_systems} N={state.x0.shape[0]} speed: {ns_per_day:.2f}ns/day dt: {dt * 1e3}fs (ran {steps_per_batch * num_batches} steps in {(time.perf_counter() - start):.2f}s) | determinism hash: {determinism_hash}"
+            f"{label}: Systems={num_systems} N={state.x0.shape[0]} speed: {ns_per_day:.2f}ns/day dt: {dt * 1e3}fs (ran {steps_per_batch * num_batches} steps in {(end - start):.2f}s) | determinism hash: {determinism_hash}"
         )
     else:
         radius = md_params.local_md_params.min_radius
         k = md_params.local_md_params.k
         print(
-            f"{label}: Systems={num_systems} N={state.x0.shape[0]} Radius={radius}, K={k} speed: {ns_per_day:.2f}ns/day dt: {dt * 1e3}fs (ran {steps_per_batch * num_batches} steps in {(time.time() - start):.2f}s) | determinism hash: {determinism_hash}"
+            f"{label}: Systems={num_systems} N={state.x0.shape[0]} Radius={radius}, K={k} speed: {ns_per_day:.2f}ns/day dt: {dt * 1e3}fs (ran {steps_per_batch * num_batches} steps in {(end - start):.2f}s) | determinism hash: {determinism_hash}"
         )
 
     if config.generate_plots and num_systems == 1:
@@ -365,28 +367,32 @@ def run_single_topology_benchmarks(
                 num_systems=num_systems,
             )
 
-        if host_config is not None:
-            benchmark_initial_state(
-                config,
-                f"{stage}-rbfe-local",
-                initial_state,
-                replace(
-                    config.get_md_params(),
-                    local_md_params=LocalMDParams(config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0),
-                ),
-            )
-
-            # Only in the case where the ligand is in complex do we want to look at water sampling
-            if host_config.num_water_atoms < host_config.conf.shape[0]:
+            if host_config is not None:
                 benchmark_initial_state(
                     config,
-                    f"{stage}-rbfe",
+                    f"{stage}-rbfe-local",
                     initial_state,
                     replace(
                         config.get_md_params(),
-                        water_sampling_params=WaterSamplingParams(interval=400, radius=1.0, batch_size=250),
+                        local_md_params=LocalMDParams(
+                            config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0
+                        ),
                     ),
+                    num_systems=num_systems,
                 )
+
+                # Only in the case where the ligand is in complex do we want to look at water sampling
+                if host_config.num_water_atoms < host_config.conf.shape[0]:
+                    benchmark_initial_state(
+                        config,
+                        f"{stage}-rbfe",
+                        initial_state,
+                        replace(
+                            config.get_md_params(),
+                            water_sampling_params=WaterSamplingParams(interval=400, radius=1.0, batch_size=250),
+                        ),
+                        num_systems=num_systems,
+                    )
 
 
 def benchmark_dhfr(config: BenchmarkConfig):
@@ -396,9 +402,9 @@ def benchmark_dhfr(config: BenchmarkConfig):
         host_config = builders.load_pdb_system(str(pdb_path), "amber99sbildn", "tip3p", cutoff=1.2)
 
     for dt in [2.5e-3, 4.0e-3]:
-        for barostat_interval in [0, 25]:
-            apo_state = initial_state_from_host_config(host_config, dt, barostat_interval=barostat_interval)
-            for num_systems in [1, 2, 4]:
+        for num_systems in [1, 2, 4]:
+            for barostat_interval in [0, 25]:
+                apo_state = initial_state_from_host_config(host_config, dt, barostat_interval=barostat_interval)
                 benchmark_initial_state(
                     config,
                     "dhfr-apo",
@@ -406,16 +412,17 @@ def benchmark_dhfr(config: BenchmarkConfig):
                     config.get_md_params(),
                     num_systems=num_systems,
                 )
-        apo_state = initial_state_from_host_config(host_config, dt)
-        benchmark_initial_state(
-            config,
-            "dhfr-local",
-            replace(apo_state, ligand_idxs=np.arange(len(host_config.conf), dtype=np.int32)),
-            replace(
-                config.get_md_params(),
-                local_md_params=LocalMDParams(config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0),
-            ),
-        )
+            apo_state = initial_state_from_host_config(host_config, dt)
+            benchmark_initial_state(
+                config,
+                "dhfr-local",
+                replace(apo_state, ligand_idxs=np.arange(len(host_config.conf), dtype=np.int32)),
+                replace(
+                    config.get_md_params(),
+                    local_md_params=LocalMDParams(config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0),
+                ),
+                num_systems=num_systems,
+            )
 
 
 def benchmark_hif2a(config: BenchmarkConfig):
@@ -458,29 +465,37 @@ def benchmark_ahfe(config: BenchmarkConfig):
     bt = BaseTopology(mol, forcefield)
     afe = AbsoluteFreeEnergy(mol, bt)
 
-    initial_state = absolute_hydration.setup_initial_states(
-        afe, forcefield, host_config, constants.DEFAULT_TEMP, np.array([0.0]), seed
-    )[0]
-
-    for num_systems in [1, 2, 4]:
-        benchmark_initial_state(
-            config,
-            "ahfe",
-            initial_state,
-            config.get_md_params(),
-            num_systems=num_systems,
-        )
-        if host_config is not None:
+    for dt in [2.5e-3, 4.0e-3]:
+        initial_state = absolute_hydration.setup_initial_states(
+            afe,
+            forcefield,
+            host_config,
+            constants.DEFAULT_TEMP,
+            np.array([0.0]),
+            seed,
+            dt=dt,
+        )[0]
+        for num_systems in [1, 2, 4]:
             benchmark_initial_state(
                 config,
-                "ahfe-local",
+                "ahfe",
                 initial_state,
-                replace(
-                    config.get_md_params(),
-                    local_md_params=LocalMDParams(config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0),
-                ),
+                config.get_md_params(),
                 num_systems=num_systems,
             )
+            if host_config is not None:
+                benchmark_initial_state(
+                    config,
+                    "ahfe-local",
+                    initial_state,
+                    replace(
+                        config.get_md_params(),
+                        local_md_params=LocalMDParams(
+                            config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0
+                        ),
+                    ),
+                    num_systems=num_systems,
+                )
 
 
 def test_dhfr():
