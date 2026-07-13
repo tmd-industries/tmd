@@ -46,7 +46,7 @@ from tmd.fe.rbfe import setup_initial_state
 from tmd.fe.single_topology import SingleTopology
 from tmd.fe.topology import BaseTopology
 from tmd.ff import Forcefield
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops
+from tmd.lib import ConstrainedLangevinIntegrator, LangevinIntegrator, MonteCarloBarostat, custom_ops
 from tmd.md import builders
 from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
 from tmd.md.thermostat.utils import sample_velocities
@@ -151,7 +151,12 @@ def initial_state_from_host_config(
     x0 = host_config.conf
     # initialize integrator
     friction = 1.0
-    intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
+    intg: ConstrainedLangevinIntegrator | LangevinIntegrator
+    if dt > 2.5e-3:
+        assert host_config.constraints
+        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, hmr_masses, seed, host_config.constraints)
+    else:
+        intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
     protein_idxs = np.arange(0, len(hmr_masses) - host_config.num_water_atoms, dtype=np.int32)
     ligand_idxs = np.array([], dtype=np.int32)
 
@@ -337,80 +342,84 @@ def run_single_topology_benchmarks(
     st: SingleTopology,
     host_config: Optional[HostConfig],
 ):
-    initial_state = setup_initial_state(st, 0.1, host_config, constants.DEFAULT_TEMP, 2022, True)
+    for dt in [2.5e-3, 4.0e-3]:
+        initial_state = setup_initial_state(st, 0.1, host_config, constants.DEFAULT_TEMP, 2022, True, dt=dt)
 
-    dt = 2.5e-3
-    for num_systems in [1, 2, 4]:
-        if host_config is not None:
-            for barostat_interval in [0, 25]:
-                apo_state = initial_state_from_host_config(host_config, dt, barostat_interval=barostat_interval)
-                benchmark_initial_state(
-                    config,
-                    f"{stage}-apo",
-                    apo_state,
-                    config.get_md_params(),
-                    num_systems=num_systems,
-                )
+        for num_systems in [1, 2, 4]:
+            if host_config is not None:
+                for barostat_interval in [0, 25]:
+                    apo_state = initial_state_from_host_config(host_config, dt, barostat_interval=barostat_interval)
+                    benchmark_initial_state(
+                        config,
+                        f"{stage}-apo",
+                        apo_state,
+                        config.get_md_params(),
+                        num_systems=num_systems,
+                    )
 
-        benchmark_initial_state(
-            config,
-            f"{stage}-rbfe",
-            initial_state,
-            config.get_md_params(),
-            num_systems=num_systems,
-        )
-
-    if host_config is not None:
-        benchmark_initial_state(
-            config,
-            f"{stage}-rbfe-local",
-            initial_state,
-            replace(
-                config.get_md_params(),
-                local_md_params=LocalMDParams(config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0),
-            ),
-        )
-
-        # Only in the case where the ligand is in complex do we want to look at water sampling
-        if host_config.num_water_atoms < host_config.conf.shape[0]:
             benchmark_initial_state(
                 config,
                 f"{stage}-rbfe",
                 initial_state,
-                replace(
-                    config.get_md_params(),
-                    water_sampling_params=WaterSamplingParams(interval=400, radius=1.0, batch_size=250),
-                ),
+                config.get_md_params(),
+                num_systems=num_systems,
             )
+
+        if host_config is not None:
+            # Local MD has some poor interplay with Constraints
+            if isinstance(initial_state.integrator, LangevinIntegrator):
+                benchmark_initial_state(
+                    config,
+                    f"{stage}-rbfe-local",
+                    initial_state,
+                    replace(
+                        config.get_md_params(),
+                        local_md_params=LocalMDParams(
+                            config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0
+                        ),
+                    ),
+                )
+
+            # Only in the case where the ligand is in complex do we want to look at water sampling
+            if host_config.num_water_atoms < host_config.conf.shape[0]:
+                benchmark_initial_state(
+                    config,
+                    f"{stage}-rbfe",
+                    initial_state,
+                    replace(
+                        config.get_md_params(),
+                        water_sampling_params=WaterSamplingParams(interval=400, radius=1.0, batch_size=250),
+                    ),
+                )
 
 
 def benchmark_dhfr(config: BenchmarkConfig):
     host_fns, host_masses, host_conf, box = setup_dhfr()
 
-    dt = 2.5e-3
     with path_to_internal_file("tmd.testsystems.data", "5dfr_solv_equil.pdb") as pdb_path:
         host_config = builders.load_pdb_system(str(pdb_path), "amber99sbildn", "tip3p", cutoff=1.2)
 
-    for barostat_interval in [0, 25]:
-        apo_state = initial_state_from_host_config(host_config, dt, barostat_interval=barostat_interval)
-        for num_systems in [1, 2, 4]:
-            benchmark_initial_state(
-                config,
-                "dhfr-apo",
-                apo_state,
+    for dt in [2.5e-3, 4.0e-3]:
+        for barostat_interval in [0, 25]:
+            apo_state = initial_state_from_host_config(host_config, dt, barostat_interval=barostat_interval)
+            for num_systems in [1, 2, 4]:
+                benchmark_initial_state(
+                    config,
+                    "dhfr-apo",
+                    apo_state,
+                    config.get_md_params(),
+                    num_systems=num_systems,
+                )
+        apo_state = initial_state_from_host_config(host_config, dt)
+        benchmark_initial_state(
+            config,
+            "dhfr-local",
+            replace(apo_state, ligand_idxs=np.arange(len(host_config.conf), dtype=np.int32)),
+            replace(
                 config.get_md_params(),
-                num_systems=num_systems,
-            )
-    apo_state = initial_state_from_host_config(host_config, dt)
-    benchmark_initial_state(
-        config,
-        "dhfr-local",
-        replace(apo_state, ligand_idxs=np.arange(len(host_config.conf), dtype=np.int32)),
-        replace(
-            config.get_md_params(),
-            local_md_params=LocalMDParams(config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0),
-        ),
-    )
+                local_md_params=LocalMDParams(config.steps_per_batch, min_radius=1.2, max_radius=1.2, k=10_000.0),
+            ),
+        )
 
 
 def benchmark_hif2a(config: BenchmarkConfig):

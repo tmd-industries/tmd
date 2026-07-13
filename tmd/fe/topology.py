@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
 from typing import Any, Optional
 
 import jax.numpy as jnp
@@ -27,6 +28,8 @@ from tmd.fe.system import GuestSystem
 from tmd.fe.utils import get_romol_conf
 from tmd.ff import Forcefield
 from tmd.ff.handlers import nonbonded
+from tmd.lib import ConstraintGroups
+from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups
 from tmd.potentials import ChiralAtomRestraint, ChiralBondRestraint
 from tmd.potentials.jax_utils import get_all_pairs_indices
 from tmd.potentials.nonbonded import combining_rule_epsilon, combining_rule_sigma
@@ -260,6 +263,10 @@ class BaseTopology:
         this topology as a list of NDArray.
         """
         return [np.arange(self.get_num_atoms())]
+
+    def get_constraint_groups(self) -> ConstraintGroups:
+        """Return the hydrogen-bond constraint groups for the molecule."""
+        return get_hydrogen_bond_constraint_groups(self.mol)
 
     def parameterize_nonbonded(
         self,
@@ -508,6 +515,24 @@ class MultiTopology(BaseTopology):
             component_idxs.append(np.arange(mol.GetNumAtoms()) + offset)
             offset += mol.GetNumAtoms()
         return component_idxs
+
+    def get_constraint_groups(self) -> ConstraintGroups:
+        """Return the hydrogen-bond constraint groups for the molecules."""
+        combined_group = None
+        offset = 0
+        for mol in self.mols:
+            constraint_group = get_hydrogen_bond_constraint_groups(mol)
+            if offset > 0:
+                constraint_group = replace(
+                    constraint_group, groups=[[g + offset for g in group] for group in constraint_group.groups]
+                )
+            if combined_group is None:
+                combined_group = constraint_group
+            else:
+                combined_group = combined_group.concatenate(constraint_group)
+            offset += mol.GetNumAtoms()
+        assert combined_group is not None
+        return combined_group
 
     def _parameterize_nonbonded(
         self,

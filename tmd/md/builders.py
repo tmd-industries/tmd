@@ -29,6 +29,7 @@ from tmd.fe.system import HostSystem
 from tmd.fe.utils import get_romol_conf
 from tmd.ff import Forcefield, get_water_ff_model
 from tmd.ff.handlers import openmm_deserializer
+from tmd.lib import ConstraintGroups
 from tmd.potentials.jax_utils import idxs_within_cutoff, pairwise_distances
 from tmd.utils import path_to_internal_file
 
@@ -51,6 +52,7 @@ class HostConfig:
     num_water_atoms: int
     omm_topology: app.topology.Topology
     num_membrane_atoms: int = 0
+    constraints: ConstraintGroups | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "masses", np.asarray(self.masses, dtype=np.float32))
@@ -140,7 +142,18 @@ def get_box_from_coords(coords: NDArray[np.float64]) -> NDArray[np.float64]:
     return np.eye(3) * box_lengths
 
 
-def get_ion_residue_templates(modeller) -> dict[app.Residue, str]:
+def _build_constraint_groups(topology: app.Topology, coords: NDArray) -> ConstraintGroups:
+    constraint_groups, constraint_distances = openmm_deserializer.deserialize_constraints(topology, coords)
+    water_atom_idxs = set(
+        [atom.index for res in topology.residues() for atom in res.atoms() if res.name == WATER_RESIDUE_NAME]
+    )
+    water_group_indices = np.array(
+        [i for i in range(len(constraint_groups)) if constraint_groups[i][0] in water_atom_idxs], dtype=np.int_
+    )
+    return ConstraintGroups(constraint_groups, constraint_distances, water_group_indices)
+
+
+def get_ion_residue_templates(modeller: app.Modeller) -> dict[app.Residue, str]:
     """When using amber99sbildn with the amber14 water models the ion templates get duplicated. This forces
     the use of the NA/CL/MG templates (from the amber14 water models) rather than the amber99sbildn templates.
     """
@@ -484,6 +497,9 @@ def load_pdb_system(
 
     assert modeller.topology.getNumAtoms() == len(host_coords)
 
+    constraint_groups = _build_constraint_groups(modeller.topology, host_coords)
+    assert len(constraint_groups.water_group_indices) == num_water_atoms // 3
+
     return HostConfig(
         host_system=host_system,
         conf=host_coords,
@@ -492,6 +508,7 @@ def load_pdb_system(
         num_membrane_atoms=0,
         omm_topology=modeller.topology,
         masses=np.asarray(masses),
+        constraints=constraint_groups,
     )
 
 
@@ -634,6 +651,9 @@ def build_host_config_from_omm(
         solvated_omm_host_system, cutoff=1.2
     )
 
+    constraint_groups = _build_constraint_groups(modeller.topology, solvated_host_coords)
+    assert len(constraint_groups.water_group_indices) == num_water_atoms // 3
+
     solvated_host_system = HostSystem(
         bond=bond,
         angle=angle,
@@ -660,6 +680,7 @@ def build_host_config_from_omm(
         num_membrane_atoms=num_membrane_atoms,
         omm_topology=modeller.topology,
         masses=np.asarray(masses),
+        constraints=constraint_groups,
     )
 
 
@@ -891,6 +912,9 @@ def build_water_system(
     box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
     num_water_atoms = count_water_atoms(modeller.topology)
 
+    constraint_groups = _build_constraint_groups(modeller.topology, solvated_host_coords)
+    assert len(constraint_groups.water_group_indices) == num_water_atoms // 3
+
     return HostConfig(
         host_system=solvated_host_system,
         conf=solvated_host_coords,
@@ -899,4 +923,5 @@ def build_water_system(
         num_membrane_atoms=0,
         omm_topology=modeller.topology,
         masses=np.asarray(masses),
+        constraints=constraint_groups,
     )

@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,6 +14,7 @@
 # limitations under the License.
 
 from functools import partial
+from itertools import combinations
 from typing import no_type_check
 
 import jax.numpy as jnp
@@ -68,6 +70,62 @@ def test_base_topology_14_exclusions():
     # 0-1-28 correspond to an O-C-H angle, we expect it to be missing
     assert (0, 28) not in kvs
     assert (28, 0) not in kvs
+
+
+@pytest.mark.nocuda
+def test_base_topology_get_constraint_groups():
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
+        all_mols = read_sdf(path_to_ligand)
+
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    for mol in all_mols:
+        bt = topology.BaseTopology(mol, ff)
+        constraints = bt.get_constraint_groups()
+        atom_groups = constraints.groups
+        distances = constraints.distances
+        assert len(atom_groups) == len(distances)
+        for group, dist in zip(atom_groups, distances):
+            assert len(dist) == len(group) - 1
+            assert np.all(np.array(dist) > 0)
+            assert mol.GetAtomWithIdx(group[0]).GetAtomicNum() > 1
+            assert all([mol.GetAtomWithIdx(idx).GetAtomicNum() == 1 for idx in group[1:]])
+
+
+@pytest.mark.nocuda
+@pytest.mark.parametrize("n_mols", [2, 5])
+def test_multi_topology_get_constraint_groups(n_mols):
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
+        all_mols = read_sdf(path_to_ligand)
+
+    rng = np.random.default_rng(2026)
+
+    rng.shuffle(all_mols)
+
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    for mols in combinations(all_mols[: n_mols * 2], n_mols):
+        assert len(mols) == n_mols
+        mol_offsets = []
+        offset = 0
+        for i, mol in enumerate(mols):
+            mol_offsets.append(offset)
+            offset += mol.GetNumAtoms()
+        mol_offsets.append(offset)
+
+        bt = topology.MultiTopology(mols, ff)
+        constraints = bt.get_constraint_groups()
+        atom_groups = constraints.groups
+        distances = constraints.distances
+        assert len(atom_groups) == len(distances)
+        for group, dist in zip(atom_groups, distances):
+            heavy_atom = group[0]
+            mol_idx = next(i for i in range(len(mols)) if heavy_atom < mol_offsets[i + 1])
+            src_mol = mols[mol_idx]
+            offset = mol_offsets[mol_idx]
+
+            assert len(dist) == len(group) - 1
+            assert np.all(np.array(dist) > 0)
+            assert src_mol.GetAtomWithIdx(heavy_atom - offset).GetAtomicNum() > 1
+            assert all([src_mol.GetAtomWithIdx(idx - offset).GetAtomicNum() == 1 for idx in group[1:]])
 
 
 def parameterize_nonbonded_full(

@@ -21,14 +21,23 @@ from jax import grad, jit, vmap
 from jax import numpy as jnp
 
 from tmd import constants
+from tmd.fe.free_energy import AbsoluteFreeEnergy
 from tmd.fe.model_utils import apply_hmr
+from tmd.fe.topology import BaseTopology
 from tmd.ff import Forcefield
-from tmd.integrator import VelocityVerletIntegrator
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops
+from tmd.integrator import VelocityVerletIntegrator as RefVelocityVerletIntegrator
+from tmd.lib import (
+    ConstrainedLangevinIntegrator,
+    LangevinIntegrator,
+    MonteCarloBarostat,
+    VelocityVerletIntegrator,
+    custom_ops,
+)
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.builders import build_water_system
 from tmd.md.enhanced import get_solvent_phase_system
 from tmd.md.local_resampling import local_resampling_move
+from tmd.md.minimizer import replace_conformer_with_minimized
 from tmd.potentials import HarmonicBond, PeriodicTorsion
 from tmd.potentials.jax_utils import delta_r
 from tmd.potentials.potential import get_potential_by_type
@@ -41,7 +50,7 @@ def make_hmc_mover(x, logpdf_fxn, dt=0.1, n_steps=100):
     def force_fxn(x):
         return -grad(logpdf_fxn)(x)
 
-    integrator = VelocityVerletIntegrator(force_fxn, masses=masses, dt=dt)
+    integrator = RefVelocityVerletIntegrator(force_fxn, masses=masses, dt=dt)
 
     def augmented_logpdf(x, v):
         return logpdf_fxn(x) - np.sum(0.5 * masses[:, np.newaxis] * v**2)
@@ -222,30 +231,41 @@ def test_ideal_gas():
 
 @pytest.mark.parametrize("freeze_reference", [True, False])
 @pytest.mark.parametrize("k", [1.0, 1000.0, 10000.0])
-def test_local_md_particle_density(freeze_reference, k):
+@pytest.mark.parametrize(
+    "integrator_klass, dt, friction",
+    [
+        (VelocityVerletIntegrator, 2.5e-3, None),
+        (LangevinIntegrator, 2.5e-3, 1.0),
+        (ConstrainedLangevinIntegrator, 4.0e-3, 1.0),
+    ],
+)
+def test_local_md_particle_density(freeze_reference, k, integrator_klass, dt, friction):
     """Verify that the average particle density around a single particle is stable.
 
     In the naive implementation of local md, a vacuum can appear around the local idxs. See naive_local_resampling_move
     for what the incorrect implementation looks like. The vacuum is introduced due to discretization error where in a step
     a particle moves away from the local idxs and is frozen in the next round of local MD.
     """
+
     mol, _ = get_biphenyl()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    # Minimize the starting pose
+    replace_conformer_with_minimized(mol, ff)
 
     temperature = constants.DEFAULT_TEMP
-    dt = 2.5e-3
-    friction = 1.0
-    seed = 2022
+    seed = 2026
     cutoff = 1.2
 
     # Have to minimize, else there can be clashes and the local moves will cause crashes
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
         mol, ff, 0.0, box_width=4.0, margin=0.1
     )
 
+    box = host_config.box
+
     bond_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
     bond_list = get_bond_list(bond_pot)
-    masses = apply_hmr(masses, bond_list, multiplier=2)
+    masses = apply_hmr(masses, bond_list)
     group_idxs = get_group_indices(bond_list, coords.shape[0])
 
     local_idxs = np.arange(len(coords) - mol.GetNumAtoms(), len(coords), dtype=np.int32)
@@ -255,14 +275,25 @@ def test_local_md_particle_density(freeze_reference, k):
     # Construct list of atoms in the inner shell
     nblist.set_row_idxs(local_idxs.astype(np.uint32))
 
-    intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
+    if integrator_klass is VelocityVerletIntegrator:
+        intg = VelocityVerletIntegrator(dt, masses)
+        intg_impl = intg.impl()
+    elif integrator_klass is LangevinIntegrator:
+        intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
+        intg_impl = intg.impl()
+    elif integrator_klass is ConstrainedLangevinIntegrator:
+        bt = BaseTopology(mol, ff)
+        afe = AbsoluteFreeEnergy(mol, bt)
+        constraints = afe.combine_constraints(host_config)
+        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, masses, seed, constraints)
+        intg_impl = intg.impl()
+    else:
+        raise ValueError(f"Unknown integrator type {integrator_klass}")
 
     barostat_interval = 5
     barostat = MonteCarloBarostat(
         coords.shape[0], constants.DEFAULT_PRESSURE, temperature, group_idxs, barostat_interval, seed + 1
     )
-
-    intg_impl = intg.impl()
 
     v0 = np.zeros_like(coords)
     bps = []
@@ -302,34 +333,129 @@ def test_local_md_particle_density(freeze_reference, k):
 
 
 @pytest.mark.parametrize("seed", [2025])
-def test_local_md_bulk_solvent(seed):
-    """Tests a bug where empty potentials would cause local MD failures"""
+@pytest.mark.parametrize(
+    "integrator_klass, dt, friction",
+    [
+        (LangevinIntegrator, 2.5e-3, 1.0),
+        (ConstrainedLangevinIntegrator, 4.0e-3, 1.0),
+    ],
+)
+def test_local_md_bulk_solvent(seed, integrator_klass, dt, friction):
+    """Test local md in bulk solvent"""
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    temperature = constants.DEFAULT_TEMP
+
     host_config = build_water_system(4.0, ff.water_ff, box_margin=0.1)
     pots = host_config.host_system.get_U_fns()
+    masses = host_config.masses
+
+    bond_list = get_bond_list(host_config.host_system.bond.potential)
+    masses = apply_hmr(masses, bond_list)
+
+    if integrator_klass is LangevinIntegrator:
+        intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
+        intg_impl = intg.impl()
+    elif integrator_klass is ConstrainedLangevinIntegrator:
+        constraint_groups = host_config.constraints
+        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, masses, seed, constraint_groups)
+        intg_impl = intg.impl()
+    else:
+        raise ValueError(f"Unknown integrator type {integrator_klass}")
 
     for pot in pots:
         # No torsions in solvent
         if isinstance(pot.potential, PeriodicTorsion):
             assert len(pot.params) == 0
 
-    dt = 1.5e-3
-    friction = 1.0
-    temperature = constants.DEFAULT_TEMP
-
     rng = np.random.default_rng(seed)
 
     local_idx = rng.choice(np.arange(len(host_config.conf), dtype=np.int32))
-
-    intg = LangevinIntegrator(temperature, dt, friction, host_config.masses, seed)
 
     ctxt = custom_ops.Context_f32(
         host_config.conf,
         np.zeros_like(host_config.conf),
         host_config.box,
-        intg.impl(),
+        intg_impl,
         [bp.to_gpu(np.float32).bound_impl for bp in pots],
     )
+    equil_xs, equil_boxes = ctxt.multiple_steps(100)
     xs, boxes = ctxt.multiple_steps_local(200, np.array([local_idx], dtype=np.int32))
-    np.testing.assert_array_equal(host_config.box, boxes[-1])
-    np.testing.assert_equal(xs[-1, local_idx, :], host_config.conf[local_idx])
+    np.testing.assert_array_equal(equil_boxes[-1], boxes[-1])
+    np.testing.assert_equal(xs[-1, local_idx, :], equil_xs[-1, local_idx])
+
+
+@pytest.mark.parametrize("seed", [2025])
+@pytest.mark.parametrize(
+    "dt, friction",
+    [
+        (2.5e-3, 1.0),
+        (4.0e-3, 1.0),
+    ],
+)
+def test_local_md_bulk_solvent_constrained_integration(seed, dt, friction):
+    """Verify that running with constraints will freeze all of the positions/velocities"""
+    mol, _ = get_biphenyl()
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    # Minimize the starting pose
+    replace_conformer_with_minimized(mol, ff)
+
+    temperature = constants.DEFAULT_TEMP
+    seed = 2026
+
+    # Have to minimize, else there can be clashes and the local moves will cause crashes
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, box_width=4.0, margin=0.1
+    )
+
+    box = host_config.box
+
+    bond_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
+    bond_list = get_bond_list(bond_pot)
+    masses = apply_hmr(masses, bond_list)
+    group_idxs = get_group_indices(bond_list, coords.shape[0])
+
+    bt = BaseTopology(mol, ff)
+    afe = AbsoluteFreeEnergy(mol, bt)
+    constraints = afe.combine_constraints(host_config)
+    intg = ConstrainedLangevinIntegrator(temperature, dt, friction, masses, seed, constraints)
+    intg_impl = intg.impl()
+
+    barostat_interval = 5
+    barostat = MonteCarloBarostat(
+        coords.shape[0], constants.DEFAULT_PRESSURE, temperature, group_idxs, barostat_interval, seed + 1
+    )
+
+    v0 = np.zeros_like(coords)
+    bps = []
+    for p, bp in zip(sys_params, unbound_potentials):
+        bps.append(bp.bind(p).to_gpu(np.float32).bound_impl)
+
+    ctxt = custom_ops.Context_f32(coords, v0, box, intg_impl, bps, movers=[barostat.impl(bps)])
+    ctxt.setup_local_md(temperature, True)
+
+    rng = np.random.default_rng(seed)
+    idxs = np.arange(len(coords), dtype=np.int_)
+    reference_idx = rng.choice(idxs)
+    free_particles = rng.choice(idxs, size=len(coords) // 2, replace=False)
+    free_particles = np.delete(free_particles, free_particles == reference_idx)
+    frozen_particles = np.delete(idxs, free_particles)
+
+    k = 1.0
+    # Select a large radius to avoid large initial forces
+    radius = np.max(box)
+
+    ctxt.multiple_steps(200)
+    starting_x = ctxt.get_x_t()
+    starting_v = ctxt.get_v_t()
+    starting_box = ctxt.get_box()
+
+    xs, boxes = ctxt.multiple_steps_local_selection(
+        10, reference_idx, free_particles.astype(np.int32), radius=radius, k=k
+    )
+    assert np.all(xs[-1, free_particles] != starting_x[free_particles])
+    assert np.all(ctxt.get_v_t()[free_particles] != starting_v[free_particles])
+
+    np.testing.assert_equal(xs[-1, frozen_particles], starting_x[frozen_particles])
+    np.testing.assert_equal(ctxt.get_v_t()[frozen_particles], starting_v[frozen_particles])
+    np.testing.assert_equal(ctxt.get_box(), starting_box)

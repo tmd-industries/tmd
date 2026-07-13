@@ -26,6 +26,8 @@ import pytest
 from common import ligand_from_smiles
 from jax import flatten_util
 from openmm import app
+from openmm import unit as omm_unit
+from openmm.app.forcefield import ForceField as OMMForceField
 from rdkit import Chem
 from rdkit.Chem import AllChem, rdmolops
 
@@ -35,6 +37,7 @@ from tmd.ff import Forcefield
 from tmd.ff.charges import AM1CCC_CHARGES
 from tmd.ff.handlers import bonded, nonbonded
 from tmd.ff.handlers import utils as h_utils
+from tmd.ff.handlers.openmm_deserializer import deserialize_constraints
 from tmd.md import builders
 from tmd.testsystems import fetch_freesolv
 from tmd.utils import path_to_internal_file
@@ -1494,3 +1497,58 @@ def test_environment_bcc_full_protein(is_nn, env_nn_args):
         first = group[0]
         for other in group[1:]:
             np.testing.assert_almost_equal(final_q_params[other], final_q_params[first])
+
+
+@pytest.mark.nogpu
+def test_deserialize_constraints_from_topology():
+    """Verify that deserialize_constraints built from topology+coords matches
+    OpenMM's constraint system parameters."""
+
+    # Build a water system using OpenMM's ForceField
+    water_ff = OMMForceField("tip3p.xml")
+
+    top = app.Topology()
+    pos = omm_unit.Quantity((), omm_unit.angstroms)
+    modeller = app.Modeller(top, pos)
+    modeller.addSolvent(water_ff, numAdded=4, neutralize=False, model="tip3p")
+
+    # Create OpenMM system with constraints
+    omm_system = water_ff.createSystem(
+        modeller.topology,
+        nonbondedMethod=app.NoCutoff,
+        constraints=app.HBonds,
+    )
+
+    coords = np.array(modeller.positions.value_in_unit(omm_unit.nanometer), dtype=np.float64)
+
+    # Get constraints from OpenMM system directly
+    ref_constraint_groups = defaultdict(list)
+    ref_distances = defaultdict(list)
+    atoms = list(modeller.topology.atoms())
+    for i in range(omm_system.getNumConstraints()):
+        i_idx, j_idx, distance = omm_system.getConstraintParameters(i)
+        print(i_idx, j_idx, atoms[i_idx].element, atoms[j_idx].element)
+        i_is_hydrogen = atoms[i_idx].element.atomic_number == 1
+        j_is_hydrogen = atoms[j_idx].element.atomic_number == 1
+        if i_is_hydrogen and not j_is_hydrogen:
+            ref_constraint_groups[j_idx].append(i_idx)
+            ref_distances[j_idx].append(distance.value_in_unit(omm_unit.nanometer))
+        elif not i_is_hydrogen and j_is_hydrogen:
+            ref_constraint_groups[i_idx].append(j_idx)
+            ref_distances[i_idx].append(distance.value_in_unit(omm_unit.nanometer))
+
+    # Build constraint groups from topology + coords
+    groups, dists = deserialize_constraints(modeller.topology, coords)
+
+    assert len(groups) == len(ref_constraint_groups)
+
+    for group, group_dists in zip(groups, dists):
+        heavy = group[0]
+        ref_group = ref_constraint_groups[heavy]
+        assert set(group[1:]) == set(ref_group)
+
+        ref_dists = ref_distances[heavy]
+        for i, atom in enumerate(ref_group):
+            idx = ref_group.index(atom)
+            pair_dist = group_dists[idx]
+            np.testing.assert_allclose(ref_dists[i], pair_dist, atol=5e-5)

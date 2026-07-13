@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -162,6 +163,223 @@ class LangevinIntegrator(StochasticIntegrator):
 
     def step_lax(self, key, x, v):
         return self._step(x, v, jax.random.normal(key, x.shape))
+
+
+class ConstraintSolver:
+    def __init__(self, masses, constraint_groups, constraint_distances, max_iter: int = 15, tolerance: float = 1e-8):
+        """Solve holonomic constraints using SHAKE (positions) and RATTLE (velocities).
+
+        Parameters
+        ----------
+        masses : array-like
+            Mass of each atom.
+        constraint_groups : list of list of int
+            Atom groups where the first atom is bonded to all subsequent atoms.
+        constraint_distances : list of list of float
+            Target bond distances for each group.
+        max_iter : int
+            Maximum solver iterations.
+        tolerance : float
+            Convergence tolerance.
+        """
+        assert len(constraint_distances) == len(constraint_groups), "must provide equal number of groups and distances"
+        if any(len(group) > 7 for group in constraint_groups):
+            raise ValueError("limited to 7 atoms per group")
+        self.constraint_groups = constraint_groups
+        self.constraint_distances = constraint_distances
+
+        self._tol = tolerance
+        self._max_iter = max_iter
+        self._inv_masses = 1.0 / np.array(masses, dtype=np.float64)
+
+    def apply_shake(self, x):
+        """Apply SHAKE position constraint correction.
+
+        Iteratively adjusts positions so that all bond distance constraints
+        are satisfied to within tolerance. Uses the standard SHAKE algorithm
+        with mass-weighted corrections based on squared-distance constraints.
+        Does not mutate ``x``.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Drifted position array of shape (N, 3).
+
+        Returns
+        -------
+        np.ndarray
+            The corrected position array (new array).
+        """
+        if len(self.constraint_groups) == 0:
+            return x.copy()
+        x_ref = x.copy()
+        for group, dists in zip(self.constraint_groups, self.constraint_distances):
+            anchor = group[0]
+            for i in range(self._max_iter):
+                converged = True
+                for atom, target_dist in zip(group[1:], dists):
+                    delta_ref = x_ref[anchor] - x_ref[atom]
+                    target_dist_2 = target_dist**2
+                    delta = x[anchor] - x[atom]
+                    dist2 = np.dot(delta, delta)
+                    diff = dist2 - target_dist_2
+                    if float(np.abs(diff)) <= self._tol * target_dist_2:
+                        continue
+                    inv_mi = self._inv_masses[anchor]
+                    inv_mj = self._inv_masses[atom]
+                    converged = False
+                    denom = 2.0 * (inv_mi + inv_mj) * np.dot(delta, delta_ref)
+                    if np.allclose(denom, 0.0):
+                        continue
+                    grad = diff / denom
+                    x[anchor] -= grad * inv_mi * delta_ref
+                    x[atom] += grad * inv_mj * delta_ref
+                if converged:
+                    break
+        return x
+
+    def apply_rattle(self, last_x, v):
+        """Apply RATTLE velocity constraint correction.
+
+        Adjusts velocities so that the time derivative of all position
+        constraints is zero, i.e., ``(x[i] - x[j]) . (v[i] - v[j]) = 0``.
+        This ensures constrained atoms move consistently. Their relative
+        velocity along the bond direction is zero. Uses a mass-weighted
+        correction along the position difference vector. Does not mutate ``v``.
+
+        Parameters
+        ----------
+        last_x : np.ndarray
+            Positions array of shape (N, 3) (SHAKE-corrected positions).
+        v : np.ndarray
+            Velocity array of shape (N, 3).
+
+        Returns
+        -------
+        np.ndarray
+            The corrected velocity array (new array).
+        """
+        if len(self.constraint_groups) == 0:
+            return v.copy()
+
+        v = v.copy()
+        for group in self.constraint_groups:
+            anchor = group[0]
+            for _ in range(self._max_iter):
+                converged = True
+                for atom in group[1:]:
+                    delta_x = last_x[anchor] - last_x[atom]
+                    dist2 = np.dot(delta_x, delta_x)
+                    inv_mi = self._inv_masses[anchor]
+                    inv_mj = self._inv_masses[atom]
+
+                    denom = (inv_mi + inv_mj) * dist2
+                    if np.allclose(denom, 0.0):
+                        continue
+                    delta_v = v[anchor] - v[atom]
+                    rv = np.dot(delta_x, delta_v)
+                    if np.abs(rv) <= self._tol:
+                        continue
+                    converged = False
+                    lam = rv / denom
+                    v[anchor] -= lam * inv_mi * delta_x
+                    v[atom] += lam * inv_mj * delta_x
+                if converged:
+                    break
+        return v
+
+    def apply_velocity_constraints(self, x, v):
+        return self.apply_rattle(x, v)
+
+    def apply_positional_constraints(self, x):
+        return self.apply_shake(x)
+
+    def solve(self, x, v):
+        """Apply SHAKE to positions then RATTLE to velocities.
+
+        Returns copies of the corrected position and velocity arrays.
+        """
+        if len(self.constraint_groups) == 0:
+            return x.copy(), v.copy()
+        x = x.copy()
+        v = v.copy()
+        v = self.apply_velocity_constraints(x, v)
+        x = self.apply_positional_constraints(x)
+        return x, v
+
+
+class ConstrainedLangevinIntegrator(LangevinIntegrator):
+    """Langevin integrator with SHAKE/RATTLE (https://doi.org/10.1016/0021-9991(83)90014-1) holonomic constraints.
+
+    Constraint groups can contain up to 7 atoms. Each group specifies
+    a list of bond distances (pairs of atom indices + target distance).
+    """
+
+    def __init__(
+        self,
+        force_fxn,
+        masses,
+        temperature,
+        dt,
+        friction,
+        constraint_groups,
+        constraint_distances,
+        max_iter: int = 15,
+        tolerance: float = 1e-5,
+    ):
+        """Langevin integrator with SHAKE/RATTLE holonomic constraints.
+
+        Parameters
+        ----------
+        force_fxn : callable
+            Force function returning (N, 3) array of forces.
+        masses : array-like
+            Masses for each atom. np.inf freezes the atom.
+        temperature : float
+            Temperature in Kelvin.
+        dt : float
+            Timestep in picoseconds.
+        friction : float
+            Collision rate in 1/ps.
+        constraint_groups : list of list of int
+            Groups of atoms where the first atom is bonded to all subsequent atoms.
+        constraint_distances : list of list of float
+            The lengths of the bonds implied by each constraint group.
+        max_iter : int
+            Maximum number of iterations for the constraint solver.
+        tolerance : float
+            The tolerance of the constraint solver.
+        """
+
+        super().__init__(force_fxn, masses, temperature, dt, friction)
+
+        self._solver = ConstraintSolver(masses, constraint_groups, constraint_distances, max_iter, tolerance)
+
+    def _step(self, x, v, noise):
+        """BAOAB step with RATTLE constraint enforcement."""
+        v_mid = v + self.cb * self.force_fxn(x)
+        v_mid = self._solver.apply_velocity_constraints(x, v_mid)
+        new_v = (self.ca * v_mid) + (self.cc * noise)
+        preconstrained = x + 0.5 * self.dt * (v_mid + new_v)
+        new_x = self._solver.apply_positional_constraints(preconstrained)
+        # Adjust the velocities by the change in the positions
+        # Ref: https://github.com/choderalab/integrator-benchmark/blob/bb307e6ebf476b652e62e41ae49730f530732da3/benchmark/integrators/langevin.py#L130-L133
+        new_v += (new_x - preconstrained) / self.dt
+
+        # Unclear if this is required. OpenMM excludes this step:
+        # https://github.com/openmm/openmm/blob/6e864310520172a4d108d195bd6b15ca46238223/platforms/common/src/CommonKernels.cpp#L3189-L3194
+        # new_v = self._solver.apply_velocity_constraints(new_x, new_v)
+
+        return new_x, new_v
+
+    def step_lax(self, key, x, v):
+        """Not implemented. SHAKE/RATTLE constraints use numpy operations not compatible with jax.jit.
+
+        This could be supported, but currently it's a low priority."""
+        raise NotImplementedError(
+            "ConstrainedLangevinIntegrator does not support step_lax/multiple_steps_lax. "
+            "The SHAKE/RATTLE constraint solver uses numpy operations that are not JAX-transformable."
+        )
 
 
 class VelocityVerletIntegrator(Integrator):

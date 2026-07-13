@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,11 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections import defaultdict
 
 import numpy as np
 import openmm as mm
 from numpy.typing import NDArray
-from openmm import unit
+from openmm import app, unit
 
 from tmd import constants, potentials
 from tmd.ff.handlers.utils import canonicalize_bond
@@ -145,7 +147,7 @@ def deserialize_nonbonded_force(force, N):
 
 def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potentials.BoundPotential], NDArray]:
     """
-    Deserialize an OpenMM XML file
+    Deserialize an OpenMM System Object
 
     Parameters
     ----------
@@ -281,3 +283,65 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
     bps = [bond, angle, proper, improper, nonbonded]
 
     return bps, np.array(masses)
+
+
+def deserialize_constraints(
+    topology: app.Topology,
+    coords: NDArray,
+) -> tuple[list[list[int]], list[list[float]]]:
+    """Construct constraint groups from an OpenMM topology and coordinates.
+
+    Identifies hydrogen-heavy atom bonds from the topology and uses the
+    provided coordinates to compute bond distances.
+
+    Returns constraint groups in the same format as get_hydrogen_bond_constraint_groups,
+    with each group having the heavy atom first followed by hydrogen indices,
+    and corresponding bond distances.
+
+    Parameters
+    ----------
+    topology: openmm.app.Topology
+        An OpenMM topology object with bond information.
+    coords: numpy.ndarray
+        N x 3 array of atom coordinates (nm) from which distances are computed.
+
+    Returns
+    -------
+    groups : list of list of int
+        Atom index groups with heavy atom first.
+    distances : list of list of float
+        Bond distances from the heavy atom to each hydrogen in the group.
+    """
+    # Determine which atoms are hydrogens
+    is_hydrogen = [atom.element.atomic_number == 1 for atom in topology.atoms()]
+
+    # Build set of H-heavy bonds from topology
+    h_heavy_bonds = []
+    for bond in topology.bonds():
+        i_idx = bond[0].index
+        j_idx = bond[1].index
+        i_is_h = is_hydrogen[i_idx]
+        j_is_h = is_hydrogen[j_idx]
+
+        if i_is_h and not j_is_h:
+            h_heavy_bonds.append((i_idx, j_idx))
+        elif j_is_h and not i_is_h:
+            h_heavy_bonds.append((j_idx, i_idx))
+        elif j_is_h and i_is_h:
+            assert False, "Unexpected hydrogen bonded to a hydrogen"
+
+    # Compute distances from coordinates and group by heavy atom
+    heavy_to_hydrogens = defaultdict(list)
+    for hydrogen_atom, heavy_atom in h_heavy_bonds:
+        dist = np.linalg.norm(coords[hydrogen_atom] - coords[heavy_atom])
+        heavy_to_hydrogens[heavy_atom].append((hydrogen_atom, float(dist)))
+
+    groups = []
+    distances = []
+    for heavy, hydrogens in heavy_to_hydrogens.items():
+        group = [heavy, *[h for h, _ in hydrogens]]
+        group_dists = [d for _, d in hydrogens]
+        groups.append(group)
+        distances.append(group_dists)
+
+    return groups, distances

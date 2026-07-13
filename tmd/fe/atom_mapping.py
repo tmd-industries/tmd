@@ -183,7 +183,7 @@ def get_cores(
 
     heavy_matches_heavy_only: bool
         atom i in mol A can match atom j in mol B
-        only if is_hydrogen(i, A) == is_hydrogen(i, B)
+        only if is_hydrogen(i, A) == is_hydrogen(i, B). Must be enabled to simulate with Constraints
 
     enforce_chiral: bool
         Filter out cores that would flip atom chirality

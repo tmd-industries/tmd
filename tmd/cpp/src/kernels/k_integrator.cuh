@@ -1,5 +1,5 @@
 // Copyright 2019-2025, Relay Therapeutics
-// Modifications Copyright 2025 Forrest York
+// Modifications Copyright 2025-2026 Forrest York
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,175 @@
 #include "k_fixed_point.cuh"
 
 namespace tmd {
+
+// The 'kick' phase of baoab that updates the velocities
+template <typename RealType>
+inline __device__ void baoab_b(const RealType atom_cbs,
+                               unsigned long long *__restrict__ du_dx, // [3],
+                               RealType *__restrict__ v_t) {
+  RealType force_x = -FIXED_TO_FLOAT<RealType>(du_dx[0]);
+  RealType force_y = -FIXED_TO_FLOAT<RealType>(du_dx[1]);
+  RealType force_z = -FIXED_TO_FLOAT<RealType>(du_dx[2]);
+
+  v_t[0] += atom_cbs * force_x;
+  v_t[1] += atom_cbs * force_y;
+  v_t[2] += atom_cbs * force_z;
+
+  // Zero out the forces after using them to avoid having to memset the
+  // forces later
+  du_dx[0] = 0;
+  du_dx[1] = 0;
+  du_dx[2] = 0;
+}
+
+template <typename RealType>
+inline __device__ void
+baoab_ao(const RealType half_dt, const RealType ca, const RealType atom_ccs,
+         curandState_t &local_state, RealType *__restrict__ v_mid,
+         RealType *__restrict__ v_t, RealType *__restrict__ x_t) {
+  RealType noise_x;
+  RealType noise_y;
+  template_curand_normal2(noise_x, noise_y, &local_state);
+
+  v_t[0] = ca * v_mid[0] + atom_ccs * noise_x;
+  v_t[1] = ca * v_mid[1] + atom_ccs * noise_y;
+  v_t[2] =
+      ca * v_mid[2] + atom_ccs * template_curand_normal<RealType>(&local_state);
+
+  x_t[0] += half_dt * (v_mid[0] + v_t[0]);
+  x_t[1] += half_dt * (v_mid[1] + v_t[1]);
+  x_t[2] += half_dt * (v_mid[2] + v_t[2]);
+}
+
+template <typename RealType, int D>
+__global__ void
+k_update_forward_kick(const int num_systems, const int N,
+                      const unsigned int *__restrict__ idxs, // N
+                      const RealType *__restrict__ cbs,      // N
+                      RealType *__restrict__ v_t,            // N x 3
+                      unsigned long long *__restrict__ du_dx // N x 3
+) {
+  static_assert(D == 3);
+
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+
+  int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (kernel_idx < N) {
+    int atom_idx =
+        (idxs == nullptr ? kernel_idx : idxs[system_idx * N + kernel_idx]);
+
+    if (atom_idx < N) {
+      // cbs assumed to contain dt / mass
+      const RealType atom_cbs = cbs[system_idx * N + atom_idx];
+
+      baoab_b<RealType>(atom_cbs, du_dx + system_idx * N * D + atom_idx * D,
+                        v_t + system_idx * N * D + atom_idx * D);
+
+    } else if (idxs != nullptr && kernel_idx < N) {
+      // Zero out the forces after using them to avoid having to memset the
+      // forces later. Needed to handle local MD where the next round kernel_idx
+      // may actually take a part. Requires idxs[kernel_idx] == kernel_idx when
+      // idxs[kernel_idx] != N
+      du_dx[system_idx * N * D + kernel_idx * D + 0] = 0;
+      du_dx[system_idx * N * D + kernel_idx * D + 1] = 0;
+      du_dx[system_idx * N * D + kernel_idx * D + 2] = 0;
+    }
+    kernel_idx += gridDim.x * blockDim.x;
+  }
+};
+
+template <typename RealType, int D>
+__global__ void
+k_update_forward_half_step(const int num_systems, const int N,
+                           const RealType dt, const RealType ca,
+                           const unsigned int *__restrict__ idxs,   // N
+                           const RealType *__restrict__ ccs,        // N
+                           curandState_t *__restrict__ rand_states, // N
+                           RealType *__restrict__ x_t,              // N x 3
+                           RealType *__restrict__ v_t               // N x 3
+) {
+  static_assert(D == 3);
+
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+
+  const RealType half_dt = static_cast<RealType>(0.5) * dt;
+
+  int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (kernel_idx < N) {
+    int atom_idx =
+        (idxs == nullptr ? kernel_idx : idxs[system_idx * N + kernel_idx]);
+
+    if (atom_idx < N) {
+      curandState_t local_state = rand_states[system_idx * N + atom_idx];
+      // BAOAB (https://arxiv.org/abs/1203.5428), rotated by half a timestep
+
+      // ca assumed to contain exp(-friction * dt)
+      // ccs assumed to contain sqrt(1 - exp(-2 * friction * dt)) * sqrt(kT /
+      // mass)
+      const RealType atom_ccs = ccs[system_idx * N + atom_idx];
+
+      RealType v_mid[D];
+      v_mid[0] = v_t[system_idx * N * D + atom_idx * D + 0];
+      v_mid[1] = v_t[system_idx * N * D + atom_idx * D + 1];
+      v_mid[2] = v_t[system_idx * N * D + atom_idx * D + 2];
+
+      baoab_ao<RealType>(half_dt, ca, atom_ccs, local_state, v_mid,
+                         v_t + system_idx * N * D + atom_idx * D,
+                         x_t + system_idx * N * D + atom_idx * D);
+      // Write the random state back into memory
+      rand_states[system_idx * N + atom_idx] = local_state;
+    }
+    kernel_idx += gridDim.x * blockDim.x;
+  }
+};
+
+// A correction term for the velocities when running BAOAB
+template <typename RealType, int D>
+__global__ void k_apply_velocity_correction(
+    const int num_systems, const int N, const int n_groups, const RealType dt,
+    const unsigned int *__restrict__ idxs, // N
+    const int *__restrict__ group_offsets, // [n_groups + 1]
+    const int *__restrict__ group_indices, const RealType *__restrict__ x_t,
+    const RealType *__restrict__ unconstrained_x_t,
+    RealType *__restrict__ v_t) {
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+
+  const RealType inv_dt = 1 / dt;
+  const int atoms_in_constraints = group_offsets[n_groups];
+
+  int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (kernel_idx < n_groups) {
+    const int start = group_offsets[kernel_idx];
+    const int end = group_offsets[kernel_idx + 1];
+    for (int i = 0; i < end - start; i++) {
+      const int atom_idx = group_indices[start + i];
+      if (idxs != nullptr && idxs[system_idx * N + atom_idx] >= N) {
+        continue;
+      }
+
+#pragma unroll D
+      for (int j = 0; j < D; j++) {
+        const RealType final_pos = x_t[system_idx * N * D + atom_idx * D + j];
+        const RealType unconstrained_pos =
+            unconstrained_x_t[system_idx * atoms_in_constraints * D +
+                              (start + i) * D + j];
+        v_t[system_idx * N * D + atom_idx * D + j] +=
+            (final_pos - unconstrained_pos) * inv_dt;
+      }
+    }
+
+    kernel_idx += gridDim.x * blockDim.x;
+  }
+}
 
 template <typename RealType, int D>
 __global__ void
@@ -52,53 +221,26 @@ k_update_forward_baoab(const int num_systems, const int N, const RealType dt,
       // cbs assumed to contain dt / mass
       // ccs assumed to contain sqrt(1 - exp(-2 * friction * dt)) * sqrt(kT /
       // mass)
-      RealType atom_cbs = cbs[system_idx * N + atom_idx];
-      RealType atom_ccs = ccs[system_idx * N + atom_idx];
+      const RealType atom_cbs = cbs[system_idx * N + atom_idx];
+      const RealType atom_ccs = ccs[system_idx * N + atom_idx];
 
-      RealType force_x = -FIXED_TO_FLOAT<RealType>(
-          du_dx[system_idx * N * D + atom_idx * D + 0]);
-      RealType force_y = -FIXED_TO_FLOAT<RealType>(
-          du_dx[system_idx * N * D + atom_idx * D + 1]);
-      RealType force_z = -FIXED_TO_FLOAT<RealType>(
-          du_dx[system_idx * N * D + atom_idx * D + 2]);
+      RealType v_mid[D];
+      v_mid[0] = v_t[system_idx * N * D + atom_idx * D + 0];
+      v_mid[1] = v_t[system_idx * N * D + atom_idx * D + 1];
+      v_mid[2] = v_t[system_idx * N * D + atom_idx * D + 2];
 
-      RealType v_mid_x =
-          v_t[system_idx * N * D + atom_idx * D + 0] + atom_cbs * force_x;
-      RealType v_mid_y =
-          v_t[system_idx * N * D + atom_idx * D + 1] + atom_cbs * force_y;
-      RealType v_mid_z =
-          v_t[system_idx * N * D + atom_idx * D + 2] + atom_cbs * force_z;
+      baoab_b<RealType>(atom_cbs, du_dx + system_idx * N * D + atom_idx * D,
+                        v_mid);
 
-      // Zero out the forces after using them to avoid having to memset the
-      // forces later
-      du_dx[system_idx * N * D + atom_idx * D + 0] = 0;
-      du_dx[system_idx * N * D + atom_idx * D + 1] = 0;
-      du_dx[system_idx * N * D + atom_idx * D + 2] = 0;
-
-      RealType noise_x;
-      RealType noise_y;
-      template_curand_normal2(noise_x, noise_y, &local_state);
-
-      v_t[system_idx * N * D + atom_idx * D + 0] =
-          ca * v_mid_x + atom_ccs * noise_x;
-      v_t[system_idx * N * D + atom_idx * D + 1] =
-          ca * v_mid_y + atom_ccs * noise_y;
-      v_t[system_idx * N * D + atom_idx * D + 2] =
-          ca * v_mid_z +
-          atom_ccs * template_curand_normal<RealType>(&local_state);
-
-      x_t[system_idx * N * D + atom_idx * D + 0] +=
-          half_dt * (v_mid_x + v_t[system_idx * N * D + atom_idx * D + 0]);
-      x_t[system_idx * N * D + atom_idx * D + 1] +=
-          half_dt * (v_mid_y + v_t[system_idx * N * D + atom_idx * D + 1]);
-      x_t[system_idx * N * D + atom_idx * D + 2] +=
-          half_dt * (v_mid_z + v_t[system_idx * N * D + atom_idx * D + 2]);
-
+      baoab_ao<RealType>(half_dt, ca, atom_ccs, local_state, v_mid,
+                         v_t + system_idx * N * D + atom_idx * D,
+                         x_t + system_idx * N * D + atom_idx * D);
       // Write the random state back into memory
       rand_states[system_idx * N + atom_idx] = local_state;
+
     } else if (idxs != nullptr && kernel_idx < N) {
       // Zero out the forces after using them to avoid having to memset the
-      // forces later Needed to handle local MD where the next round kernel_idx
+      // forces later. Needed to handle local MD where the next round kernel_idx
       // may actually take a part. Requires idxs[kernel_idx] == kernel_idx when
       // idxs[kernel_idx] != N
       du_dx[system_idx * N * D + kernel_idx * D + 0] = 0;

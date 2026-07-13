@@ -18,6 +18,7 @@
 #include "constants.hpp"
 #include "context.hpp"
 
+#include "constrained_langevin_integrator.hpp"
 #include "fixed_point.hpp"
 #include "flat_bottom_bond.hpp"
 #include "gpu_utils.cuh"
@@ -128,6 +129,11 @@ template <typename RealType> RealType Context<RealType>::_get_temperature() {
   if (std::shared_ptr<LangevinIntegrator<RealType>> langevin =
           std::dynamic_pointer_cast<LangevinIntegrator<RealType>>(intg_);
       langevin != nullptr) {
+    return langevin->get_temperature();
+  } else if (std::shared_ptr<ConstrainedLangevinIntegrator<RealType>> langevin =
+                 std::dynamic_pointer_cast<
+                     ConstrainedLangevinIntegrator<RealType>>(intg_);
+             langevin != nullptr) {
     return langevin->get_temperature();
   } else {
     throw std::runtime_error("integrator must be LangevinIntegrator.");

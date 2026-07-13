@@ -348,7 +348,7 @@ def solvent_hif2a_ligand_pair_single_topology_lam0_state(hif2a_ligand_pair_singl
     st, forcefield = hif2a_ligand_pair_single_topology
     solvent_host_config = builders.build_water_system(3.0, st.ff.water_ff, mols=[st.mol_a, st.mol_b])
     solvent_host = setup_optimized_host(solvent_host_config, [st.mol_a, st.mol_b], st.ff)
-    state = setup_initial_states(st, solvent_host, DEFAULT_TEMP, [0.0], 2023, verify_constraints=True)[0]
+    state = setup_initial_states(st, solvent_host, DEFAULT_TEMP, [0.0], 2023, verify_constraints=True, dt=4e-3)[0]
     return state
 
 
@@ -384,7 +384,11 @@ def test_sample_multiple_iterations_local_md(solvent_hif2a_ligand_pair_single_to
     n_eq_steps = 0
 
     md_params = MDParams(
-        1, n_eq_steps, steps_per_frame, 2026, local_md_params=LocalMDParams(local_steps=steps_per_frame, iterations=1)
+        1,
+        n_eq_steps,
+        steps_per_frame,
+        2026,
+        local_md_params=LocalMDParams(local_steps=steps_per_frame, min_radius=1.0, max_radius=1.0, iterations=1),
     )
     x0 = solvent_hif2a_ligand_pair_single_topology_lam0_state.x0
     lig_idxs = solvent_hif2a_ligand_pair_single_topology_lam0_state.ligand_idxs
@@ -429,8 +433,9 @@ def hif2a_ligand_pair_single_topology_lam0_state():
     return state
 
 
+@pytest.mark.parametrize("dt", [1e-3, 2.5e-3, 4.0e-3])
 @pytest.mark.parametrize("seed", [2026])
-def test_hrex_batching_determinism(seed):
+def test_hrex_batching_determinism(dt, seed):
     # Lambdas should be close to ensure a high swap rate
     lambdas = np.linspace(0.0, 0.1, 4)
     forcefield = Forcefield.load_default()
@@ -441,12 +446,13 @@ def test_hrex_batching_determinism(seed):
 
     initial_states = setup_initial_states(
         single_topology,
-        None,  # Can only test determinism in vacuum since the barostat randomness to each batch
+        None,  # Can only test determinism in vacuum since the barostat randomness changes in batch mode
         DEFAULT_TEMP,
         lambdas,
         seed=seed,
         verify_constraints=False,
         min_cutoff=None,
+        dt=dt,
     )
     # Set friction to be zero to ensure determinism between batched and sequential modes
     initial_states = [
@@ -454,7 +460,7 @@ def test_hrex_batching_determinism(seed):
         for initial_state in initial_states
     ]
 
-    md_params = replace(DEFAULT_HREX_PARAMS, n_frames=100)
+    md_params = replace(DEFAULT_HREX_PARAMS, n_frames=50)
     ref_pair_bar_result, ref_samples_by_state, ref_hrex_diagnostics, ref_ws_diagnostics = run_sims_hrex(
         initial_states,
         md_params,
