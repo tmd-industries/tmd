@@ -25,9 +25,10 @@ void __global__ k_construct_bonded_params_and_system_idxs(
         *__restrict__ d_num_idxs_per_system,  // Number of idxs in each system
     const int *__restrict__ d_reference_idxs, // Atom index to create bonds to
     const RealType k, const RealType r_min, const RealType r_max,
-    const unsigned int *__restrict__ idxs, // [K]
-    int *__restrict__ bonds,               // [K * 2]
-    RealType *__restrict__ params,         // [K * 3]
+    const unsigned int *__restrict__ idxs,    // [K]
+    const char *__restrict__ freed_hydrogens, // [num_systems, atoms_per_system]
+    int *__restrict__ bonds,                  // [K * 2]
+    RealType *__restrict__ params,            // [K * 3]
     int *__restrict__ system_idxs) {
 
   const int system_idx = blockIdx.y;
@@ -53,13 +54,20 @@ void __global__ k_construct_bonded_params_and_system_idxs(
   }
   // The free is partitioned at the front of this array, the frozen is at the
   // tail.
-  const unsigned int atom_idx =
+  unsigned int atom_idx =
       FROZEN_BONDS ? idxs[atoms_per_system * system_idx + idx + num_free_bonds]
                    : idxs[atoms_per_system * system_idx + idx];
   if (atom_idx >= atoms_per_system) {
     return;
   }
   idx += system_offset;
+
+  // If an atom is one of the freed hydrogens, then create a dummy bond from the
+  // reference to itself
+  atom_idx = (freed_hydrogens != nullptr && freed_hydrogens[idx] > 0)
+                 ? d_reference_idxs[system_idx]
+                 : atom_idx;
+
   system_idxs[idx] = system_idx;
   bonds[idx * 2 + 0] = d_reference_idxs[system_idx];
   bonds[idx * 2 + 1] = atom_idx;
@@ -78,7 +86,8 @@ void __global__ k_update_index(T *__restrict__ d_array, std::size_t idx,
 void __global__ k_adjust_constraint_groups(
     const size_t num_systems, const size_t N, const int num_groups,
     const int *__restrict__ group_offsets,
-    const int *__restrict__ group_indices, char *__restrict__ flags) {
+    const int *__restrict__ group_indices, char *__restrict__ flags,
+    char *__restrict__ free_hydrogens) {
   const int system_idx = blockIdx.y;
   if (system_idx >= num_systems) {
     return;
@@ -97,6 +106,9 @@ void __global__ k_adjust_constraint_groups(
     for (int i = 0; i < (group_end - group_start); i++) {
       const int atom_idx = group_indices[group_start + i];
       flags[system_idxs_offset + atom_idx] = new_flag;
+      if (i > 0) {
+        free_hydrogens[system_idxs_offset + atom_idx] = new_flag;
+      }
     }
 
     idx += gridDim.x * blockDim.x;

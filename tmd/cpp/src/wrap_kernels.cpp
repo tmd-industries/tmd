@@ -670,6 +670,7 @@ void declare_context(py::module &m, const char *typestr) {
                 Box dimensions are invalid when a frame is collected
 
         Note: All boxes returned will be identical as local MD only runs under constant volume.
+        Note: If running with constraints, constraint groups will be either entirely free or entirely frozen depending on the heavy atom being free
     )pbdoc")
       .def(
           "multiple_steps_local_selection",
@@ -782,6 +783,7 @@ void declare_context(py::module &m, const char *typestr) {
                 Box dimensions are invalid when a frame is collected
 
         Note: All boxes returned will be identical as local MD only runs under constant volume.
+        Note: If running with constraints, constraint groups will be either entirely free or entirely frozen depending on the heavy atom being free
     )pbdoc")
       .def("setup_local_md", &Context<RealType>::setup_local_md,
            py::arg("temperature"), py::arg("freeze_reference"),

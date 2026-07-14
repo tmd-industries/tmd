@@ -130,6 +130,9 @@ private:
 
   const std::shared_ptr<ConstraintGroups<RealType>> constraints_;
 
+  DeviceBuffer<char>
+      d_freed_hydrogens_; // Hydrogens that were unfrozen thanks to constraints
+
   int *m_counter_; // mapped, zero-copy memory
   int *d_counter_; // device version
 

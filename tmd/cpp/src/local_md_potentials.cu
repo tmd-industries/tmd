@@ -173,7 +173,8 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
       d_scales_buffer_(get_scales_buffer_length_from_bps(bps_)),
       d_idxs_flags_(0), d_idxs_buffer_(0), d_idxs_temp_(0),
       d_system_idxs_buffer_(0), d_system_idxs_temp_(0), d_params_temp_(0),
-      constraints_(constraints) {
+      constraints_(constraints),
+      d_freed_hydrogens_(constraints_ == nullptr ? 0 : num_systems_ * N_) {
 
   if (temperature <= static_cast<RealType>(0.0)) {
     throw std::runtime_error("temperature must be greater than 0");
@@ -283,6 +284,10 @@ LocalMDPotentials<RealType>::LocalMDPotentials(
 
   // Create event with timings disabled as timings slow down events
   gpuErrchk(cudaEventCreateWithFlags(&sync_event_, cudaEventDisableTiming));
+  if (constraints_ != nullptr) {
+    gpuErrchk(
+        cudaMemset(d_freed_hydrogens_.data, 0, d_freed_hydrogens_.size()));
+  }
 };
 
 template <typename RealType> LocalMDPotentials<RealType>::~LocalMDPotentials() {
@@ -404,7 +409,8 @@ void LocalMDPotentials<RealType>::_setup_free_idxs_given_partitions(
         dim3(ceil_divide(constraints_->n_groups(), tpb), num_systems_), tpb, 0,
         stream>>>(num_systems_, N_, constraints_->n_groups(),
                   constraints_->get_group_offsets(),
-                  constraints_->get_group_indices(), d_flags_.data);
+                  constraints_->get_group_indices(), d_flags_.data,
+                  d_freed_hydrogens_.data);
     gpuErrchk(cudaPeekAtLastError());
   }
   for (int i = 0; i < num_systems_; i++) {
@@ -439,8 +445,10 @@ void LocalMDPotentials<RealType>::_setup_free_idxs_given_partitions(
   k_construct_bonded_params_and_system_idxs<RealType, false>
       <<<dim3(ceil_divide(N_, tpb), num_systems_), tpb, 0, stream>>>(
           num_systems_, N_, d_counter_, d_reference_idxs_.data, k, 0.0, radius,
-          d_partitioned_indices_.data, d_restraint_pairs_.data,
-          d_bond_params_.data, d_bond_system_idxs_.data);
+          d_partitioned_indices_.data,
+          d_freed_hydrogens_.size() > 0 ? d_freed_hydrogens_.data : nullptr,
+          d_restraint_pairs_.data, d_bond_params_.data,
+          d_bond_system_idxs_.data);
   gpuErrchk(cudaPeekAtLastError());
 
   gpuErrchk(cudaEventSynchronize(sync_event_));
@@ -481,8 +489,10 @@ void LocalMDPotentials<RealType>::_setup_free_idxs_given_partitions(
       k_construct_bonded_params_and_system_idxs<RealType, true>
           <<<dim3(ceil_divide(N_, tpb), num_systems_), tpb, 0, stream>>>(
               num_systems_, N_, d_counter_, d_reference_idxs_.data, k, 0.0,
-              radius, d_partitioned_indices_.data, d_restraint_pairs_.data,
-              d_bond_params_.data, d_bond_system_idxs_.data);
+              radius, d_partitioned_indices_.data,
+              d_freed_hydrogens_.size() > 0 ? d_freed_hydrogens_.data : nullptr,
+              d_restraint_pairs_.data, d_bond_params_.data,
+              d_bond_system_idxs_.data);
       gpuErrchk(cudaPeekAtLastError());
     }
 

@@ -404,7 +404,6 @@ def test_local_md_bulk_solvent_constrained_integration(seed, dt, friction):
     replace_conformer_with_minimized(mol, ff)
 
     temperature = constants.DEFAULT_TEMP
-    seed = 2026
 
     # Have to minimize, else there can be clashes and the local moves will cause crashes
     unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
@@ -441,8 +440,23 @@ def test_local_md_bulk_solvent_constrained_integration(seed, dt, friction):
     idxs = np.arange(len(coords), dtype=np.int_)
     reference_idx = rng.choice(idxs)
     free_particles = rng.choice(idxs, size=len(coords) // 2, replace=False)
+
+    # Expand the free set to include or exclude any constraint group based on whether the anchor atom is free
+    real_free_set = set([int(x) for x in free_particles])
+    for group in constraints.groups:
+        if group[0] in real_free_set:
+            for idx in group:
+                real_free_set.add(idx)
+        else:
+            for idx in group:
+                try:
+                    real_free_set.remove(idx)
+                except KeyError:
+                    continue
+
+    # Delete the reference, but the reference should be added to the real free set
+    # as atoms with the reference atom as the anchor will have their groups be free
     free_particles = np.delete(free_particles, free_particles == reference_idx)
-    frozen_particles = np.delete(idxs, free_particles)
 
     k = 1.0
     # Select a large radius to avoid large initial forces
@@ -456,9 +470,15 @@ def test_local_md_bulk_solvent_constrained_integration(seed, dt, friction):
     xs, boxes = ctxt.multiple_steps_local_selection(
         10, reference_idx, free_particles.astype(np.int32), radius=radius, k=k
     )
-    assert np.all(xs[-1, free_particles] != starting_x[free_particles])
-    assert np.all(ctxt.get_v_t()[free_particles] != starting_v[free_particles])
 
+    free_particles = np.array(list(real_free_set))
+    free_particles = np.delete(free_particles, free_particles == reference_idx)
+
+    frozen_particles = np.delete(idxs, free_particles)
+
+    np.testing.assert_equal(xs[-1, reference_idx], starting_x[reference_idx])
+    assert (xs[-1, free_particles] != starting_x[free_particles]).any(axis=1).all()
+    assert (ctxt.get_v_t()[free_particles] != starting_v[free_particles]).any(axis=1).all()
     np.testing.assert_equal(xs[-1, frozen_particles], starting_x[frozen_particles])
     np.testing.assert_equal(ctxt.get_v_t()[frozen_particles], starting_v[frozen_particles])
     np.testing.assert_equal(ctxt.get_box(), starting_box)
