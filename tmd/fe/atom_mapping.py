@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025-2026, Forrest York
+# Modifications Copyright 2025-2026, Forrest York, Justin Gullingsrud
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -85,6 +85,7 @@ def get_cores_and_diagnostics(
     disallow_planar_torsion_flips,
     min_threshold,
     initial_mapping,
+    constrain_hydrogens,
 ) -> tuple[list[NDArray], mcgregor.MCSDiagnostics]:
     """Same as :py:func:`get_cores`, but additionally returns diagnostics collected during the MCS search."""
     assert max_cores > 0
@@ -103,6 +104,7 @@ def get_cores_and_diagnostics(
         enforce_chiral=enforce_chiral,
         disallow_planar_torsion_flips=disallow_planar_torsion_flips,
         min_threshold=min_threshold,
+        constrain_hydrogens=constrain_hydrogens,
     )
 
     # we require that mol_a.GetNumAtoms() <= mol_b.GetNumAtoms()
@@ -132,6 +134,7 @@ def get_cores(
     disallow_planar_torsion_flips,
     min_threshold,
     initial_mapping,
+    constrain_hydrogens=False,
 ) -> list[NDArray]:
     """
     Finds set of cores between two molecules that maximizes the number of common edges.
@@ -183,7 +186,7 @@ def get_cores(
 
     heavy_matches_heavy_only: bool
         atom i in mol A can match atom j in mol B
-        only if is_hydrogen(i, A) == is_hydrogen(i, B). Must be enabled to simulate with Constraints
+        only if is_hydrogen(i, A) == is_hydrogen(i, B)
 
     enforce_chiral: bool
         Filter out cores that would flip atom chirality
@@ -193,6 +196,11 @@ def get_cores(
 
     min_threshold: int
         Number of edges to require for a valid mapping
+
+    constrain_hydrogens: bool
+        If True, do not map hydrogens whose parent heavy atoms have different atomic numbers
+        between the two molecules, so the core is compatible with rigid hydrogen-bond constraints.
+        Defaults to False.
 
     Returns
     -------
@@ -219,6 +227,7 @@ def get_cores(
         disallow_planar_torsion_flips,
         min_threshold,
         initial_mapping,
+        constrain_hydrogens=constrain_hydrogens,
     )
 
     return all_cores
@@ -396,6 +405,7 @@ def _augment_core_with_hydrogens(
     chiral_set_b=None,
     enforce_chiral=False,
     chain_cutoff=None,
+    constrain_hydrogens=False,
 ):
     """Augment a heavy-atom core with optimal hydrogen mappings.
 
@@ -429,6 +439,11 @@ def _augment_core_with_hydrogens(
         Maximum distance (in nm) for an H pair to be included.  Pairs
         whose Euclidean distance exceeds this value are never assigned.
 
+    constrain_hydrogens : bool
+        If True, do not map hydrogens whose parent heavy atoms have different
+        atomic numbers between the two molecules (a transmutation), since the
+        resulting X-H bond cannot be rigidly constrained at a single length.
+
     Returns
     -------
     NDArray
@@ -440,6 +455,14 @@ def _augment_core_with_hydrogens(
     h_pairs_by_parent = {}  # (a_i, b_j) -> list of [ha, hb] pairs
     for a_i, b_j in heavy_core:
         a_i, b_j = int(a_i), int(b_j)
+        # When preparing a core for hydrogen constraints, never map hydrogens onto
+        # a heavy atom that is transmuted between end states (different atomic
+        # number): the X-H bond length necessarily differs, so the hydrogen cannot
+        # be rigidly constrained at a single length and must remain unmapped.
+        if constrain_hydrogens and (
+            mol_a.GetAtomWithIdx(a_i).GetAtomicNum() != mol_b.GetAtomWithIdx(b_j).GetAtomicNum()
+        ):
+            continue
         h_a = _get_removable_h_neighbors(mol_a, a_i, removed_h_a)
         if len(h_a) == 0:
             continue
@@ -716,6 +739,7 @@ def _get_cores_impl(
     disallow_planar_torsion_flips,
     min_threshold,
     initial_mapping,
+    constrain_hydrogens=False,
 ) -> tuple[list[NDArray], mcgregor.MCSDiagnostics]:
     if initial_mapping is None:
         initial_mapping = np.zeros((0, 2), dtype=np.intp)
@@ -797,6 +821,7 @@ def _get_cores_impl(
                 chiral_set_b=chiral_set_b,
                 enforce_chiral=enforce_chiral,
                 chain_cutoff=chain_cutoff,
+                constrain_hydrogens=constrain_hydrogens,
             )
             for core in all_cores
         ]

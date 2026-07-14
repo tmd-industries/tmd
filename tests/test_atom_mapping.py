@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025-2026, Forrest York
+# Modifications Copyright 2025-2026, Forrest York, Justin Gullingsrud
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -2139,3 +2139,57 @@ M  END
 
     assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == (1, 1)
     assert atom_mapping.ring_breaking_count(mol_a, mol_b, core) == ref_ring_breaking_count(mol_a, mol_b, core)
+
+
+def test_constrain_hydrogens_atom_mapping_flag(hif2a_ligands):
+    mols_by_name = {get_mol_name(m): m for m in hif2a_ligands}
+    mol_a = mols_by_name["289"]
+    mol_b = mols_by_name["336"]
+
+    kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    kwargs["constrain_hydrogens"] = False
+    unconstrained_core = atom_mapping.get_cores(mol_a, mol_b, **kwargs)[0]
+    # If not constraining hydrogens the hydrogens in the amine group will be in the core
+    assert (37, 36) in unconstrained_core
+    assert (36, 35) in unconstrained_core
+
+    kwargs["constrain_hydrogens"] = True
+    constrained_core = atom_mapping.get_cores(mol_a, mol_b, **kwargs)[0]
+    # Verify the amine group hydrogens are no longer mapped
+    assert (37, 36) not in constrained_core
+    assert (36, 35) not in constrained_core
+
+    # The rest of the molecule should be identical
+    assert len(unconstrained_core) == len(constrained_core) + 2
+
+
+def test_constrain_hydrogens_skips_hydrogens_on_transmuted_parents():
+    """With ``constrain_hydrogens``, no hydrogen is mapped across a parent atom
+    whose atomic number changes (e.g. the O->N terminus of ethanol->ethylamine)."""
+    mol_a = ligand_from_smiles("CCO")  # ethanol
+    mol_b = ligand_from_smiles("CCN")  # ethylamine
+
+    kwargs = dict(DEFAULT_ATOM_MAPPING_KWARGS)
+    kwargs["constrain_hydrogens"] = False
+
+    cores_unconstrained = atom_mapping.get_cores(mol_a, mol_b, **kwargs)
+    kwargs["constrain_hydrogens"] = True
+    cores_constrained = atom_mapping.get_cores(mol_a, mol_b, **kwargs)
+
+    def _parent(mol, h_idx):
+        (nbr,) = list(mol.GetAtomWithIdx(h_idx).GetNeighbors())
+        return nbr
+
+    def mapped_hydrogen_pairs(core):
+        return [
+            (int(a), int(b))
+            for a, b in core
+            if mol_a.GetAtomWithIdx(int(a)).GetAtomicNum() == 1 and mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() == 1
+        ]
+
+    # Invariant: every mapped hydrogen has parents of equal atomic number.
+    for a, b in mapped_hydrogen_pairs(cores_constrained[0]):
+        assert _parent(mol_a, a).GetAtomicNum() == _parent(mol_b, b).GetAtomicNum()
+
+    # The flag can only remove hydrogen mappings, never add them.
+    assert len(mapped_hydrogen_pairs(cores_constrained[0])) <= len(mapped_hydrogen_pairs(cores_unconstrained[0]))

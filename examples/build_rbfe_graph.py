@@ -228,7 +228,7 @@ def main():
             continue
         help_str = f"Value for Atom Mapping argument {arg}"
         if isinstance(val, bool):
-            if arg == "heavy_matches_heavy_only":
+            if arg in ("heavy_matches_heavy_only", "constrain_hydrogens"):
                 help_str += ". Must be enabled to run with a timestep larger than 2.5fs."
             parser.add_argument(f"--atom_map_{arg}", type=int, choices=[0, 1], default=1 if val else 0, help=help_str)
         elif isinstance(val, (int, float)):
