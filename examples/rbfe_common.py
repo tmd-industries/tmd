@@ -361,9 +361,11 @@ def run_rbfe_leg(
     file_client.store(leg_path / "dg_errors.png", res.plots.dG_errs_png)
     file_client.store(leg_path / "overlap_summary.png", res.plots.overlap_summary_png)
     u_kln_by_lambda = res.final_result.u_kln_by_component_by_lambda.sum(1)
+
+    frames_per_step = min(u_kln_by_lambda.shape[-1] // 10, u_kln_by_lambda.shape[-1])
     file_client.store(
         leg_path / "forward_and_reverse_dg.png",
-        plot_forward_and_reverse_dg(u_kln_by_lambda, frames_per_step=min(100, u_kln_by_lambda.shape[-1])),
+        plot_forward_and_reverse_dg(u_kln_by_lambda, frames_per_step=max(frames_per_step, 1)),
     )
     # Contains initial states and the complete u_kln
     file_client.store(leg_path / "final_pairbar_result.pkl", pickle.dumps(res.final_result))
