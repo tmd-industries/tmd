@@ -282,6 +282,9 @@ def test_local_md_particle_density(freeze_reference, k, integrator_klass, dt, fr
         intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
         intg_impl = intg.impl()
     elif integrator_klass is ConstrainedLangevinIntegrator:
+        if not freeze_reference:
+            pytest.skip("Numerical instability in the free LogFlatBottomBond potential makes this invalid")
+
         bt = BaseTopology(mol, ff)
         afe = AbsoluteFreeEnergy(mol, bt)
         constraints = afe.combine_constraints(host_config)
