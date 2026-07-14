@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025-2026 Forrest York
+# Modifications Copyright 2025-2026 Forrest York, Justin Gullingsrud
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -156,6 +156,12 @@ DUMMY_B_NONBONDED_Q_MIN_MAX = _flip_min_max(DUMMY_A_NONBONDED_Q_MIN_MAX)
 
 # charge balancing
 CORE_NONBONDED_QLJ_MIN_MAX = [1 / 3, 2 / 3]
+
+# Default tolerance (in nm) for deciding whether a mapped hydrogen's bond length
+# is the same in both end states. Force-field bond lengths that are genuinely
+# identical compare exactly equal, while element/hybridization-driven retypings
+# differ by >~5e-3 nm, so a tight tolerance only rejects true mismatches.
+DEFAULT_CONSTRAINT_LENGTH_ATOL = 1e-4
 
 
 class ChiralVolumeDisabledWarning(UserWarning):
@@ -1309,6 +1315,89 @@ class AlignedNonbondedPairlist(AlignedPotential):
         return NonbondedPairListPrecomputed(self.num_atoms, self.idxs, self.cutoff).bind(params)
 
 
+def _hydrogen_bond_lengths(mol: Chem.Mol, ff: Forcefield) -> dict[int, float]:
+    """Return the harmonic-bond equilibrium length of each hydrogen's single bond.
+
+    A hydrogen has exactly one bond, so its constrained distance is unambiguous.
+    The returned dict maps each hydrogen's atom index to its bond length (nm).
+    """
+    assert ff.hb_handle is not None
+    params, idxs = ff.hb_handle.partial_parameterize(ff.hb_handle.params, mol)
+    params = np.asarray(params)
+    lengths: dict[int, float] = {}
+    for (i, j), p in zip(idxs, params):
+        i, j = int(i), int(j)
+        b0 = float(p[1])
+        if mol.GetAtomWithIdx(i).GetAtomicNum() == 1:
+            lengths[i] = b0
+        if mol.GetAtomWithIdx(j).GetAtomicNum() == 1:
+            lengths[j] = b0
+    return lengths
+
+
+def filter_constraint_incompatible_hydrogens(
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    core: NDArray,
+    ff: Forcefield,
+    length_atol: float = DEFAULT_CONSTRAINT_LENGTH_ATOL,
+) -> tuple[NDArray, list[tuple[int, int]]]:
+    """Drop hydrogen pairs from ``core`` whose constrained bond length differs
+    between the two molecules.
+
+    Hydrogen-involving bonds are rigidly constrained at a single, lambda-
+    independent length, so a mapped hydrogen can only be constrained if its bond
+    length is the same in both end states. This catches transmutations of the
+    parent heavy atom (e.g. C->O) as well as same-element retypings (e.g. an
+    sp3->sp2 carbon) that change the X-H equilibrium length. Such hydrogens are
+    unmapped here so that single topology demotes them to per-state dummy atoms,
+    each retaining its own native (and therefore constraint-compatible) bond.
+
+    Returns
+    -------
+    (filtered_core, dropped_pairs)
+        ``filtered_core`` is ``core`` with the incompatible rows removed;
+        ``dropped_pairs`` lists the ``(a_idx, b_idx)`` pairs that were removed.
+    """
+    core = np.asarray(core)
+    lengths_a = _hydrogen_bond_lengths(mol_a, ff)
+    lengths_b = _hydrogen_bond_lengths(mol_b, ff)
+
+    keep_rows: list[tuple[int, int]] = []
+    dropped_pairs: list[tuple[int, int]] = []
+    for a, b in core:
+        a, b = int(a), int(b)
+        a_is_h = mol_a.GetAtomWithIdx(a).GetAtomicNum() == 1
+        b_is_h = mol_b.GetAtomWithIdx(b).GetAtomicNum() == 1
+        if a_is_h and b_is_h and abs(lengths_a[a] - lengths_b[b]) > length_atol:
+            dropped_pairs.append((a, b))
+            continue
+        keep_rows.append((a, b))
+
+    filtered_core = np.array(keep_rows, dtype=core.dtype).reshape(-1, 2)
+    return filtered_core, dropped_pairs
+
+
+def verify_core_is_compatible_with_constraints(mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray, ff: Forcefield):
+    # There should be no heavy -> hydrogen mappings
+    invalid_pairs = []
+    for a, b in core:
+        if mol_a.GetAtomWithIdx(int(a)).GetAtomicNum() == 1:
+            if mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() != 1:
+                invalid_pairs.append((a, b))
+                raise ValueError(f"Mapping from {a} to {b} is invalid with constraints")
+        else:
+            if mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() == 1:
+                invalid_pairs.append((a, b))
+                raise ValueError(f"Mapping from {a} to {b} is invalid with constraints")
+    _, unmapped = filter_constraint_incompatible_hydrogens(mol_a, mol_b, core, ff)
+    if len(unmapped):
+        invalid_pairs.extend(unmapped)
+
+    if len(invalid_pairs) > 0:
+        raise ValueError("Invalid Mappings: " + ",".join([str(pair) for pair in invalid_pairs]))
+
+
 class SingleTopology(AtomMapMixin):
     def __init__(self, mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray, forcefield: Forcefield):
         """
@@ -1512,17 +1601,7 @@ class SingleTopology(AtomMapMixin):
 
     def get_constraint_groups(self) -> ConstraintGroups:
         """Return the hydrogen-bond constraint groups for the combined topology."""
-
-        # Assert there are no heavy -> hydrogen mappings
-        for a, b in self.core:
-            if self.mol_a.GetAtomWithIdx(int(a)).GetAtomicNum() == 1:
-                assert self.mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() == 1, (
-                    f"Mapping from {a} to {b} is invalid with constraints"
-                )
-            else:
-                assert self.mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() != 1, (
-                    f"Mapping from {a} to {b} is invalid with constraints"
-                )
+        verify_core_is_compatible_with_constraints(self.mol_a, self.mol_b, self.core, self.ff)
 
         result_a = get_hydrogen_bond_constraint_groups(self.mol_a)
         groups_a = result_a.groups
