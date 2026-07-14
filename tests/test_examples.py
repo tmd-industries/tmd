@@ -632,7 +632,12 @@ def test_build_rbfe_graph_charge_hop():
 @pytest.mark.nocuda
 @pytest.mark.parametrize(
     "parameters_to_adjust, expected_edges",
-    [({"ring_matches_ring_only": True}, 58), ({"max_connected_components": 2}, 58), ({"enforce_core_core": False}, 57)],
+    [
+        ({"ring_matches_ring_only": True, "constrain_hydrogens": False}, 58),
+        ({"max_connected_components": 2, "constrain_hydrogens": False}, 58),
+        ({"enforce_core_core": False, "constrain_hydrogens": False}, 57),
+        ({"enforce_core_core": False, "constrain_hydrogens": True}, 59),
+    ],
 )
 def test_build_rbfe_graph_atom_mapping_parameters(parameters_to_adjust, expected_edges):
     atom_mapping_kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()

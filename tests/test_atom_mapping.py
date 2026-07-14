@@ -1151,22 +1151,29 @@ def test_initial_mapping(hif2a_ligands):
     # adjust for 1-indexing when reading off the atom-mapping
     initial_mapping = initial_mapping - 1
 
+    kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    kwargs.update(
+        dict(
+            ring_cutoff=0.4,  # bumped up to make the problem harder
+            chain_cutoff=0.4,  # bumped up to make the problem harder
+            max_visits=1e7,
+            max_connected_components=1,
+            min_connected_component_size=1,
+            max_cores=1e5,
+            enforce_core_core=True,
+            ring_matches_ring_only=True,
+            heavy_matches_heavy_only=True,
+            enforce_chiral=True,
+            disallow_planar_torsion_flips=True,
+            min_threshold=0,
+        )
+    )
+
     get_cores_and_diagnostics = partial(
         atom_mapping.get_cores_and_diagnostics,
         # ring_cutoff=0.12,
         # chain_cutoff=0.2,
-        ring_cutoff=0.4,  # bumped up to make the problem harder
-        chain_cutoff=0.4,  # bumped up to make the problem harder
-        max_visits=1e7,
-        max_connected_components=1,
-        min_connected_component_size=1,
-        max_cores=1e5,
-        enforce_core_core=True,
-        ring_matches_ring_only=True,
-        heavy_matches_heavy_only=True,
-        enforce_chiral=True,
-        disallow_planar_torsion_flips=True,
-        min_threshold=0,
+        **kwargs,
     )
 
     all_cores_test, diagnostics_test = get_cores_and_diagnostics(mol_a, mol_b, initial_mapping=initial_mapping)
