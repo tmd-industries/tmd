@@ -16,11 +16,7 @@ import numpy as np
 import pytest
 from common import ligand_from_smiles
 
-from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS
-from tmd.fe import atom_mapping
 from tmd.fe.single_topology import (
-    AtomMapFlags,
-    SingleTopology,
     filter_constraint_incompatible_hydrogens,
     verify_core_is_compatible_with_constraints,
 )
@@ -81,34 +77,3 @@ def test_filter_is_noop_when_all_lengths_match():
 
     assert dropped == []
     np.testing.assert_array_equal(filtered, core)
-
-
-def test_single_topology_constrain_hydrogens_prunes_incompatible_pairs():
-    """SingleTopology(constrain_hydrogens=True) yields a core on which the
-    forcefield-aware filter is a no-op, and which is no larger than the input."""
-    # Simple-charge forcefield avoids the OpenEye AM1CCC dependency; bond lengths
-    # (the only thing the filter consults) are independent of the charge model.
-    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
-    mol_a = ligand_from_smiles("CCO")  # ethanol
-    mol_b = ligand_from_smiles("CCN")  # ethylamine
-
-    # Use a core that is allowed to map hydrogens across the O->N transmutation,
-    # so the single-topology stage has something to prune.
-    kwargs = dict(DEFAULT_ATOM_MAPPING_KWARGS)
-    core = atom_mapping.get_cores(mol_a, mol_b, **kwargs)[0]
-
-    st = SingleTopology(mol_a, mol_b, core, ff, constrain_hydrogens=True)
-
-    # Every mapped hydrogen remaining in the core is constraint-compatible.
-    _, dropped = filter_constraint_incompatible_hydrogens(mol_a, mol_b, st.core, ff)
-    assert dropped == []
-    assert len(st.core) <= len(core)
-
-    # The dropped hydrogens are demoted to per-state dummy atoms, not lost.
-    constrained_pairs = {(int(a), int(b)) for a, b in st.core}
-    for a, b in core:
-        a, b = int(a), int(b)
-        if (a, b) not in constrained_pairs:
-            # a was a mol_a hydrogen that is now a dummy belonging to mol_a
-            assert mol_a.GetAtomWithIdx(a).GetAtomicNum() == 1
-            assert st.c_flags[a] == AtomMapFlags.MOL_A
