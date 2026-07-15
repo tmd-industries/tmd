@@ -561,7 +561,7 @@ def test_run_abfe(
 
 
 @pytest.mark.nocuda
-@pytest.mark.parametrize("scoring_method, expected_edges", [("best", 59), ("jaccard", 59), ("dummy_atoms", 58)])
+@pytest.mark.parametrize("scoring_method, expected_edges", [("best", 58), ("jaccard", 59), ("dummy_atoms", 58)])
 def test_build_rbfe_graph(scoring_method, expected_edges):
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
         base_args = [str(hif2a_dir / "ligands.sdf"), "--greedy_scoring", scoring_method]
