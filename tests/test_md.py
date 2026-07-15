@@ -1626,8 +1626,9 @@ def test_local_md_nonbonded_all_pairs_subset(freeze_reference):
 
 
 @pytest.mark.memcheck
+@pytest.mark.parametrize("dt", [2.5e-3, 4e-3])
 @pytest.mark.parametrize("freeze_reference", [True, False])
-def test_local_md_setting_params_on_bp_potentials(freeze_reference):
+def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt):
     """Test that when constructing a Context with a set of bound potentials that the underlying potentials
     used within Local MD are updated accordingly.
 
@@ -1638,14 +1639,14 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference):
 
     mol, _ = get_biphenyl()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    replace_conformer_with_minimized(mol, ff)
 
     temperature = constants.DEFAULT_TEMP
-    dt = 2.5e-3
     friction = 1.0
     seed = 2025
 
     unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
-        mol, ff, 1.0, margin=0.1, minimize_energy=False
+        mol, ff, 1.0, box_width=4.0, margin=0.1, minimize_energy=True
     )
     box = host_config.box
     v0 = np.zeros_like(coords)
@@ -1670,7 +1671,14 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference):
     nb_params = nb_params.astype(np.float32)
     assert nb_pot_idx is not None and nb_params is not None, "No nonbonded potential"
 
-    intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
+    constraints = None
+    if dt > 2.5e-3:
+        bt = BaseTopology(mol, ff)
+        afe = AbsoluteFreeEnergy(mol, bt)
+        constraints = afe.combine_constraints(host_config)
+        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, masses, seed, constraints)
+    else:
+        intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
 
     bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
 
@@ -1724,6 +1732,20 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference):
     np.testing.assert_array_equal(np.array(fanout_bp.get_flat_params()).reshape(nb_params.shape), nb_params)
     du_dx, _ = bps[nb_pot_idx].to_gpu(np.float32).bound_impl.execute(local_xs[-1], local_boxes[-1], compute_u=False)
     check_force_norm(-du_dx)
+
+    flatbottom_bp = get_gpu_bp_by_type(local_md_bps, custom_ops.FlatBottomBond_f32)
+    bond_indices = flatbottom_bp.get_potential().get_idxs()
+    assert bond_indices[0, 0] in set(ligand_idxs)
+    # All indices should be identical, ie the reference atom
+    assert np.all(bond_indices[:, 0] == bond_indices[0, 0])
+    if constraints is not None:
+        free_atom_indices = set(bond_indices[:, 1])
+        free_grouped_atoms = []
+        for group in constraints.groups:
+            if group[0] in free_atom_indices:
+                free_grouped_atoms.extend(group)
+
+        assert np.all(xs[-1, free_grouped_atoms] != local_xs[-1, free_grouped_atoms], axis=1).all()
 
     for i, bp in enumerate(bps):
         unbound_ref = bp.potential.to_gpu(np.float32).unbound_impl

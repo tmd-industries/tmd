@@ -159,6 +159,16 @@ template <typename RealType> int FlatBottomBond<RealType>::num_systems() const {
   return num_systems_;
 }
 
+template <typename RealType>
+int FlatBottomBond<RealType>::get_num_idxs() const {
+  return cur_num_idxs_;
+}
+
+template <typename RealType>
+std::vector<int> FlatBottomBond<RealType>::get_idxs_host() const {
+  return device_array_to_vector<int>(cur_num_idxs_ * IDXS_DIM, d_bond_idxs_);
+}
+
 template class FlatBottomBond<double>;
 template class FlatBottomBond<float>;
 

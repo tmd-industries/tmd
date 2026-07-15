@@ -2684,7 +2684,13 @@ void declare_flat_bottom_bond(py::module &m, const char *typestr) {
                  num_systems, num_atoms, combined_bond_vec, bond_system_idxs);
            }),
            py::arg("num_atoms"), py::arg("bond_idxs"))
-      .def("get_num_bonds", &Class::num_bonds);
+      .def("get_num_bonds", &Class::num_bonds)
+      .def("get_idxs", [](Class &pot) -> py::array_t<int, py::array::c_style> {
+        std::vector<int> output_idxs = pot.get_idxs_host();
+        py::array_t<int, py::array::c_style> out_idx_buffer(
+            {pot.get_num_idxs(), pot.IDXS_DIM}, output_idxs.data());
+        return out_idx_buffer;
+      });
 }
 
 template <typename RealType>
