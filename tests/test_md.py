@@ -1741,11 +1741,15 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt):
     if constraints is not None:
         free_atom_indices = set(bond_indices[:, 1])
         free_grouped_atoms = []
+        frozen_grouped_atoms = []
         for group in constraints.groups:
             if group[0] in free_atom_indices:
                 free_grouped_atoms.extend(group)
+            else:
+                frozen_grouped_atoms.extend(group)
 
         assert np.all(xs[-1, free_grouped_atoms] != local_xs[-1, free_grouped_atoms], axis=1).all()
+        assert np.all(xs[-1, frozen_grouped_atoms] == local_xs[-1, frozen_grouped_atoms], axis=1).all()
 
     for i, bp in enumerate(bps):
         unbound_ref = bp.potential.to_gpu(np.float32).unbound_impl
