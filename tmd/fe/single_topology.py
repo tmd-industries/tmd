@@ -1384,12 +1384,10 @@ def verify_core_is_compatible_with_constraints(mol_a: Chem.Mol, mol_b: Chem.Mol,
     for a, b in core:
         if mol_a.GetAtomWithIdx(int(a)).GetAtomicNum() == 1:
             if mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() != 1:
-                invalid_pairs.append((a, b))
-                raise ValueError(f"Mapping from {a} to {b} is invalid with constraints")
+                invalid_pairs.append((int(a), int(b)))
         else:
             if mol_b.GetAtomWithIdx(int(b)).GetAtomicNum() == 1:
-                invalid_pairs.append((a, b))
-                raise ValueError(f"Mapping from {a} to {b} is invalid with constraints")
+                invalid_pairs.append((int(a), int(b)))
     _, unmapped = filter_constraint_incompatible_hydrogens(mol_a, mol_b, core, ff)
     if len(unmapped):
         invalid_pairs.extend(unmapped)
