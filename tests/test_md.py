@@ -1625,10 +1625,10 @@ def test_local_md_nonbonded_all_pairs_subset(freeze_reference):
         ctxt.setup_local_md(temperature, freeze_reference)
 
 
-@pytest.mark.memcheck
+@pytest.mark.parametrize("num_systems", [pytest.param(1, marks=pytest.mark.memcheck), 4])
 @pytest.mark.parametrize("dt", [2.5e-3, 4e-3])
 @pytest.mark.parametrize("freeze_reference", [True, False])
-def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt):
+def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt, num_systems):
     """Test that when constructing a Context with a set of bound potentials that the underlying potentials
     used within Local MD are updated accordingly.
 
@@ -1644,6 +1644,8 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt):
     temperature = constants.DEFAULT_TEMP
     friction = 1.0
     seed = 2025
+
+    rng = np.random.default_rng(seed)
 
     unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
         mol, ff, 1.0, box_width=4.0, margin=0.1, minimize_energy=True
@@ -1662,11 +1664,13 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt):
     bps = []
     for i, (p, pot) in enumerate(zip(sys_params, unbound_potentials)):
         bound_impl = pot.bind(p.astype(np.float32))
+        for _ in range(num_systems - 1):
+            bound_impl = bound_impl.combine(pot.bind(p.astype(np.float32)))
         bps.append(bound_impl)
         if isinstance(pot, Nonbonded):
             assert nb_pot_idx is None and nb_params is None, "Already exists"
             nb_pot_idx = i
-            nb_params = p
+            nb_params = np.array(bound_impl.params)
 
     nb_params = nb_params.astype(np.float32)
     assert nb_pot_idx is not None and nb_params is not None, "No nonbonded potential"
@@ -1676,13 +1680,17 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt):
         bt = BaseTopology(mol, ff)
         afe = AbsoluteFreeEnergy(mol, bt)
         constraints = afe.combine_constraints(host_config)
-        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, masses, seed, constraints)
+        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, [masses] * num_systems, seed, constraints)
     else:
-        intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
+        intg = LangevinIntegrator(temperature, dt, friction, [masses] * num_systems, seed)
 
     bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
 
-    ctxt = Context(coords, v0, box, intg.impl(), bound_impls)
+    coords_batch = np.array([coords] * num_systems, dtype=np.float32).squeeze()
+    v0_batch = np.array([v0] * num_systems, dtype=np.float32).squeeze()
+    box_batch = np.array([box] * num_systems, dtype=np.float32).squeeze()
+
+    ctxt = Context(coords_batch, v0_batch, box_batch, intg.impl(), bound_impls)
 
     xs, boxes = ctxt.multiple_steps(2000)
 
@@ -1691,9 +1699,12 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt):
     check_force_norm(-du_dx)
 
     # Construct params that are fully interacting, which should be clashy
-    fully_interacting_params = np.array(nb_params)
-    fully_interacting_params[:, constants.NBParamIdx.W_IDX] = 0.0
-    bps[nb_pot_idx].params = fully_interacting_params.astype(np.float32)
+    fully_interacting_params = np.array(nb_params).astype(np.float32)
+    if num_systems == 1:
+        fully_interacting_params[:, constants.NBParamIdx.W_IDX] = 0.0
+    else:
+        fully_interacting_params[:, :, constants.NBParamIdx.W_IDX] = 0.0
+    bps[nb_pot_idx].params = fully_interacting_params
     du_dx, _ = bps[nb_pot_idx].to_gpu(np.float32).bound_impl.execute(xs[-1], boxes[-1], compute_u=False)
     # forces should be unreasonable
     assert np.max(np.linalg.norm(du_dx, axis=-1)) > constants.MAX_FORCE_NORM
@@ -1726,10 +1737,14 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt):
 
     np.testing.assert_array_equal(np.array(fanout_bp.get_flat_params()).reshape(nb_params.shape), nb_params)
 
+    # Get a reference index
+    reference_idx = rng.choice(ligand_idxs)
+
     # If parameters propagated, then the forces of the final frame should be reasonable
-    local_xs, local_boxes = ctxt.multiple_steps_local(1000, ligand_idxs)
+    local_xs, local_boxes = ctxt.multiple_steps_local(1000, [reference_idx])
 
     np.testing.assert_array_equal(np.array(fanout_bp.get_flat_params()).reshape(nb_params.shape), nb_params)
+
     du_dx, _ = bps[nb_pot_idx].to_gpu(np.float32).bound_impl.execute(local_xs[-1], local_boxes[-1], compute_u=False)
     check_force_norm(-du_dx)
 
@@ -1739,17 +1754,30 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt):
     # All indices should be identical, ie the reference atom
     assert np.all(bond_indices[:, 0] == bond_indices[0, 0])
     if constraints is not None:
-        free_atom_indices = set(bond_indices[:, 1])
-        free_grouped_atoms = []
-        frozen_grouped_atoms = []
-        for group in constraints.groups:
-            if group[0] in free_atom_indices:
-                free_grouped_atoms.extend(group)
-            else:
-                frozen_grouped_atoms.extend(group)
+        system_idxs = flatbottom_bp.get_potential().get_system_idxs()
+        for i in range(num_systems):
+            sys_indices = system_idxs == i
+            free_atom_indices = set(bond_indices[sys_indices, 1])
+            free_grouped_atoms = []
+            frozen_grouped_atoms = []
+            for group in constraints.groups:
+                if group[0] in free_atom_indices:
+                    free_grouped_atoms.extend(group)
+                else:
+                    frozen_grouped_atoms.extend(group)
 
-        assert np.all(xs[-1, free_grouped_atoms] != local_xs[-1, free_grouped_atoms], axis=1).all()
-        assert np.all(xs[-1, frozen_grouped_atoms] == local_xs[-1, frozen_grouped_atoms], axis=1).all()
+            if freeze_reference:
+                ref_idx = free_grouped_atoms.index(reference_idx)
+                if ref_idx > -1:
+                    free_grouped_atoms.pop(ref_idx)
+                    frozen_grouped_atoms.append(reference_idx)
+
+            if num_systems == 1:
+                assert np.all(xs[-1, free_grouped_atoms] != local_xs[-1, free_grouped_atoms], axis=1).all()
+                np.testing.assert_array_equal(xs[-1, frozen_grouped_atoms], local_xs[-1, frozen_grouped_atoms])
+            else:
+                assert np.all(xs[-1, i, free_grouped_atoms] != local_xs[-1, i, free_grouped_atoms], axis=1).all()
+                np.testing.assert_array_equal(xs[-1, i, frozen_grouped_atoms], local_xs[-1, i, frozen_grouped_atoms])
 
     for i, bp in enumerate(bps):
         unbound_ref = bp.potential.to_gpu(np.float32).unbound_impl
@@ -1760,18 +1788,22 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt):
         matching_pot = matching_bp.get_potential()
         assert isinstance(matching_pot, type(unbound_ref))
 
-        ref_params = bp.params
-        comp_params = np.array(matching_bp.get_flat_params(), dtype=bp.params.dtype).reshape(bp.params.shape)
+        ref_params = np.array(bp.params).astype(np.float32)
+        comp_params = np.array(matching_bp.get_flat_params(), dtype=ref_params.dtype).reshape(ref_params.shape)
         np.testing.assert_array_equal(ref_params, comp_params)
 
         if hasattr(ref_pot, "idxs") and hasattr(unbound_ref, "get_idxs"):
-            np.testing.assert_array_equal(matching_pot.get_idxs(), ref_pot.idxs)
+            np.testing.assert_array_equal(matching_pot.get_idxs().reshape(-1), np.array(ref_pot.idxs).reshape(-1))
 
-        ref_du_dx, ref_du_dp, ref_u = unbound_ref.execute(coords, bp.params, box)
-        comp_du_dx, comp_du_dp, comp_u = matching_pot.execute(coords, comp_params, box)
+        if num_systems == 1:
+            ref_du_dx, ref_du_dp, ref_u = unbound_ref.execute(coords_batch, bp.params, box_batch)
+            comp_du_dx, comp_du_dp, comp_u = matching_pot.execute(coords_batch, comp_params, box_batch)
+        else:
+            ref_du_dx, ref_du_dp, ref_u = unbound_ref.execute_dim(coords_batch, bp.params, box_batch)
+            comp_du_dx, comp_du_dp, comp_u = matching_pot.execute_dim(coords_batch, comp_params, box_batch)
         np.testing.assert_array_equal(ref_du_dx, comp_du_dx, err_msg=f"Pot {type(ref_pot)} changed unexpectedly")
         np.testing.assert_array_equal(ref_du_dp, comp_du_dp, err_msg=f"Pot {type(ref_pot)} changed unexpectedly")
-        assert ref_u == comp_u
+        np.testing.assert_equal(ref_u, comp_u)
 
 
 @pytest.mark.memcheck
