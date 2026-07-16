@@ -169,6 +169,11 @@ std::vector<int> FlatBottomBond<RealType>::get_idxs_host() const {
   return device_array_to_vector<int>(cur_num_idxs_ * IDXS_DIM, d_bond_idxs_);
 }
 
+template <typename RealType>
+std::vector<int> FlatBottomBond<RealType>::get_system_idxs_host() const {
+  return device_array_to_vector<int>(cur_num_idxs_, d_system_idxs_);
+}
+
 template class FlatBottomBond<double>;
 template class FlatBottomBond<float>;
 
