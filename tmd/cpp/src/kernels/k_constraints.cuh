@@ -58,8 +58,13 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
     const int offset_end = group_offsets[kernel_idx + 1];
     const int anchor_atom = group_indices[offset_start];
 
+    // If the anchor atom is frozen, all of the other atoms in the constraint
+    // group are expected to be frozen.
+    if (idxs == nullptr ? false : idxs[system_idx * N + anchor_atom] >= N) {
+      kernel_idx += gridDim.x * blockDim.x;
+      continue;
+    }
     const int n_hydrogens = (offset_end - offset_start) - 1;
-    assert(n_hydrogens <= MAX_GROUP_SIZE);
 
     RealType anchor_x = x_t[system_idx * N * D + anchor_atom * D + 0];
     RealType anchor_y = x_t[system_idx * N * D + anchor_atom * D + 1];
@@ -73,12 +78,7 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
           anchor_z;
     }
 
-    const bool frozen_anchor =
-        idxs == nullptr ? false : idxs[system_idx * N + anchor_atom] >= N;
-
-    const RealType inv_anchor_mass =
-        !frozen_anchor ? inv_masses[system_idx * N + anchor_atom]
-                       : static_cast<RealType>(0.0);
+    const RealType inv_anchor_mass = inv_masses[system_idx * N + anchor_atom];
 
     // Setup the reference distances using the initial coordinates
     RealType ref_deltas[MAX_GROUP_SIZE][D];
@@ -104,15 +104,9 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
     for (int i = 0; i < iterations; i++) {
       bool converged = true;
       for (int j = 0; j < n_hydrogens; j++) {
-        int atom_idx = group_indices[offset_start + j + 1];
-        const bool frozen_atom =
-            idxs == nullptr ? false : idxs[system_idx * N + atom_idx] >= N;
-        if (frozen_atom && frozen_anchor) {
-          continue;
-        }
+        const int atom_idx = group_indices[offset_start + j + 1];
 
-        const RealType inv_atom_mass =
-            !frozen_atom ? inv_masses[system_idx * N + atom_idx] : 0.0;
+        const RealType inv_atom_mass = inv_masses[system_idx * N + atom_idx];
 
         const RealType target_dist2 =
             distances[dist_start + j] * distances[dist_start + j];
@@ -214,6 +208,13 @@ k_apply_rattle(const int num_systems, const int N, const int iterations,
     const int offset_end = group_offsets[kernel_idx + 1];
     const int anchor_atom = group_indices[offset_start];
 
+    // If the anchor atom is frozen, all of the other atoms in the constraint
+    // group are expected to be frozen.
+    if (idxs == nullptr ? false : idxs[system_idx * N + anchor_atom] >= N) {
+      kernel_idx += gridDim.x * blockDim.x;
+      continue;
+    }
+
     const int n_hydrogens = (offset_end - offset_start) - 1;
 
     const RealType anchor_x = x_t[system_idx * N * D + anchor_atom * D + 0];
@@ -224,24 +225,14 @@ k_apply_rattle(const int num_systems, const int N, const int iterations,
     RealType anchor_vy = v_t[system_idx * N * D + anchor_atom * D + 1];
     RealType anchor_vz = v_t[system_idx * N * D + anchor_atom * D + 2];
 
-    const bool frozen_anchor =
-        idxs == nullptr ? false : idxs[system_idx * N + anchor_atom] >= N;
-
-    const RealType inv_anchor_mass =
-        !frozen_anchor ? inv_masses[system_idx * N + anchor_atom]
-                       : static_cast<RealType>(0.0);
+    const RealType inv_anchor_mass = inv_masses[system_idx * N + anchor_atom];
 
     for (int i = 0; i < iterations; i++) {
       bool converged = true;
       for (int j = 0; j < n_hydrogens; j++) {
-        int atom_idx = group_indices[offset_start + j + 1];
-        const bool frozen_atom =
-            idxs == nullptr ? false : idxs[system_idx * N + atom_idx] >= N;
-        if (frozen_atom && frozen_anchor) {
-          continue;
-        }
-        const RealType inv_atom_mass =
-            !frozen_atom ? inv_masses[system_idx * N + atom_idx] : 0.0;
+        const int atom_idx = group_indices[offset_start + j + 1];
+
+        const RealType inv_atom_mass = inv_masses[system_idx * N + atom_idx];
 
         RealType delta_x =
             anchor_x - x_t[system_idx * N * D + atom_idx * D + 0];
