@@ -65,7 +65,7 @@ void __global__ k_construct_bonded_params_and_system_idxs(
   // If an atom is one of the freed hydrogens, then create a dummy bond from the
   // reference to itself
   atom_idx = (freed_hydrogens != nullptr &&
-              freed_hydrogens[system_offset + atom_idx] > 0)
+              freed_hydrogens[system_idx * atoms_per_system + atom_idx] > 0)
                  ? d_reference_idxs[system_idx]
                  : atom_idx;
 
