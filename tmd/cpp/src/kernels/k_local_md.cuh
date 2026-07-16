@@ -104,12 +104,10 @@ void __global__ k_adjust_constraint_groups(
     // The heavy atom determines if the whole group is free or frozen.
     const char new_flag =
         flags[system_idxs_offset + group_indices[group_start]] > 0 ? 1 : 0;
-    for (int i = 0; i < (group_end - group_start); i++) {
+    for (int i = 1; i < (group_end - group_start); i++) {
       const int atom_idx = group_indices[group_start + i];
       flags[system_idxs_offset + atom_idx] = new_flag;
-      if (i > 0) {
-        free_hydrogens[system_idxs_offset + atom_idx] = new_flag;
-      }
+      free_hydrogens[system_idxs_offset + atom_idx] = new_flag;
     }
 
     idx += gridDim.x * blockDim.x;
