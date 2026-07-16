@@ -86,6 +86,7 @@ void __global__ k_update_index(T *__restrict__ d_array, std::size_t idx,
 
 void __global__ k_adjust_constraint_groups(
     const size_t num_systems, const size_t N, const int num_groups,
+    const bool freeze_ref, const int *__restrict__ d_reference_idxs,
     const int *__restrict__ group_offsets,
     const int *__restrict__ group_indices, char *__restrict__ flags,
     char *__restrict__ free_hydrogens) {
@@ -96,15 +97,25 @@ void __global__ k_adjust_constraint_groups(
 
   const int system_idxs_offset = system_idx * N;
 
+  const int ref_idx = freeze_ref ? d_reference_idxs[system_idx] : -1;
+
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (idx < num_groups) {
     const int group_start = group_offsets[idx];
     const int group_end = group_offsets[idx + 1];
-
+    const int num_atoms = group_end - group_start;
     // The heavy atom determines if the whole group is free or frozen.
-    const char new_flag =
+    char new_flag =
         flags[system_idxs_offset + group_indices[group_start]] > 0 ? 1 : 0;
-    for (int i = 1; i < (group_end - group_start); i++) {
+    // If the reference atom is frozen and any of the atoms are the reference
+    // freeze the entire group
+    if (freeze_ref) {
+      for (int i = 0; i < num_atoms; i++) {
+        const int atom_idx = group_indices[group_start + i];
+        new_flag = atom_idx == ref_idx ? 0 : new_flag;
+      }
+    }
+    for (int i = 0; i < num_atoms; i++) {
       const int atom_idx = group_indices[group_start + i];
       flags[system_idxs_offset + atom_idx] = new_flag;
       free_hydrogens[system_idxs_offset + atom_idx] = new_flag;

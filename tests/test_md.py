@@ -1806,6 +1806,76 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt, num_syst
         np.testing.assert_equal(ref_u, comp_u)
 
 
+@pytest.mark.parametrize("num_systems", [1, 4])
+@pytest.mark.parametrize("dt", [4e-3])
+def test_local_md_reference_in_constraint_group(dt, num_systems):
+    """Test verifies that when an atom in a constraint group is frozen, that all of the atoms in the group are frozen."""
+
+    mol, _ = get_biphenyl()
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    replace_conformer_with_minimized(mol, ff)
+
+    temperature = constants.DEFAULT_TEMP
+    friction = 1.0
+    seed = 2026
+
+    rng = np.random.default_rng(seed)
+
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 1.0, box_width=4.0, margin=0.1, minimize_energy=True
+    )
+    box = host_config.box
+    v0 = np.zeros_like(coords)
+
+    bonded_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
+
+    masses = np.array(apply_hmr(masses, get_bond_list(bonded_pot)))
+
+    bps = []
+    for i, (p, pot) in enumerate(zip(sys_params, unbound_potentials)):
+        bound_impl = pot.bind(p.astype(np.float32))
+        for _ in range(num_systems - 1):
+            bound_impl = bound_impl.combine(pot.bind(p.astype(np.float32)))
+
+    bt = BaseTopology(mol, ff)
+    afe = AbsoluteFreeEnergy(mol, bt)
+    constraints = afe.combine_constraints(host_config)
+    intg = ConstrainedLangevinIntegrator(temperature, dt, friction, [masses] * num_systems, seed, constraints)
+
+    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
+
+    coords_batch = np.array([coords] * num_systems, dtype=np.float32).squeeze()
+    v0_batch = np.array([v0] * num_systems, dtype=np.float32).squeeze()
+    box_batch = np.array([box] * num_systems, dtype=np.float32).squeeze()
+
+    ctxt = Context(coords_batch, v0_batch, box_batch, intg.impl(), bound_impls)
+
+    xs, boxes = ctxt.multiple_steps(100)
+
+    ligand_constraints = bt.get_constraint_groups()
+
+    num_host_atoms = len(host_config.conf)
+
+    last_frame = ctxt.get_x_t()
+    last_v = ctxt.get_v_t()
+    for group in ligand_constraints.groups:
+        updated_group = [x + num_host_atoms for x in group]
+        reference_atom = rng.choice(updated_group)
+
+        # Free an atom within the group
+        local_xs, local_boxes = ctxt.multiple_steps_local(1000, [reference_atom])
+
+        for i in range(num_systems):
+            if num_systems == 1:
+                np.testing.assert_array_equal(last_frame[updated_group], local_xs[-1, updated_group])
+                np.testing.assert_array_equal(last_v[updated_group], ctxt.get_v_t()[updated_group])
+            else:
+                np.testing.assert_array_equal(last_frame[i, updated_group], local_xs[-1, i, updated_group])
+                np.testing.assert_array_equal(last_v[i, updated_group], ctxt.get_v_t()[i, updated_group])
+            last_frame = ctxt.get_x_t()
+            last_v = ctxt.get_v_t()
+
+
 @pytest.mark.memcheck
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 def test_context_invalid_boxes(precision):

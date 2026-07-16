@@ -407,8 +407,8 @@ void LocalMDPotentials<RealType>::_setup_free_idxs_given_partitions(
   if (constraints_ != nullptr && constraints_->n_groups() > 0) {
     k_adjust_constraint_groups<<<
         dim3(ceil_divide(constraints_->n_groups(), tpb), num_systems_), tpb, 0,
-        stream>>>(num_systems_, N_, constraints_->n_groups(),
-                  constraints_->get_group_offsets(),
+        stream>>>(num_systems_, N_, constraints_->n_groups(), freeze_reference,
+                  d_reference_idxs_.data, constraints_->get_group_offsets(),
                   constraints_->get_group_indices(), d_flags_.data,
                   d_freed_hydrogens_.data);
     gpuErrchk(cudaPeekAtLastError());
