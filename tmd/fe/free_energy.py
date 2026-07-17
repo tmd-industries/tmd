@@ -987,7 +987,7 @@ def sample_with_context_iter(
         if barostat is not None:
             barostat.set_interval(original_interval)
 
-    assert np.all(np.isfinite(ctxt.get_x_t())), "Equilibration resulted in a nan"
+        assert np.all(np.isfinite(ctxt.get_x_t())), "Equilibration resulted in a nan"
 
     for n_frames in batches(md_params.n_frames, batch_size):
         yield steps_func(n_frames * md_params.steps_per_frame, True)
