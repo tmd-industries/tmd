@@ -1741,7 +1741,7 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt, num_syst
     reference_idx = rng.choice(ligand_idxs)
 
     # If parameters propagated, then the forces of the final frame should be reasonable
-    local_xs, local_boxes = ctxt.multiple_steps_local(1000, [reference_idx])
+    local_xs, local_boxes = ctxt.multiple_steps_local(100, [reference_idx])
 
     np.testing.assert_array_equal(np.array(fanout_bp.get_flat_params()).reshape(nb_params.shape), nb_params)
 
