@@ -348,7 +348,7 @@ def solvent_hif2a_ligand_pair_single_topology_lam0_state(hif2a_ligand_pair_singl
     st, forcefield = hif2a_ligand_pair_single_topology
     solvent_host_config = builders.build_water_system(3.0, st.ff.water_ff, mols=[st.mol_a, st.mol_b])
     solvent_host = setup_optimized_host(solvent_host_config, [st.mol_a, st.mol_b], st.ff)
-    state = setup_initial_states(st, solvent_host, DEFAULT_TEMP, [0.0], 2023, verify_constraints=True, dt=4e-3)[0]
+    state = setup_initial_states(st, solvent_host, DEFAULT_TEMP, [0.0], 2023, verify_constraints=True, dt=2.5e-3)[0]
     return state
 
 

@@ -1761,16 +1761,10 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt, num_syst
             free_grouped_atoms = []
             frozen_grouped_atoms = []
             for group in constraints.groups:
-                if group[0] in free_atom_indices:
+                if group[0] in free_atom_indices and (not freeze_reference or reference_idx not in group):
                     free_grouped_atoms.extend(group)
                 else:
                     frozen_grouped_atoms.extend(group)
-
-            if freeze_reference:
-                ref_idx = free_grouped_atoms.index(reference_idx)
-                if ref_idx > -1:
-                    free_grouped_atoms.pop(ref_idx)
-                    frozen_grouped_atoms.append(reference_idx)
 
             if num_systems == 1:
                 assert np.all(xs[-1, free_grouped_atoms] != local_xs[-1, free_grouped_atoms], axis=1).all()
@@ -1836,6 +1830,7 @@ def test_local_md_reference_in_constraint_group(dt, num_systems):
         bound_impl = pot.bind(p.astype(np.float32))
         for _ in range(num_systems - 1):
             bound_impl = bound_impl.combine(pot.bind(p.astype(np.float32)))
+        bps.append(bound_impl)
 
     bt = BaseTopology(mol, ff)
     afe = AbsoluteFreeEnergy(mol, bt)

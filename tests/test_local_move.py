@@ -444,7 +444,7 @@ def test_local_md_bulk_solvent_constrained_integration(seed, dt, friction):
     # Expand the free set to include or exclude any constraint group based on whether the anchor atom is free
     real_free_set = set([int(x) for x in free_particles])
     for group in constraints.groups:
-        if group[0] in real_free_set:
+        if group[0] in real_free_set and reference_idx not in group:
             for idx in group:
                 real_free_set.add(idx)
         else:
