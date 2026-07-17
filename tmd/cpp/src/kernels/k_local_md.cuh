@@ -118,7 +118,9 @@ void __global__ k_adjust_constraint_groups(
     for (int i = 0; i < num_atoms; i++) {
       const int atom_idx = group_indices[group_start + i];
       flags[system_idxs_offset + atom_idx] = new_flag;
-      free_hydrogens[system_idxs_offset + atom_idx] = new_flag;
+      if (i > 0) {
+        free_hydrogens[system_idxs_offset + atom_idx] = new_flag;
+      }
     }
 
     idx += gridDim.x * blockDim.x;

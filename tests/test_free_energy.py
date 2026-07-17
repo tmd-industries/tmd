@@ -398,7 +398,7 @@ def test_sample_multiple_iterations_local_md(solvent_hif2a_ligand_pair_single_to
     # There should be a single position (3 coordinates)
     assert np.sum(traj.frames[-1][lig_idxs] == x0[lig_idxs]) == 3
 
-    md_params = replace(md_params, local_md_params=replace(md_params.local_md_params, iterations=10))
+    md_params = replace(md_params, local_md_params=replace(md_params.local_md_params, iterations=20))
 
     traj = sample(solvent_hif2a_ligand_pair_single_topology_lam0_state, md_params, md_params.n_frames)
     assert isinstance(traj.frames, StoredArrays)
