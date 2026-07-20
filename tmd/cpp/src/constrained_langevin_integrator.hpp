@@ -22,6 +22,10 @@ public:
 
   virtual ~ConstrainedLangevinIntegrator();
 
+  std::shared_ptr<ConstraintGroups<RealType>> get_constraints() const {
+    return constraints_;
+  };
+
   virtual void
   step_fwd(std::vector<std::shared_ptr<BoundPotential<RealType>>> &bps,
            RealType *d_x_t, RealType *d_v_t, RealType *d_box_t_,

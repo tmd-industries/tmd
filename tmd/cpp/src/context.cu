@@ -141,6 +141,18 @@ template <typename RealType> RealType Context<RealType>::_get_temperature() {
 }
 
 template <typename RealType>
+std::shared_ptr<ConstraintGroups<RealType>>
+Context<RealType>::_get_constraints_group() const {
+  if (std::shared_ptr<ConstrainedLangevinIntegrator<RealType>> langevin =
+          std::dynamic_pointer_cast<ConstrainedLangevinIntegrator<RealType>>(
+              intg_);
+      langevin != nullptr) {
+    return langevin->get_constraints();
+  }
+  return std::shared_ptr<ConstraintGroups<RealType>>(nullptr);
+}
+
+template <typename RealType>
 void Context<RealType>::setup_local_md(RealType temperature,
                                        bool freeze_reference,
                                        RealType nblist_padding) {
@@ -160,8 +172,8 @@ void Context<RealType>::setup_local_md(RealType temperature,
     return;
   }
   this->local_md_pots_.reset(new LocalMDPotentials<RealType>(
-      num_systems_, N_, bps_, nonbonded_pots_, freeze_reference, temperature,
-      nblist_padding));
+      num_systems_, N_, bps_, nonbonded_pots_, this->_get_constraints_group(),
+      freeze_reference, temperature, nblist_padding));
 }
 
 template <typename RealType>
