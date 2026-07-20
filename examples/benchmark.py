@@ -320,7 +320,6 @@ def main():
         frames_run = md_params.steps_per_frame * md_params.n_frames
         if args.batch_mode:
             frames_run *= proc
-            print(frames_run)
         elif args.hrex:
             frames_run *= args.hrex_states
         steps_per_second = frames_run / np.array(results)
