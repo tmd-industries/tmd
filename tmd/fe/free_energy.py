@@ -26,7 +26,7 @@ from numpy.typing import NDArray
 from rdkit import Chem
 
 from tmd._vendored.pymbar.utils import kln_to_kn
-from tmd.constants import BOLTZ, NBParamIdx
+from tmd.constants import BOLTZ, DEFAULT_PRESSURE, DEFAULT_TEMP, NBParamIdx
 from tmd.fe import model_utils, topology
 from tmd.fe.bar import (
     bar_with_pessimistic_uncertainty,
@@ -38,6 +38,7 @@ from tmd.fe.bar import (
 )
 from tmd.fe.interpolate import linear_interpolation, pad
 from tmd.fe.lambda_schedule import construct_pre_optimized_relative_lambda_schedule, interpolate_pre_optimized_protocol
+from tmd.fe.model_utils import apply_hmr
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_dG_errs_figure,
@@ -55,6 +56,7 @@ from tmd.md.builders import HostConfig
 from tmd.md.exchange.exchange_mover import WaterSamplingDiagnostics, get_water_idxs
 from tmd.md.hrex import HREX, HREXDiagnostics, ReplicaIdx, StateIdx, get_swap_attempts_per_iter_heuristic
 from tmd.md.states import CoordsVelBox
+from tmd.md.thermostat.utils import sample_velocities
 from tmd.potentials import (
     BoundPotential,
     HarmonicBond,
@@ -2496,3 +2498,35 @@ def run_sims_hrex(
         ws_diagnostics = WaterSamplingDiagnostics(np.array(water_sampler_proposals_by_state_by_iter, dtype=np.int32))
 
     return PairBarResult(list(initial_states), pair_bar_results), samples_by_state, hrex_diagnostics, ws_diagnostics
+
+
+# TBD: Move this elsewhere, this file is way too large
+def initial_state_from_host_config(
+    host_config: HostConfig,
+    dt: float,
+    temperature: float = DEFAULT_TEMP,
+    seed: int = 2026,
+    barostat_interval: int = 25,
+) -> InitialState:
+    system = host_config.host_system
+    hmr_masses = apply_hmr(host_config.masses, system.bond.potential.idxs)
+
+    group_idxs = get_group_indices(get_bond_list(system.bond.potential), len(hmr_masses))
+    baro = None
+    if barostat_interval > 0:
+        baro = MonteCarloBarostat(len(hmr_masses), DEFAULT_PRESSURE, temperature, group_idxs, barostat_interval, seed)
+
+    x0 = host_config.conf
+    # initialize integrator
+    friction = 1.0
+    intg: ConstrainedLangevinIntegrator | LangevinIntegrator
+    if dt > 2.5e-3:
+        assert host_config.constraints
+        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, hmr_masses, seed, host_config.constraints)
+    else:
+        intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
+    protein_idxs = np.arange(0, len(hmr_masses) - host_config.num_water_atoms, dtype=np.int32)
+    ligand_idxs = np.array([], dtype=np.int32)
+
+    v0 = sample_velocities(hmr_masses, temperature, seed)
+    return InitialState(system.get_U_fns(), intg, baro, x0, v0, host_config.box, 0.0, ligand_idxs, protein_idxs)
