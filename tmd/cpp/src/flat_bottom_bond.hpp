@@ -70,6 +70,12 @@ public:
   void set_system_idxs_device(const int num_idxs, const int *d_new_system_idxs,
                               cudaStream_t stream);
 
+  int get_num_idxs() const;
+
+  std::vector<int> get_idxs_host() const;
+
+  std::vector<int> get_system_idxs_host() const;
+
   virtual int num_systems() const override;
 };
 

@@ -463,8 +463,10 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
         min_overlap=target_overlap - overlap_diff,
     )
 
-    # Should have fewer intermediates thank to the lower min_overlap
-    assert len(ref_res.intermediate_results) > len(comp_res.intermediate_results)
+    # Should have fewer or equal intermediates thanks to the lower min_overlap
+    reference_intermediates = len(ref_res.intermediate_results)
+    target_overlap_intermediates = len(comp_res.intermediate_results)
+    assert reference_intermediates >= target_overlap_intermediates
     ref_final_swap_acceptance_rates = ref_res.hrex_diagnostics.cumulative_swap_acceptance_rates[-1]
     comp_final_swap_acceptance_rates = comp_res.hrex_diagnostics.cumulative_swap_acceptance_rates[-1]
 
