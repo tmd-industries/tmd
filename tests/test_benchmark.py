@@ -39,17 +39,16 @@ from tmd.fe.free_energy import (
     WaterSamplingParams,
     get_batched_context,
     get_context,
+    initial_state_from_host_config,
     sample_with_context_iter,
 )
-from tmd.fe.model_utils import apply_hmr
 from tmd.fe.rbfe import setup_initial_state
 from tmd.fe.single_topology import SingleTopology
 from tmd.fe.topology import BaseTopology
 from tmd.ff import Forcefield
-from tmd.lib import ConstrainedLangevinIntegrator, LangevinIntegrator, MonteCarloBarostat, custom_ops
+from tmd.lib import custom_ops
 from tmd.md import builders
-from tmd.md.barostat.utils import compute_box_volume, get_bond_list, get_group_indices
-from tmd.md.thermostat.utils import sample_velocities
+from tmd.md.barostat.utils import compute_box_volume
 from tmd.potentials import (
     Nonbonded,
     NonbondedInteractionGroup,
@@ -129,39 +128,6 @@ def plot_batch_times(steps_per_batch: int, dt: float, batch_times: list[float], 
 @pytest.fixture(scope="module")
 def hi2fa_test_frames():
     return generate_hif2a_frames(100, 10, seed=2022, barostat_interval=20)
-
-
-def initial_state_from_host_config(
-    host_config: HostConfig,
-    dt: float,
-    temperature: float = constants.DEFAULT_TEMP,
-    seed: int = 2026,
-    barostat_interval: int = 25,
-) -> InitialState:
-    system = host_config.host_system
-    hmr_masses = apply_hmr(host_config.masses, system.bond.potential.idxs)
-
-    group_idxs = get_group_indices(get_bond_list(system.bond.potential), len(hmr_masses))
-    baro = None
-    if barostat_interval > 0:
-        baro = MonteCarloBarostat(
-            len(hmr_masses), constants.DEFAULT_PRESSURE, temperature, group_idxs, barostat_interval, seed
-        )
-
-    x0 = host_config.conf
-    # initialize integrator
-    friction = 1.0
-    intg: ConstrainedLangevinIntegrator | LangevinIntegrator
-    if dt > 2.5e-3:
-        assert host_config.constraints
-        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, hmr_masses, seed, host_config.constraints)
-    else:
-        intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
-    protein_idxs = np.arange(0, len(hmr_masses) - host_config.num_water_atoms, dtype=np.int32)
-    ligand_idxs = np.array([], dtype=np.int32)
-
-    v0 = sample_velocities(hmr_masses, temperature, seed)
-    return InitialState(system.get_U_fns(), intg, baro, x0, v0, host_config.box, 0.0, ligand_idxs, protein_idxs)
 
 
 def generate_hif2a_frames(n_frames: int, frame_interval: int, seed: int = 2022, barostat_interval: int = 5):
@@ -344,10 +310,10 @@ def run_single_topology_benchmarks(
     st: SingleTopology,
     host_config: Optional[HostConfig],
 ):
-    for dt in [2.5e-3, 4.0e-3]:
+    for dt in [4.5e-3]:
         initial_state = setup_initial_state(st, 0.1, host_config, constants.DEFAULT_TEMP, 2022, True, dt=dt)
 
-        for num_systems in [1, 2, 4]:
+        for num_systems in [1, 4, 8, 16, 32, 48]:
             if host_config is not None:
                 for barostat_interval in [0, 25]:
                     apo_state = initial_state_from_host_config(host_config, dt, barostat_interval=barostat_interval)
