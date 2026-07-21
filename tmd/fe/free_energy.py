@@ -2364,7 +2364,10 @@ def run_sims_hrex(
     ligand_idxs = initial_states[0].ligand_idxs
 
     def get_state_params(initial_state: InitialState) -> list[NDArray]:
-        return [bp.params for bp in initial_state.potentials]
+        potentials = initial_state.potentials
+        if isinstance(initial_state.integrator, ConstrainedLangevinIntegrator):
+            potentials = prune_constrained_valence_terms(potentials, initial_state.integrator.constraints)
+        return [bp.params for bp in potentials]
 
     params_by_state = [get_state_params(initial_state) for initial_state in initial_states]
 

@@ -680,8 +680,8 @@ def test_get_context_with_non_contiguous_waters(neutralize, ionic_concentration)
     ctxt = get_context(state, md_params=md_params)
     movers = ctxt.get_movers()
     assert len(movers) == 2
-    assert isinstance(movers[0], custom_ops.MonteCarloBarostat_f32)
-    assert isinstance(movers[1], custom_ops.TIBDExchangeMove_f32)
+    assert isinstance(movers[0], custom_ops.TIBDExchangeMove_f32)
+    assert isinstance(movers[1], custom_ops.MonteCarloBarostat_f32)
 
 
 @pytest.mark.parametrize("batch_size", [2, 4, 8, 16])
