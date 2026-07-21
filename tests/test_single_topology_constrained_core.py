@@ -19,6 +19,7 @@ from common import ligand_from_smiles
 from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS
 from tmd.fe.atom_mapping import get_cores
 from tmd.fe.single_topology import (
+    SingleTopology,
     filter_constraint_incompatible_hydrogens,
     verify_core_is_compatible_with_constraints,
 )
@@ -48,6 +49,22 @@ def test_verify_core_is_compatible_with_constraints():
     core = get_cores(mol_a, mol_b, **kwargs)[0]
 
     verify_core_is_compatible_with_constraints(mol_a, mol_b, core, ff)
+
+
+def test_single_topology_verify_constraints_check():
+    """Verify that verification of the core is possible with the SingleTopology object to avoid waiting until systems are constructed"""
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    mol_a = ligand_from_smiles("C1CCCCC1")
+    mol_b = ligand_from_smiles("C1C(Cl)CCCC1")
+
+    kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    kwargs["heavy_matches_heavy_only"] = False
+    core = get_cores(mol_a, mol_b, **kwargs)[0]
+
+    SingleTopology(mol_a, mol_b, core, ff)
+
+    with pytest.raises(ValueError, match=r"Invalid Mappings: \(17, 2\)"):
+        SingleTopology(mol_a, mol_b, core, ff, verify_constraints=True)
 
 
 def test_filter_drops_mismatched_hydrogen_lengths():

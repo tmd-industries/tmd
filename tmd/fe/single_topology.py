@@ -1397,7 +1397,9 @@ def verify_core_is_compatible_with_constraints(mol_a: Chem.Mol, mol_b: Chem.Mol,
 
 
 class SingleTopology(AtomMapMixin):
-    def __init__(self, mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray, forcefield: Forcefield):
+    def __init__(
+        self, mol_a: Chem.Mol, mol_b: Chem.Mol, core: NDArray, forcefield: Forcefield, verify_constraints: bool = False
+    ):
         """
         SingleTopology combines two molecules through a common core. The combined mol has
         atom indices laid out such that mol_a is identically mapped to the combined mol indices.
@@ -1419,7 +1421,13 @@ class SingleTopology(AtomMapMixin):
 
         forcefield: ff.Forcefield
             Forcefield to be used for parameterization.
+
+        verify_constraints: bool
+            Verify that the SingleTopology object is compatible with constraints. Validation is otherwise only performed
+            when calling get_constraint_groups.
         """
+        if verify_constraints:
+            verify_core_is_compatible_with_constraints(mol_a, mol_b, core, forcefield)
         # initialize the mixin to get the a_to_c, b_to_c, c_to_a, c_to_b, and c_flags
         super().__init__(mol_a, mol_b, core)
 
