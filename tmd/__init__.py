@@ -14,7 +14,7 @@
 # limitations under the License.
 
 
-__version__ = "0.4.3"
+__version__ = "0.5.0"
 
 
 def _suppress_jax_no_gpu_warning():

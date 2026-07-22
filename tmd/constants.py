@@ -63,6 +63,7 @@ DEFAULT_ATOM_MAPPING_KWARGS: dict[str, Any] = {
     "enforce_chiral": True,
     "disallow_planar_torsion_flips": True,
     "min_threshold": 0,
+    "constrain_hydrogens": False,
     "initial_mapping": None,
 }
 
