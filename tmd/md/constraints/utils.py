@@ -95,12 +95,13 @@ def prune_harmonic_bond_terms(
             match_idxs = np.arange(matches.size).reshape(matches.shape)[matches]
         else:
             match_idxs = np.arange(len(idxs))[matches]
-        constrained_bond_matches = []
+        constrained_bond_matches_ = []
         for match_idx in match_idxs:
             # print(match_idx)
             pair = idxs[np.unravel_index(match_idx, match_shape)]
             if canonicalize_bond(tuple(pair)) in pairs:
-                constrained_bond_matches.append(match_idx)
+                constrained_bond_matches_.append(match_idx)
+        constrained_bond_matches = np.array(constrained_bond_matches_, dtype=np.intp)
 
         keep_mask = np.ones_like(matches)
         keep_mask[np.unravel_index(constrained_bond_matches, matches.shape)] = False

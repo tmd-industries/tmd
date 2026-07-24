@@ -771,6 +771,7 @@ def verify_leg_results_hashes(leg_dir: Path, expected_hash: str):
     "leg, n_windows, n_frames, n_eq_steps",
     [("vacuum", 24, 50, 1000), ("solvent", 5, 50, 1000), ("complex", 5, 50, 1000)],
 )
+@pytest.mark.parametrize("dt", [2.5, 4.0])
 @pytest.mark.parametrize("mol_a, mol_b", [("15", "30")])
 @pytest.mark.parametrize("seed", [2025])
 def test_run_rbfe_legs(
@@ -779,6 +780,7 @@ def test_run_rbfe_legs(
     n_windows,
     n_frames,
     n_eq_steps,
+    dt,
     mol_a,
     mol_b,
     seed,
@@ -789,32 +791,62 @@ def test_run_rbfe_legs(
     # which can be used to investigate the results that generated the hashes.
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
-        (False, "vacuum"): (
+        (2.5, False, "vacuum"): (
             "c2f6f4d17caabbfd4a3318637343d45a028da18bcf58d0c10f080a4dbfb47f39",
             "df3087f834f68d2d85e7f43f346bd90c60c45753723961938c9d60ae502b99e2",
             "2e059a63ab61add95a8c44305fb1505d1b938513c30f34f9d186a5c6d6672388",
         ),
-        (False, "solvent"): (
+        (2.5, False, "solvent"): (
             "e17bc612984af82601fcfb4171d0ec45708de6e331de8d2ba09887c18c6b4b7f",
             "5378bbff80e2b8520d38bf842e12b1f71c0a741f7f8722f542039a589d1c186b",
             "67da8e6da98a3556b9cc442fe80f49e61f9aa7226f6830f9c7e79b3d432f61da",
         ),
-        (False, "complex"): (
+        (2.5, False, "complex"): (
             "43d86525714d6bdf9365bd90da89fe60efd407546cd6bdfd8ae83455a4da84c1",
             "4aa2df24b76e8660bccba47f11f6428f7a87df1e8dd6064bcc90459e15e59461",
             "f1343c7fe0cd6f060c908a2613ccbbf578a516263cf646076b6eef3657efe11b",
         ),
-        (True, "vacuum"): (
+        (2.5, True, "vacuum"): (
             "74a530768878ed541a56326f2b825d7170fbf1d31e631c52be0eee54cc73aea1",
             "d2243e2afe42f8a6dea449d510293720513f289a66f84ea38c44b986c0677553",
             "839270b115c8a59b004648f37385c4ea73b5f0f66b826c67f766a855f2b8928e",
         ),
-        (True, "solvent"): (
+        (2.5, True, "solvent"): (
             "20008c57e528c59fd32e0b9371225638bfa6936862d4a96a02a8c48d7147a3cd",
             "043c6bb183902a86ebb7d391a2e86323889557bde0dc9580a769e474fb198dcc",
             "7299edd3aeec090edc97eaad102def498299b3ffa64e24c838a9abf0559780ed",
         ),
-        (True, "complex"): (
+        (2.5, True, "complex"): (
+            "06263ab7409952d275cc649e3c6c7c6097a9f5142da91ac8a531c88b3f5064f9",
+            "e42ebe8dfa2aa2e48a50443d3ef6424843c054bb8ed756b4c064bad640a5c1fe",
+            "3683f47e5996b391d1aaafd32c982af8520cc8babaa2456ac7abf77fbd8566fb",
+        ),
+        (4.0, True, "vacuum"): (
+            "74a530768878ed541a56326f2b825d7170fbf1d31e631c52be0eee54cc73aea1",
+            "d2243e2afe42f8a6dea449d510293720513f289a66f84ea38c44b986c0677553",
+            "839270b115c8a59b004648f37385c4ea73b5f0f66b826c67f766a855f2b8928e",
+        ),
+        (4.0, True, "solvent"): (
+            "20008c57e528c59fd32e0b9371225638bfa6936862d4a96a02a8c48d7147a3cd",
+            "043c6bb183902a86ebb7d391a2e86323889557bde0dc9580a769e474fb198dcc",
+            "7299edd3aeec090edc97eaad102def498299b3ffa64e24c838a9abf0559780ed",
+        ),
+        (4.0, True, "complex"): (
+            "06263ab7409952d275cc649e3c6c7c6097a9f5142da91ac8a531c88b3f5064f9",
+            "e42ebe8dfa2aa2e48a50443d3ef6424843c054bb8ed756b4c064bad640a5c1fe",
+            "3683f47e5996b391d1aaafd32c982af8520cc8babaa2456ac7abf77fbd8566fb",
+        ),
+        (4.0, False, "vacuum"): (
+            "74a530768878ed541a56326f2b825d7170fbf1d31e631c52be0eee54cc73aea1",
+            "d2243e2afe42f8a6dea449d510293720513f289a66f84ea38c44b986c0677553",
+            "839270b115c8a59b004648f37385c4ea73b5f0f66b826c67f766a855f2b8928e",
+        ),
+        (4.0, False, "solvent"): (
+            "20008c57e528c59fd32e0b9371225638bfa6936862d4a96a02a8c48d7147a3cd",
+            "043c6bb183902a86ebb7d391a2e86323889557bde0dc9580a769e474fb198dcc",
+            "7299edd3aeec090edc97eaad102def498299b3ffa64e24c838a9abf0559780ed",
+        ),
+        (4.0, False, "complex"): (
             "06263ab7409952d275cc649e3c6c7c6097a9f5142da91ac8a531c88b3f5064f9",
             "e42ebe8dfa2aa2e48a50443d3ef6424843c054bb8ed756b4c064bad640a5c1fe",
             "3683f47e5996b391d1aaafd32c982af8520cc8babaa2456ac7abf77fbd8566fb",
@@ -836,6 +868,7 @@ def test_run_rbfe_legs(
             force_overwrite=None,  # Force overwrite any existing data
             experimental_field="IC50[uM](SPA)",
             experimental_units="uM",
+            dt_fs=dt,
         )
 
         def verify_run(output_dir: Path):
@@ -920,7 +953,7 @@ def test_run_rbfe_legs(
         proc = run_example("run_rbfe_legs.py", get_cli_args(config_a), env=env)
         assert proc.returncode == 0
         verify_run(Path(config_a["output_dir"]))
-        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(enable_batching, leg)])
+        verify_leg_results_hashes(Path(config_a["output_dir"]) / leg, leg_results_hashes[(dt, enable_batching, leg)])
 
         config_b = config.copy()
         config_b["output_dir"] = config["output_dir"] + "_b"
