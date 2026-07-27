@@ -864,7 +864,7 @@ def test_run_rbfe_legs(
             n_frames=n_frames,
             n_windows=n_windows,
             forcefield=DEFAULT_FF,
-            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_{mol_a}_{mol_b}_{leg}_{seed}_{enable_batching}",
+            output_dir=f"{ARTIFACT_DIR_NAME}/rbfe_{mol_a}_{mol_b}_{leg}_{seed}_{enable_batching}_{dt}",
             force_overwrite=None,  # Force overwrite any existing data
             experimental_field="IC50[uM](SPA)",
             experimental_units="uM",
