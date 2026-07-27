@@ -129,7 +129,8 @@ def test_find_chiral_atoms():
 
     mol = Chem.AddHs(Chem.MolFromSmiles(r"C1CC2CCC3CCC1N23"))
     res = chiral_utils.find_chiral_atoms(mol)
-    assert res == set([0, 1, 2, 3, 4, 5, 6, 7, 8])  # TODO: add atom idx 9 if we handle pyramidal nitrogens
+    # Aliphatic ring CH2 carbons (0, 1, 3, 4, 6, 7) are excluded; only ring junction CH atoms remain
+    assert res == set([2, 5, 8])
 
     mol = Chem.AddHs(Chem.MolFromSmiles(r"n1ccccc1"))
     res = chiral_utils.find_chiral_atoms(mol)
