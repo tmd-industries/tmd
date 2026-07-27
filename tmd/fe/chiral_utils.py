@@ -158,7 +158,7 @@ def find_chiral_atoms(mol):
     # these should be mutually exclusive, but if any pattern is hit then the results
     # are accumulated to a set
     chiral_patterns = [
-        "[X4&!$([#6R!aH2]([H])([H])):1]",  # tetrahedral atom, excluding aliphatic ring carbons bonded to two hydrogens
+        "[X4&!$([#6R!aH2]):1]",  # tetrahedral atom, excluding aliphatic ring carbons bonded to two hydrogens
         "[#16X3,#15X3:1]",  # trivalent sulfur, phosphorous are assumed to be non-invertible
         "[#7X3:1](~F)(~F)~F",  # specific non-invertible nitrogen, for software testing
         # TODO: handle invertible pyramidal nitrogen
