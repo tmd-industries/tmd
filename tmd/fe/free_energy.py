@@ -53,6 +53,7 @@ from tmd.lib import ConstrainedLangevinIntegrator, ConstraintGroups, LangevinInt
 from tmd.lib.custom_ops import BoundPotential_f32, Context_f32, SummedPotential_f32
 from tmd.md.barostat.utils import compute_box_center, get_bond_list, get_group_indices
 from tmd.md.builders import HostConfig
+from tmd.md.constraints.utils import prune_constrained_valence_terms
 from tmd.md.exchange.exchange_mover import WaterSamplingDiagnostics, get_water_idxs
 from tmd.md.hrex import HREX, HREXDiagnostics, ReplicaIdx, StateIdx, get_swap_attempts_per_iter_heuristic
 from tmd.md.states import CoordsVelBox
@@ -764,17 +765,10 @@ def get_summed_potential_from_bps(bps: Sequence[BoundPotential_f32]) -> SummedPo
 
 
 def get_batched_context(initial_states: Sequence[InitialState], md_params: Optional[MDParams] = None) -> Context_f32:
+    assert len(initial_states) > 1
+
     for s in initial_states[1:]:
         assert_ensembles_compatible(initial_states[0], s)
-
-    assert len(initial_states) > 1
-    bps = [bp for bp in initial_states[0].potentials]
-    for state in initial_states[1:]:
-        for i, pot in enumerate(state.potentials):
-            combined_pot = bps[i].combine(pot)
-            bps[i] = combined_pot
-
-    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
 
     intg = initial_states[0].integrator
     assert isinstance(intg, (LangevinIntegrator, ConstrainedLangevinIntegrator))
@@ -799,9 +793,6 @@ def get_batched_context(initial_states: Sequence[InitialState], md_params: Optio
         raise TypeError(f"Unknown integrator type: {type(intg)}")
     intg_impl = intg.impl(np.float32)
     movers = []
-    if initial_states[0].barostat is not None:
-        # Requires that the barostat is consistent across states
-        movers.append(initial_states[0].barostat.impl(bound_impls))
 
     if md_params is not None and md_params.water_sampling_params is not None:
         hb_potential = get_bound_potential_by_type(initial_states[0].potentials, HarmonicBond).potential
@@ -834,6 +825,20 @@ def get_batched_context(initial_states: Sequence[InitialState], md_params: Optio
         )
         movers.append(water_sampler)
 
+    bps = [bp for bp in initial_states[0].potentials]
+    for state in initial_states[1:]:
+        for i, pot in enumerate(state.potentials):
+            combined_pot = bps[i].combine(pot)
+            bps[i] = combined_pot
+
+    if isinstance(initial_states[0].integrator, ConstrainedLangevinIntegrator):
+        bps = prune_constrained_valence_terms(bps, initial_states[0].integrator.constraints)
+
+    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
+    if initial_states[0].barostat is not None:
+        # Requires that the barostat is consistent across states
+        movers.append(initial_states[0].barostat.impl(bound_impls))
+
     return Context_f32(
         np.stack([state.x0 for state in initial_states]),
         np.stack([state.v0 for state in initial_states]),
@@ -849,20 +854,18 @@ def get_context(initial_state: InitialState, md_params: Optional[MDParams] = Non
     Construct a Context from the potentials defined by the initial state
     """
 
-    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in initial_state.potentials]
+    potentials = initial_state.potentials
     intg_impl = initial_state.integrator.impl()
     movers = []
-    if initial_state.barostat:
-        movers.append(initial_state.barostat.impl(bound_impls))
     if md_params is not None and md_params.water_sampling_params is not None:
         # Setup the water indices
-        hb_potential = get_bound_potential_by_type(initial_state.potentials, HarmonicBond).potential
+        hb_potential = get_bound_potential_by_type(potentials, HarmonicBond).potential
         group_indices = get_group_indices(get_bond_list(hb_potential), len(initial_state.integrator.masses))
 
         water_idxs = get_water_idxs(group_indices, ligand_idxs=initial_state.ligand_idxs)
 
         # Select a Nonbonded Potential to get the the cutoff, assumes all have same cutoff.
-        nb = get_bound_potential_by_type(initial_state.potentials, Nonbonded).potential
+        nb = get_bound_potential_by_type(potentials, Nonbonded).potential
 
         water_params = get_water_sampler_params(initial_state)
 
@@ -884,6 +887,13 @@ def get_context(initial_state: InitialState, md_params: Optional[MDParams] = Non
             batch_size=md_params.water_sampling_params.batch_size,
         )
         movers.append(water_sampler)
+
+    if isinstance(initial_state.integrator, ConstrainedLangevinIntegrator):
+        potentials = prune_constrained_valence_terms(potentials, initial_state.integrator.constraints)
+    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in potentials]
+
+    if initial_state.barostat:
+        movers.append(initial_state.barostat.impl(bound_impls))
 
     return Context_f32(initial_state.x0, initial_state.v0, initial_state.box0, intg_impl, bound_impls, movers=movers)
 
@@ -1294,6 +1304,8 @@ def _run_sequential_bisection(
     assert len(bound_potentials) == len(get_initial_state(lambdas[0]).potentials)
     unbound_impls = [bp.get_potential() for bp in bound_potentials]
 
+    applies_constraints = isinstance(get_initial_state(lambdas[0]).integrator, ConstrainedLangevinIntegrator)
+
     @cache
     def get_samples(lamb: float) -> Trajectory:
         initial_state = get_initial_state(lamb)
@@ -1301,6 +1313,11 @@ def _run_sequential_bisection(
         context.set_v_t(initial_state.v0)
         context.set_box(initial_state.box0)
         for bp, state_bp in zip(bound_potentials, initial_state.potentials):
+            if applies_constraints:
+                state_bp = prune_constrained_valence_terms(
+                    [state_bp],
+                    initial_state.integrator.constraints,  # type: ignore
+                )[0]
             bp.set_params(state_bp.params)  # type: ignore
         for mover in context.get_movers():
             mover.set_step(0)
@@ -1450,7 +1467,9 @@ def _run_batched_bisection(
     assert np.all(np.diff(initial_lambdas) > 0), "initial lambda schedule must be monotonically increasing"
     if len(initial_lambdas) > batch_size:
         raise RuntimeError("Batched Bisection doesn't support more initial lambdas than batch size")
+
     get_initial_state = cache(make_initial_state)
+
     rng = np.random.default_rng(md_params.seed)
 
     if len(initial_lambdas) == 2:
@@ -1481,18 +1500,20 @@ def _run_batched_bisection(
     bound_potentials = context.get_potentials()
     assert len(bound_potentials) == len(get_initial_state(lambdas[0]).potentials)
 
-    temp_ctxt = get_context(get_initial_state(initial_lambdas[0]))
+    temp_ctxt = get_context(get_initial_state(lambdas[0]))
     nrg_pots = [bp.get_potential() for bp in temp_ctxt.get_potentials()]
     del temp_ctxt
 
     barostat = context.get_barostat()
 
-    first_state = get_initial_state(initial_lambdas[0])
+    first_state = get_initial_state(lambdas[0])
     initial_volume_scale_factor = 0.0
     ligand_idxs = first_state.ligand_idxs
     if barostat is not None:
         assert first_state.barostat is not None
         initial_volume_scale_factor = first_state.barostat.initial_volume_scale_factor or 0.0
+
+    applies_constraints = isinstance(first_state.integrator, ConstrainedLangevinIntegrator)
 
     trajs_by_lamb = {}
 
@@ -1503,7 +1524,14 @@ def _run_batched_bisection(
             context.set_v_t(np.stack([state.v0 for state in states]))
             context.set_box(np.stack([state.box0 for state in states]))
             for i, bp in enumerate(bound_potentials):
-                bp.set_params(np.stack([state.potentials[i].params for state in states]))
+                if not applies_constraints:
+                    bp.set_params(np.stack([state.potentials[i].params for state in states]))
+                else:
+                    pots = prune_constrained_valence_terms(
+                        [state.potentials[i] for state in states],
+                        first_state.integrator.constraints,  # type: ignore
+                    )
+                    bp.set_params(np.stack([pot.params for pot in pots]))
             for mover in context.get_movers():
                 mover.set_step(0)
                 if isinstance(mover, WATER_SAMPLER_MOVERS):
@@ -2049,14 +2077,22 @@ def generate_pair_bar_ulkns(
     num_samples = len(samples_by_state[0].boxes)
     assert all([len(traj.boxes) == num_samples for traj in samples_by_state])
     if unbound_impls is None:
-        unbound_impls = [pot.potential.to_gpu(np.float32).unbound_impl for pot in initial_states[0].potentials]
+        pots = initial_states[0].potentials
+        if isinstance(initial_states[0].integrator, ConstrainedLangevinIntegrator):
+            pots = prune_constrained_valence_terms(pots, initial_states[0].integrator.constraints)
+        unbound_impls = [pot.potential.to_gpu(np.float32).unbound_impl for pot in pots]
     assert len(unbound_impls) == len(initial_states[0].potentials)
     kBT = temperature * BOLTZ
     # Construct an empty array
     energies_by_frames_by_params = np.zeros(
         (len(initial_states), len(initial_states), len(unbound_impls)), dtype=object
     )
-    params_by_state = [[bp.params for bp in initial_state.potentials] for initial_state in initial_states]
+    params_by_state = []
+    for initial_state in initial_states:
+        pots = initial_state.potentials
+        if isinstance(initial_state.integrator, ConstrainedLangevinIntegrator):
+            pots = prune_constrained_valence_terms(pots, initial_state.integrator.constraints)
+        params_by_state.append([bp.params for bp in pots])
     executor = custom_ops.PotentialExecutor_f32()
     for i, state in enumerate(initial_states):
         frames = np.array(samples_by_state[i].frames)
@@ -2354,7 +2390,10 @@ def run_sims_hrex(
     ligand_idxs = initial_states[0].ligand_idxs
 
     def get_state_params(initial_state: InitialState) -> list[NDArray]:
-        return [bp.params for bp in initial_state.potentials]
+        potentials = initial_state.potentials
+        if isinstance(initial_state.integrator, ConstrainedLangevinIntegrator):
+            potentials = prune_constrained_valence_terms(potentials, initial_state.integrator.constraints)
+        return [bp.params for bp in potentials]
 
     params_by_state = [get_state_params(initial_state) for initial_state in initial_states]
 

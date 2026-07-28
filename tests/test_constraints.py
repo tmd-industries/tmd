@@ -7,7 +7,8 @@ from tmd.fe.topology import BaseTopology
 from tmd.fe.utils import get_mol_masses, get_romol_conf
 from tmd.ff import Forcefield
 from tmd.lib import ConstraintGroups, custom_ops
-from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups
+from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups, prune_constrained_valence_terms
+from tmd.potentials import HarmonicBond
 
 
 @pytest.fixture(scope="module")
@@ -363,3 +364,36 @@ def test_dataclass_sort(precision, water_mol, ff):
     sorted_constraints = constraints.sort()
     assert sorted_constraints.water_group_indices[0] == 0
     assert len(sorted_constraints.groups) == len(constraints.groups)
+
+
+@pytest.mark.nogpu
+def test_prune_potentials(water_mol, ff):
+    bt = BaseTopology(water_mol, ff)
+
+    x0 = get_romol_conf(water_mol)
+    box = np.eye(3) * 100.0
+    constraints = bt.get_constraint_groups()
+
+    endstate = bt.setup_end_state()
+
+    bps = endstate.get_U_fns()
+
+    pruned_bps = prune_constrained_valence_terms(bps, constraints)
+
+    assert len(pruned_bps) == len(bps)
+
+    for bp, pruned_bp in zip(bps, pruned_bps):
+        assert type(bp.potential) is type(pruned_bp.potential)
+        if isinstance(bp.potential, HarmonicBond):
+            assert len(pruned_bp.potential.idxs) == 0
+            assert len(pruned_bp.params) == 0
+
+            assert len(bp.potential.idxs) == 2
+            assert len(bp.params) == 2
+        else:
+            np.testing.assert_array_equal(bp.potential.idxs, pruned_bp.potential.idxs)
+            np.testing.assert_array_equal(bp.params, pruned_bp.params)
+
+        # Potentials should still be valid to execute
+        assert np.isfinite(bp(x0, box))
+        assert np.isfinite(pruned_bp(x0, box))
