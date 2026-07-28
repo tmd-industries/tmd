@@ -50,6 +50,7 @@ from tmd.fe.single_topology import (
     canonicalize_chiral_atom_idxs,
     canonicalize_improper_idxs,
     cyclic_difference,
+    filter_constraint_incompatible_hydrogens,
     interpolate_w_coord,
     setup_dummy_interactions_from_ff,
 )
@@ -1579,3 +1580,39 @@ def test_hif2a_end_state_symmetry_nightly_test(mol_a, mol_b):
     print("testing", mol_a.GetProp("_Name"), "->", mol_b.GetProp("_Name"))
     core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
     assert_symmetric_interpolation(mol_a, mol_b, core)
+
+
+@pytest.mark.nogpu
+def test_pfkfb3_edge_doesnt_contain_ch2_chiral_restraints():
+    """Verify that CH2 atoms are not included as chiral centers"""
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf") as ligand_path:
+        mols_by_name = read_sdf_mols_by_name(ligand_path)
+    mol_a = mols_by_name["65"]
+    mol_b = mols_by_name["59"]
+
+    kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    kwargs["constrain_hydrogens"] = True
+
+    core = atom_mapping.get_cores(mol_a, mol_b, **kwargs)[0]
+
+    core, _ = filter_constraint_incompatible_hydrogens(mol_a, mol_b, core, ff)
+    st = SingleTopology(mol_a, mol_b, core, ff, verify_constraints=True)
+
+    def get_ch2_atoms(mol):
+        query = Chem.MolFromSmarts("[#6R!aH2:1]")
+        ch2_atoms = set()
+        for match in mol.GetSubstructMatches(query):
+            ch2_atoms.add(match[0])
+        return ch2_atoms
+
+    mol_a_ch2 = get_ch2_atoms(mol_a)
+    assert len(mol_a_ch2) == 0
+    mol_b_ch2 = get_ch2_atoms(mol_b)
+    assert len(mol_b_ch2) == 2
+
+    mol_c_ch2 = set(st.b_to_c[idx] for idx in mol_b_ch2)
+
+    system = st.setup_intermediate_state(0.0)
+    assert len(system.chiral_atom.potential.idxs) > 0
+    assert len(set(system.chiral_atom.potential.idxs[:, 0]).intersection(mol_c_ch2)) == 0
