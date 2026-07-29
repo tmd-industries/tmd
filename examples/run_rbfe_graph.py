@@ -21,7 +21,7 @@ from rbfe_common import COMPLEX_LEG, SOLVENT_LEG, VACUUM_LEG, run_rbfe_leg, writ
 from tmd.constants import DEFAULT_FF
 from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, WaterSamplingParams
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
-from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
+from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name, verify_mol
 from tmd.ff import Forcefield
 from tmd.md.builders import compute_solvent_box_size, verify_pdb_structure
 from tmd.md.exchange.utils import get_radius_of_mol_pair
@@ -138,6 +138,9 @@ def main():
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
     np.random.seed(args.seed)
     rng = np.random.default_rng(args.seed)
+
+    for mol in mols_by_name.values():
+        verify_mol(mol)
 
     with open(Path(args.graph_json).expanduser()) as ifs:
         edges_data = json.load(ifs)

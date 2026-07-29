@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,9 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from warnings import catch_warnings
+
 import numpy as np
 import py3Dmol
 import pytest
+from common import ligand_from_smiles
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -192,8 +195,7 @@ def test_get_and_set_mol_name():
 
 def test_get_and_set_mol_coords():
     np.random.seed(2022)
-    mol = Chem.AddHs(Chem.MolFromSmiles("c1ccccc1"))
-    AllChem.EmbedMolecule(mol)
+    mol = ligand_from_smiles("c1ccccc1")
 
     x0 = utils.get_romol_conf(mol)
 
@@ -271,8 +273,7 @@ def test_get_mol_experimental_value():
 def test_get_strained_atoms():
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     np.random.seed(2022)
-    mol = Chem.AddHs(Chem.MolFromSmiles("c1ccccc1"))
-    AllChem.EmbedMolecule(mol)
+    mol = ligand_from_smiles("c1ccccc1")
     assert model_utils.get_strained_atoms(mol, ff) == []
 
     # force a clash
@@ -283,11 +284,8 @@ def test_get_strained_atoms():
 
 
 def test_view_atom_mapping_3d():
-    mol_a = Chem.AddHs(Chem.MolFromSmiles("c1ccc1"))
-    mol_b = Chem.AddHs(Chem.MolFromSmiles("c1(N)ccc1"))
-
-    AllChem.EmbedMolecule(mol_a)
-    AllChem.EmbedMolecule(mol_b)
+    mol_a = ligand_from_smiles("c1ccc1")
+    mol_b = ligand_from_smiles("c1(N)ccc1")
 
     # no core
     view = utils.view_atom_mapping_3d(mol_a, mol_b)
@@ -370,3 +368,30 @@ def test_generate_conformations(smi, seed, n_confs):
     utils.generate_conformations(mol, n_confs=n_confs, seed=seed)
     assert len(mol.GetConformers()) >= 1
     assert len(mol.GetConformers()) <= n_confs
+
+
+def test_verify_mol():
+    mol = ligand_from_smiles("c1ccc1")
+
+    with catch_warnings(record=True) as w:
+        utils.verify_mol(mol)
+    assert len(w) == 0
+
+    mol.ClearProp("_Name")
+
+    with pytest.raises(ValueError, match="has no name"):
+        utils.verify_mol(mol)
+
+    utils.set_mol_name(mol, "dummy")
+
+    mol.RemoveAllConformers()
+
+    with pytest.raises(ValueError, match="has no conformers"):
+        utils.verify_mol(mol)
+
+    AllChem.Compute2DCoords(mol)
+
+    with catch_warnings(record=True) as w:
+        utils.verify_mol(mol)
+    assert len(w) == 1
+    assert "appears to have a 2D conformer" in next(x.message.args[0] for x in w)

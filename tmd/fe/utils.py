@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import hashlib
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Optional
@@ -723,3 +724,28 @@ def bytes_to_id(data: bytes) -> int:
     # Convert the given data into a 64-bit int
     MAX_INT = 2**64 - 1
     return int(hashlib.sha256(data).hexdigest(), 16) % MAX_INT
+
+
+def verify_mol(mol: Chem.Mol):
+    """Performs the validation of a molecule to ensure it is compatible with the TMD expectations
+
+    Checks:
+    1. The molecule has a _Name field
+    2. There is at least one conformer
+    3. If RDKit thinks the first conformer isn't 3D, warn the user.
+
+    Raises
+    ------
+        ValueError:
+            Molecule has no name
+            Molecule has no conformers
+    """
+    try:
+        name = get_mol_name(mol)
+    except KeyError:
+        smi = Chem.MolToSmiles(Chem.RemoveHs(mol))
+        raise ValueError(f"Molecule '{smi}' has no name")
+    if mol.GetNumConformers() == 0:
+        raise ValueError(f"Molecule '{name}' has no conformers")
+    if not mol.GetConformer().Is3D():
+        warnings.warn(f"Molecule '{name}' appears to have a 2D conformer")
