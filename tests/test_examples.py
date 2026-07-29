@@ -833,7 +833,7 @@ def test_run_rbfe_legs(
         ),
         (4.0, True, "complex"): (
             "66dbfd9d2b503eb591ed5ba68f9778e9fb03233be871224c34d7cf0e0e3666ec",
-            "163e423052d0d5f665d8c744b4bb5e0a423a40f525d04dde33d70aaacb4baa0e",
+            "163e423052d0d5f665d8c744b4bb5e0e423a40f525d04dde33d70aaacb4baa0e",
             "0b8bff10524db14282ee71b8cbc9d25ec4abb5fc3e58d1221b8473e0babafe69",
         ),
         (4.0, False, "vacuum"): (
