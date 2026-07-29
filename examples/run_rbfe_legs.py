@@ -36,7 +36,7 @@ from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF
 from tmd.fe import atom_mapping
 from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, WaterSamplingParams
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
-from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
+from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name, verify_mol
 from tmd.ff import Forcefield
 from tmd.md.builders import compute_solvent_box_size, verify_pdb_structure
 from tmd.md.exchange.utils import get_radius_of_mol_pair
@@ -152,6 +152,9 @@ def main():
 
     mol_a = mols_by_name[args.mol_a]
     mol_b = mols_by_name[args.mol_b]
+
+    verify_mol(mol_a)
+    verify_mol(mol_b)
 
     water_box_size = 4.0
     if SOLVENT_LEG in args.legs:

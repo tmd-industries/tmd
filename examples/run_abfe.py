@@ -66,7 +66,7 @@ from tmd.fe.rbfe import (
     setup_optimized_host,
 )
 from tmd.fe.topology import BaseTopology
-from tmd.fe.utils import get_mol_experimental_value, get_mol_name, read_sdf_mols_by_name, set_romol_conf
+from tmd.fe.utils import get_mol_experimental_value, get_mol_name, read_sdf_mols_by_name, set_romol_conf, verify_mol
 from tmd.ff import Forcefield
 from tmd.md.builders import build_membrane_system, build_protein_system, build_water_system
 from tmd.md.exchange.utils import get_radius_of_mol_pair
@@ -483,6 +483,9 @@ def main():
     args = parser.parse_args()
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
     np.random.seed(args.seed)
+
+    for mol in mols_by_name.values():
+        verify_mol(mol)
 
     assert args.dt_fs > 0.0
     dt = args.dt_fs * 1e-3
