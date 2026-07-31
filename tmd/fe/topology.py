@@ -411,17 +411,11 @@ class BaseTopology:
         for i, idxs in enumerate(chiral_atom_restr_idxs):
             atom = mol.GetAtomWithIdx(int(idxs[0]))
             if atom.GetAtomicNum() == 6:
-                nbrs = list(atom.GetNeighbors())
-                if len(nbrs) == 4:
-                    non_ring_nbs = [nbr for nbr in nbrs if not nbr.IsInRing()]
-                    if len(non_ring_nbs) == 2:
-                        a, b = non_ring_nbs
-                        if (
-                            len(list(a.GetNeighbors())) == 1
-                            and len(list(b.GetNeighbors())) == 1
-                            and a.GetAtomicNum() == b.GetAtomicNum()
-                        ):
-                            continue
+                atoms_with_restraint = [mol.GetAtomWithIdx(int(idx)) for idx in idxs[1:]]
+                if len(atoms_with_restraint) == 4:
+                    hydrogen_atoms = [nbr for nbr in atoms_with_restraint if nbr.GetAtomicNum() == 1]
+                    if len(hydrogen_atoms) >= 1:
+                        continue
 
             to_keep.append(i)
 
