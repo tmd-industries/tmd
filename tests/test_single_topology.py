@@ -1088,15 +1088,15 @@ def test_hif2a_pairs_setup_st(mol_a, mol_b):
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_nitrile():
+def test_chiral_fluoromethyl_to_nitrile():
     # test that we do not turn off chiral atom restraints even if some of
     # the angle terms are planar
     #
-    #     H        H
+    #     F        F
     #    .        /
-    # N#C-H -> F-C-H
+    # N#C-F -> F-C-F
     #    .        \
-    #     H        H
+    #     F        F
 
     mol_a = Chem.MolFromMolBlock(
         """
@@ -1105,9 +1105,9 @@ def test_chiral_methyl_to_nitrile():
   5  4  0  0  0  0            999 V2000
     0.4146   -0.0001    0.4976 C   0  0  0  0  0  0  0  0  0  0  0  0
    -1.0830    0.0001    0.8564 F   0  0  0  0  0  0  0  0  0  0  0  0
-    0.5755   -0.0001   -1.0339 H   0  0  0  0  0  0  0  0  0  0  0  0
-    1.0830    1.2574    1.0841 H   0  0  0  0  0  0  0  0  0  0  0  0
-    1.0830   -1.2574    1.0841 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.5755   -0.0001   -1.0339 F   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0830    1.2574    1.0841 F   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0830   -1.2574    1.0841 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   1  4  1  0  0  0  0
   1  5  1  0  0  0  0
@@ -1124,7 +1124,7 @@ $$$$""",
   3  2  0  0  0  0            999 V2000
     0.4146   -0.0001    0.4976 C   0  0  0  0  0  0  0  0  0  0  0  0
    -1.0830    0.0001    0.8564 N   0  0  0  0  0  0  0  0  0  0  0  0
-    0.5755   -0.0001   -1.0339 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.5755   -0.0001   -1.0339 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   1  2  3  0  0  0  0
 M  END
@@ -1150,14 +1150,14 @@ $$$$""",
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_nitrogen():
+def test_chiral_fluoromethyl_to_nitrogen():
     # test that we maintain all 4 chiral idxs when morphing N#N into CH3
     #
-    #     H        H
+    #     F        F
     #    /        /
-    # N#N-H -> F-C-H
+    # N#N-F -> F-C-F
     #    \        \
-    #     H        H
+    #     F        F
     #
     # (we need at least one restraint to be turned on to enable this)
 
@@ -1168,9 +1168,9 @@ def test_chiral_methyl_to_nitrogen():
   5  4  0  0  0  0            999 V2000
     0.1976    0.0344    0.3479 C   0  0  0  0  0  0  0  0  0  0  0  0
    -0.8624    0.0345    0.6018 F   0  0  0  0  0  0  0  0  0  0  0  0
-    0.3115    0.0344   -0.7361 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6707    0.9244    0.7630 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6707   -0.8555    0.7630 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3115    0.0344   -0.7361 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6707    0.9244    0.7630 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6707   -0.8555    0.7630 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   1  4  1  0  0  0  0
   1  5  1  0  0  0  0
@@ -1215,7 +1215,7 @@ $$$$""",
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_water():
+def test_chiral_fluoromethyl_to_water():
     mol_a = Chem.MolFromMolBlock(
         """
   Mrv2311 02222411113D
@@ -1223,9 +1223,9 @@ def test_chiral_methyl_to_water():
   5  4  0  0  0  0            999 V2000
    -1.1951   -0.2262   -0.1811 F   0  0  0  0  0  0  0  0  0  0  0  0
     0.1566   -0.1865    0.0446 C   0  0  0  0  0  0  0  0  0  0  0  0
-    0.4366    0.8050    0.4004 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6863   -0.4026   -0.8832 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.4215   -0.9304    0.7960 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4366    0.8050    0.4004 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6863   -0.4026   -0.8832 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4215   -0.9304    0.7960 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  2  1  0  0  0  0
   2  3  1  0  0  0  0
   2  4  1  0  0  0  0
@@ -1270,17 +1270,17 @@ $$$$""",
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_ammonia():
+def test_chiral_fluoromethyl_to_ammonia():
     mol_a = Chem.MolFromMolBlock(
         """
   Mrv2311 02232411003D
 
   5  4  0  0  0  0            999 V2000
     0.0402    0.0126    0.1841 C   0  0  0  0  0  0  0  0  0  0  0  0
-    0.2304   -0.7511    0.9383 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.8502    0.0126   -0.5452 H   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.0173    0.9900    0.6632 H   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.9024   -0.2011   -0.3198 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2304   -0.7511    0.9383 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.8502    0.0126   -0.5452 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0173    0.9900    0.6632 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9024   -0.2011   -0.3198 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  2  1  0  0  0  0
   1  3  1  0  0  0  0
   1  4  1  0  0  0  0

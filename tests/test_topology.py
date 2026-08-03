@@ -372,8 +372,7 @@ def test_exclude_all_ligand_ligand_ixns():
 
 @pytest.mark.nogpu
 def test_exclude_aliphatic_carbons_with_matching_terminal_atoms_as_chiral_centers():
-    """Verify that aliphatic carbons bonded to two matching terminal atoms are
-    not treated as chiral centers.
+    """Verify that aliphatic carbons bonded don't have chiral restraints over hydrogens
 
     This test checks two scenarios:
 
@@ -395,8 +394,6 @@ def test_exclude_aliphatic_carbons_with_matching_terminal_atoms_as_chiral_center
     zero_chiral_atoms_mols = [
         ligand_from_smiles("C1CCCC1"),  # Cyclopentane
         ligand_from_smiles("C1CCCCC1"),  # Cyclohexane
-        ligand_from_smiles("C1CCC(CC1)(Cl)Cl"),
-        ligand_from_smiles("C1CCC(CC1)(F)F"),
     ]
 
     for mol in zero_chiral_atoms_mols:
@@ -406,6 +403,8 @@ def test_exclude_aliphatic_carbons_with_matching_terminal_atoms_as_chiral_center
 
     one_chiral_atoms_mols = [
         ligand_from_smiles("C1CCC(CC1)(Cl)F"),
+        ligand_from_smiles("C1CCC(CC1)(Cl)Cl"),
+        ligand_from_smiles("C1CCC(CC1)(F)F"),
     ]
 
     for mol in one_chiral_atoms_mols:
