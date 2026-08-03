@@ -1342,7 +1342,7 @@ def test_chiral_core_ring_opening():
     0.2664   -0.0682    0.6077 O   0  0  0  0  0  0  0  0  0  0  0  0
     0.8332    1.6232   -0.6421 O   0  0  0  0  0  0  0  0  0  0  0  0
     1.3412    0.1809   -0.4674 O   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.0336    1.9673    1.3258 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0336    1.9673    1.3258 F   0  0  0  0  0  0  0  0  0  0  0  0
    -1.2364    1.3849   -0.0078 H   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   3  4  1  0  0  0  0
@@ -1379,28 +1379,32 @@ $$$$""",
         removeHs=False,
     )  # open ring
 
+    writer = Chem.SDWriter("example.sdf")
+    writer.write(mol_a)
+    writer.close()
+
     # map everything except a single hydrogen at the end
     core = np.array([[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5]])
 
-    # chiral force constants should be on for 3 of the 4 chiral
+    # chiral force constants should be on for the single chiral
     # terms at lambda=0
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     st = SingleTopology(mol_a, mol_b, core, ff)
     vs_0 = st.setup_intermediate_state(0.0)
     chiral_idxs_0 = vs_0.chiral_atom.potential.idxs
     chiral_params_0 = vs_0.chiral_atom.params
-    assert len(chiral_idxs_0) == 4
-    assert np.sum(chiral_params_0 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 3
+    assert len(chiral_idxs_0) == 1
+    assert np.sum(chiral_params_0 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 1
     vs_1 = st.setup_intermediate_state(1.0)
 
-    # chiral force constants should be on for all 4
+    # chiral force constants should be off for all
     # chiral terms at lambda=1
     chiral_idxs_1 = vs_1.chiral_atom.potential.idxs
     chiral_params_1 = vs_1.chiral_atom.params
     assert len(chiral_idxs_0) == len(chiral_idxs_1)
 
-    assert np.sum(chiral_params_1 == 0) == 0
-    assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 4
+    assert np.sum(chiral_params_1 == 0) == 1
+    assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 0
 
 
 def permute_atom_indices(mol_a, mol_b, core, seed):

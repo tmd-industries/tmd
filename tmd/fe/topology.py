@@ -412,7 +412,7 @@ class BaseTopology:
             atom = mol.GetAtomWithIdx(int(idxs[0]))
             if atom.GetAtomicNum() == 6:
                 atoms_with_restraint = [mol.GetAtomWithIdx(int(idx)) for idx in idxs[1:]]
-                if len(atoms_with_restraint) == 4:
+                if len(atoms_with_restraint) == 3:
                     hydrogen_atoms = [nbr for nbr in atoms_with_restraint if nbr.GetAtomicNum() == 1]
                     if len(hydrogen_atoms) >= 1:
                         continue
