@@ -20,7 +20,7 @@ from typing import no_type_check
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from common import check_split_ixns
+from common import check_split_ixns, ligand_from_smiles
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -368,3 +368,47 @@ def test_exclude_all_ligand_ligand_ixns():
     guest_exclusions, guest_scale_factors = topology.exclude_all_ligand_ligand_ixns(num_host_atoms, num_guest_atoms)
     assert guest_exclusions.shape == (0, 2)
     assert guest_scale_factors.shape == (0, 2)
+
+
+@pytest.mark.nogpu
+def test_exclude_aliphatic_carbons_with_matching_terminal_atoms_as_chiral_centers():
+    """Verify that aliphatic carbons bonded don't have chiral restraints over hydrogens
+
+    This test checks two scenarios:
+
+    1. *Zero chiral centers* -- molecules in which every tetrahedral carbon
+       either sits in a ring or bears two matching terminal substituents.
+       Examples: cyclopentane, cyclohexane, 1,1-dichlorocyclopentane, and
+       1,1-difluorocyclopentane.  None of these should produce any chiral atom
+       restraints.
+
+    2. *One chiral center* -- 1-chloro-1-fluorocyclopentane.  The carbon at the
+       1-position is bonded to two *non-matching* terminal atoms (Cl and F) and
+       two distinct ring carbons, so it is a genuine chiral center.  A
+       tetrahedral atom with 3 neighbors yields C(3,3) = 4 chiral atom
+       restraint 4-tuples (one for each choice of three substituents), so we
+       expect exactly 4 restraints.
+    """
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    zero_chiral_atoms_mols = [
+        ligand_from_smiles("C1CCCC1"),  # Cyclopentane
+        ligand_from_smiles("C1CCCCC1"),  # Cyclohexane
+    ]
+
+    for mol in zero_chiral_atoms_mols:
+        top = BaseTopology(mol, ff)
+        chiral_atom, _ = top.setup_chiral_restraints(1.0, 1.0)
+        assert len(chiral_atom.potential.idxs) == 0
+
+    one_chiral_atoms_mols = [
+        ligand_from_smiles("C1CCC(CC1)(Cl)F"),
+        ligand_from_smiles("C1CCC(CC1)(Cl)Cl"),
+        ligand_from_smiles("C1CCC(CC1)(F)F"),
+    ]
+
+    for mol in one_chiral_atoms_mols:
+        top = BaseTopology(mol, ff)
+        chiral_atom, _ = top.setup_chiral_restraints(1.0, 1.0)
+        # Each chiral atom implies 4 restraints
+        assert len(chiral_atom.potential.idxs) == 1 * 4

@@ -378,7 +378,7 @@ class BaseTopology:
         params, idxs = self.ff.it_handle.partial_parameterize(ff_params, self.mol)
         return params, potentials.PeriodicTorsion(self.get_num_atoms(), idxs)
 
-    def setup_chiral_restraints(self, chiral_atom_restraint_k, chiral_bond_restraint_k):
+    def setup_chiral_restraints(self, chiral_atom_restraint_k: float, chiral_bond_restraint_k: float):
         """
         Create chiral atom and bond potentials.
 
@@ -395,6 +395,9 @@ class BaseTopology:
         2-tuple
             Returns a ChiralAtomRestraint and a ChiralBondRestraint
 
+        Note:
+        Excludes aliphatic carbons as chiral centers when bonded to two matching terminal atoms, ie CH2.
+
         """
         mol = self.mol
         conf = get_romol_conf(mol)
@@ -402,6 +405,21 @@ class BaseTopology:
         # chiral atoms
         chiral_atom_restr_idxs = np.array(chiral_utils.setup_all_chiral_atom_restr_idxs(mol, conf), np.int32)
         chiral_atom_restr_idxs = chiral_atom_restr_idxs.reshape(-1, 4)
+
+        to_keep = []
+        # Prune aliphatic carbons bonded to two terminal atoms of the same type. C-H2, C-CL2, etc.
+        for i, idxs in enumerate(chiral_atom_restr_idxs):
+            atom = mol.GetAtomWithIdx(int(idxs[0]))
+            if atom.GetAtomicNum() == 6:
+                atoms_with_restraint = [mol.GetAtomWithIdx(int(idx)) for idx in idxs[1:]]
+                if len(atoms_with_restraint) == 3:
+                    hydrogen_atoms = [nbr for nbr in atoms_with_restraint if nbr.GetAtomicNum() == 1]
+                    if len(hydrogen_atoms) >= 1:
+                        continue
+
+            to_keep.append(i)
+
+        chiral_atom_restr_idxs = chiral_atom_restr_idxs[to_keep]
 
         chiral_atom_params = chiral_atom_restraint_k * np.ones(len(chiral_atom_restr_idxs))
         assert len(chiral_atom_params) == len(chiral_atom_restr_idxs)  # TODO: can this be checked in Potential::bind ?
@@ -411,20 +429,20 @@ class BaseTopology:
 
         # chiral bonds
         chiral_bonds = chiral_utils.find_chiral_bonds(mol)
-        chiral_bond_restr_idxs = []
-        chiral_bond_restr_signs = []
-        chiral_bond_params = []
+        chiral_bond_restr_idxs_ = []
+        chiral_bond_restr_signs_ = []
+        chiral_bond_params_ = []
         for src_idx, dst_idx in chiral_bonds:
             idxs, signs = chiral_utils.setup_chiral_bond_restraints(mol, conf, src_idx, dst_idx)
             for ii in idxs:
-                assert ii not in chiral_bond_restr_idxs
-            chiral_bond_restr_idxs.extend(idxs)
-            chiral_bond_restr_signs.extend(signs)
-            chiral_bond_params.extend(chiral_bond_restraint_k for _ in idxs)  # TODO: double-check this
+                assert ii not in chiral_bond_restr_idxs_
+            chiral_bond_restr_idxs_.extend(idxs)
+            chiral_bond_restr_signs_.extend(signs)
+            chiral_bond_params_.extend(chiral_bond_restraint_k for _ in idxs)  # TODO: double-check this
 
-        chiral_bond_restr_idxs = np.array(chiral_bond_restr_idxs, dtype=np.int32).reshape(-1, 4)
-        chiral_bond_restr_signs = np.array(chiral_bond_restr_signs)
-        chiral_bond_params = np.array(chiral_bond_params)
+        chiral_bond_restr_idxs = np.array(chiral_bond_restr_idxs_, dtype=np.int32).reshape(-1, 4)
+        chiral_bond_restr_signs = np.array(chiral_bond_restr_signs_)
+        chiral_bond_params = np.array(chiral_bond_params_)
         chiral_bond_potential = potentials.ChiralBondRestraint(
             self.get_num_atoms(), chiral_bond_restr_idxs, chiral_bond_restr_signs
         ).bind(chiral_bond_params)
