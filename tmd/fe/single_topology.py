@@ -1564,7 +1564,8 @@ class SingleTopology(AtomMapMixin):
             self.dst_system.nonbonded_pair_list,
         )
 
-        # Find all atoms that are terminal, to flag the pairs that terminal
+        # Find all atoms that are terminal, to flag the pairs of interactions
+        # between terminal atoms to scale them at a different rate to other pairwise interactions.
         terminal_atom_idxs = set()
         for a in self.mol_a.GetAtoms():
             if len(a.GetNeighbors()) == 1:
