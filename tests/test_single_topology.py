@@ -50,6 +50,7 @@ from tmd.fe.single_topology import (
     canonicalize_chiral_atom_idxs,
     canonicalize_improper_idxs,
     cyclic_difference,
+    filter_constraint_incompatible_hydrogens,
     interpolate_w_coord,
     setup_dummy_interactions_from_ff,
 )
@@ -1087,15 +1088,15 @@ def test_hif2a_pairs_setup_st(mol_a, mol_b):
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_nitrile():
+def test_chiral_fluoromethyl_to_nitrile():
     # test that we do not turn off chiral atom restraints even if some of
     # the angle terms are planar
     #
-    #     H        H
+    #     F        F
     #    .        /
-    # N#C-H -> F-C-H
+    # N#C-F -> F-C-F
     #    .        \
-    #     H        H
+    #     F        F
 
     mol_a = Chem.MolFromMolBlock(
         """
@@ -1104,9 +1105,9 @@ def test_chiral_methyl_to_nitrile():
   5  4  0  0  0  0            999 V2000
     0.4146   -0.0001    0.4976 C   0  0  0  0  0  0  0  0  0  0  0  0
    -1.0830    0.0001    0.8564 F   0  0  0  0  0  0  0  0  0  0  0  0
-    0.5755   -0.0001   -1.0339 H   0  0  0  0  0  0  0  0  0  0  0  0
-    1.0830    1.2574    1.0841 H   0  0  0  0  0  0  0  0  0  0  0  0
-    1.0830   -1.2574    1.0841 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.5755   -0.0001   -1.0339 F   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0830    1.2574    1.0841 F   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0830   -1.2574    1.0841 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   1  4  1  0  0  0  0
   1  5  1  0  0  0  0
@@ -1123,7 +1124,7 @@ $$$$""",
   3  2  0  0  0  0            999 V2000
     0.4146   -0.0001    0.4976 C   0  0  0  0  0  0  0  0  0  0  0  0
    -1.0830    0.0001    0.8564 N   0  0  0  0  0  0  0  0  0  0  0  0
-    0.5755   -0.0001   -1.0339 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.5755   -0.0001   -1.0339 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   1  2  3  0  0  0  0
 M  END
@@ -1149,14 +1150,14 @@ $$$$""",
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_nitrogen():
+def test_chiral_fluoromethyl_to_nitrogen():
     # test that we maintain all 4 chiral idxs when morphing N#N into CH3
     #
-    #     H        H
+    #     F        F
     #    /        /
-    # N#N-H -> F-C-H
+    # N#N-F -> F-C-F
     #    \        \
-    #     H        H
+    #     F        F
     #
     # (we need at least one restraint to be turned on to enable this)
 
@@ -1167,9 +1168,9 @@ def test_chiral_methyl_to_nitrogen():
   5  4  0  0  0  0            999 V2000
     0.1976    0.0344    0.3479 C   0  0  0  0  0  0  0  0  0  0  0  0
    -0.8624    0.0345    0.6018 F   0  0  0  0  0  0  0  0  0  0  0  0
-    0.3115    0.0344   -0.7361 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6707    0.9244    0.7630 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6707   -0.8555    0.7630 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3115    0.0344   -0.7361 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6707    0.9244    0.7630 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6707   -0.8555    0.7630 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   1  4  1  0  0  0  0
   1  5  1  0  0  0  0
@@ -1214,7 +1215,7 @@ $$$$""",
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_water():
+def test_chiral_fluoromethyl_to_water():
     mol_a = Chem.MolFromMolBlock(
         """
   Mrv2311 02222411113D
@@ -1222,9 +1223,9 @@ def test_chiral_methyl_to_water():
   5  4  0  0  0  0            999 V2000
    -1.1951   -0.2262   -0.1811 F   0  0  0  0  0  0  0  0  0  0  0  0
     0.1566   -0.1865    0.0446 C   0  0  0  0  0  0  0  0  0  0  0  0
-    0.4366    0.8050    0.4004 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6863   -0.4026   -0.8832 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.4215   -0.9304    0.7960 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4366    0.8050    0.4004 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6863   -0.4026   -0.8832 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4215   -0.9304    0.7960 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  2  1  0  0  0  0
   2  3  1  0  0  0  0
   2  4  1  0  0  0  0
@@ -1269,17 +1270,17 @@ $$$$""",
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_ammonia():
+def test_chiral_fluoromethyl_to_ammonia():
     mol_a = Chem.MolFromMolBlock(
         """
   Mrv2311 02232411003D
 
   5  4  0  0  0  0            999 V2000
     0.0402    0.0126    0.1841 C   0  0  0  0  0  0  0  0  0  0  0  0
-    0.2304   -0.7511    0.9383 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.8502    0.0126   -0.5452 H   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.0173    0.9900    0.6632 H   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.9024   -0.2011   -0.3198 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2304   -0.7511    0.9383 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.8502    0.0126   -0.5452 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0173    0.9900    0.6632 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9024   -0.2011   -0.3198 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  2  1  0  0  0  0
   1  3  1  0  0  0  0
   1  4  1  0  0  0  0
@@ -1329,8 +1330,8 @@ $$$$""",
 @pytest.mark.nogpu
 def test_chiral_core_ring_opening():
     # test that chiral restraints are maintained for dummy atoms when we open/close a ring,
-    # at lambda=0, all 7 chiral restraints are turned on, but at lambda=1
-    # only 4 chiral restraints are turned on.
+    # at lambda=0, 3 chiral restraints are turned on, but at lambda=1
+    # all 4 chiral restraints are turned on.
 
     mol_a = Chem.MolFromMolBlock(
         """
@@ -1341,7 +1342,7 @@ def test_chiral_core_ring_opening():
     0.2664   -0.0682    0.6077 O   0  0  0  0  0  0  0  0  0  0  0  0
     0.8332    1.6232   -0.6421 O   0  0  0  0  0  0  0  0  0  0  0  0
     1.3412    0.1809   -0.4674 O   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.0336    1.9673    1.3258 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0336    1.9673    1.3258 F   0  0  0  0  0  0  0  0  0  0  0  0
    -1.2364    1.3849   -0.0078 H   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   3  4  1  0  0  0  0
@@ -1378,28 +1379,32 @@ $$$$""",
         removeHs=False,
     )  # open ring
 
+    writer = Chem.SDWriter("example.sdf")
+    writer.write(mol_a)
+    writer.close()
+
     # map everything except a single hydrogen at the end
     core = np.array([[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5]])
 
-    # chiral force constants should be on for all 7 chiral
+    # chiral force constants should be on for the single chiral
     # terms at lambda=0
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     st = SingleTopology(mol_a, mol_b, core, ff)
     vs_0 = st.setup_intermediate_state(0.0)
     chiral_idxs_0 = vs_0.chiral_atom.potential.idxs
     chiral_params_0 = vs_0.chiral_atom.params
-    assert len(chiral_idxs_0) == 7
-    assert np.sum(chiral_params_0 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 7
+    assert len(chiral_idxs_0) == 1
+    assert np.sum(chiral_params_0 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 1
     vs_1 = st.setup_intermediate_state(1.0)
 
-    # chiral force constants should be on for all 4 of the 7
+    # chiral force constants should be off for all
     # chiral terms at lambda=1
     chiral_idxs_1 = vs_1.chiral_atom.potential.idxs
     chiral_params_1 = vs_1.chiral_atom.params
     assert len(chiral_idxs_0) == len(chiral_idxs_1)
 
-    assert np.sum(chiral_params_1 == 0) == 3
-    assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 4
+    assert np.sum(chiral_params_1 == 0) == 1
+    assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 0
 
 
 def permute_atom_indices(mol_a, mol_b, core, seed):
@@ -1579,3 +1584,39 @@ def test_hif2a_end_state_symmetry_nightly_test(mol_a, mol_b):
     print("testing", mol_a.GetProp("_Name"), "->", mol_b.GetProp("_Name"))
     core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
     assert_symmetric_interpolation(mol_a, mol_b, core)
+
+
+@pytest.mark.nogpu
+def test_pfkfb3_edge_doesnt_contain_ch2_chiral_restraints():
+    """Verify that CH2 atoms are not included as chiral centers"""
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf") as ligand_path:
+        mols_by_name = read_sdf_mols_by_name(ligand_path)
+    mol_a = mols_by_name["65"]
+    mol_b = mols_by_name["59"]
+
+    kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    kwargs["constrain_hydrogens"] = True
+
+    core = atom_mapping.get_cores(mol_a, mol_b, **kwargs)[0]
+
+    core, _ = filter_constraint_incompatible_hydrogens(mol_a, mol_b, core, ff)
+    st = SingleTopology(mol_a, mol_b, core, ff, verify_constraints=True)
+
+    def get_ch2_atoms(mol):
+        query = Chem.MolFromSmarts("[#6R!aH2:1]")
+        ch2_atoms = set()
+        for match in mol.GetSubstructMatches(query):
+            ch2_atoms.add(match[0])
+        return ch2_atoms
+
+    mol_a_ch2 = get_ch2_atoms(mol_a)
+    assert len(mol_a_ch2) == 0
+    mol_b_ch2 = get_ch2_atoms(mol_b)
+    assert len(mol_b_ch2) == 2
+
+    mol_c_ch2 = set(st.b_to_c[idx] for idx in mol_b_ch2)
+
+    system = st.setup_intermediate_state(0.0)
+    assert len(system.chiral_atom.potential.idxs) > 0
+    assert len(set(system.chiral_atom.potential.idxs[:, 0]).intersection(mol_c_ch2)) == 0
