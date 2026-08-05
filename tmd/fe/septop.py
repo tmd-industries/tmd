@@ -24,7 +24,7 @@ Both legs are driven by :func:`estimate_septop` via its ``phase`` argument:
 * ``phase="complex"`` -- the two ligands share a single solvated receptor and
   each is held in place by Boresch-style restraints that turn on/off in
   opposite directions along lambda.
-* ``phase="aqueous"`` -- the two ligands share a single water box (no
+* ``phase="solvent"`` -- the two ligands share a single water box (no
   receptor). Instead of receptor restraints, one near-central atom is chosen
   in each ligand (see :func:`select_central_atoms`) and a single constant
   zero-length harmonic bond is applied between them. The symmetric bond
@@ -113,6 +113,9 @@ __all__ = (
     "select_central_atoms",
     "select_septop_anchors",
 )
+
+SOLVENT_LEG = "solvent"
+COMPLEX_LEG = "complex"
 
 # Default schedule for the short equilibration used to select Boresch anchors.
 # This run only needs to relax the bound pose and yield ligand RMSF, so it is
@@ -774,7 +777,7 @@ def estimate_septop(
     eps_scale_lambda: float = 0.25,
     w_lambda: float = 0.5,
     enable_batching: bool = False,
-    phase: str = "complex",
+    phase: str = COMPLEX_LEG,
 ) -> SepTopResult:
     """Run one leg of a SepTop calculation.
 
@@ -788,7 +791,7 @@ def estimate_septop(
     phase
         ``"complex"`` (default) runs the receptor-bound leg with per-ligand
         Boresch restraints and returns the analytical restraint corrections.
-        ``"aqueous"`` runs the solvent leg: the two ligands share a water box
+        ``"solvent"`` runs the solvent leg: the two ligands share a water box
         and are tethered by a single zero-length bond between their central
         atoms, so no anchors are picked and the corrections are zero.
 
@@ -800,7 +803,7 @@ def estimate_septop(
         chosen anchors and per-ligand analytical restraint corrections; for the
         solvent leg ``anchors`` is ``None`` and the corrections are ``0``.
     """
-    if phase not in ("complex", "aqueous"):
+    if phase not in (COMPLEX_LEG, SOLVENT_LEG):
         raise ValueError(f"unsupported SepTop phase: {phase!r}")
 
     # Build the per-ligand decoupling intervals from the scalar knobs: decharge
@@ -825,7 +828,7 @@ def estimate_septop(
     temperature = DEFAULT_TEMP
 
     anchors: SepTopAnchors | None
-    if phase == "complex":
+    if phase == COMPLEX_LEG:
         afe, host_config, host_conf_eq, anchors = _setup_complex_leg(
             mol_a,
             mol_b,
