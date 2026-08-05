@@ -36,7 +36,7 @@ This module deliberately re-implements pieces of
 ``tmd.fe.free_energy.AbsoluteFreeEnergy.prepare_host_edge`` and
 ``tmd.fe.absolute.abfe.get_initial_state`` so that we can apply the per-atom
 lambda transforms (decharge, epsilon scale, 4D W shift) to the two ligands
-independently. The TODOs flag what should eventually move upstream into tmd.
+independently.
 """
 
 from dataclasses import dataclass, replace
@@ -47,8 +47,8 @@ import numpy as np
 from numpy.typing import NDArray
 from rdkit import Chem
 
-from tmd.constants import DEFAULT_PRESSURE, DEFAULT_TEMP, NBParamIdx
-from tmd.fe import model_utils
+from tmd.constants import BOLTZ, DEFAULT_PRESSURE, DEFAULT_TEMP, NBParamIdx
+from tmd.fe import model_utils, topology
 from tmd.fe.absolute.abfe import (
     optimize_abfe_initial_state,
     sample_for_restraints,
@@ -81,12 +81,14 @@ from tmd.fe.rbfe import (
     setup_optimized_host,
 )
 from tmd.fe.topology import DualTopology
-from tmd.fe.utils import set_romol_conf
+from tmd.fe.utils import get_mol_masses, get_romol_conf, set_romol_conf
 from tmd.ff import Forcefield
 from tmd.lib import LangevinIntegrator, MonteCarloBarostat
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.thermostat.utils import sample_velocities
 from tmd.potentials import HarmonicAngle, HarmonicBond, Nonbonded, PeriodicTorsion
+from tmd.potentials.bonded import kahan_angle, signed_torsion_angle
+from tmd.potentials.jax_utils import delta_r
 from tmd.potentials.potential import get_potential_by_type
 
 __all__ = (
@@ -213,7 +215,6 @@ def select_central_atoms(
     returned indices are into the combined ``[host, mol_a, mol_b]`` ordering
     so they can be used directly as ``HarmonicBond`` atom indices.
     """
-    from tmd.fe.utils import get_romol_conf
 
     n_host = len(host_config.conf)
     n_a = mol_a.GetNumAtoms()
@@ -451,8 +452,6 @@ class SepTopFreeEnergy(AbsoluteFreeEnergy):
         (a decoupled ligand would feel no host forces and drift away), so a
         single joint trajectory yields realistic RMSF for both ligands.
         """
-        from tmd.fe import topology
-        from tmd.fe.utils import get_mol_masses
 
         ff_params = ff.get_params()
         hgt = topology.HostGuestTopology(
@@ -475,8 +474,6 @@ class SepTopFreeEnergy(AbsoluteFreeEnergy):
     # one ligand only. Instead we replicate just the geometry math here using
     # the combined ``self.x0`` / ``self.box0``.
     def _bond_geometry(self, lig_atoms: list[int]) -> tuple[list[int], float]:
-        from tmd.potentials.jax_utils import delta_r
-
         assert self.anchors is not None and self.x0 is not None
         i0 = [self.anchors.rec_atoms[0], lig_atoms[0]]
         a0, b0 = self.x0[i0]
@@ -484,8 +481,6 @@ class SepTopFreeEnergy(AbsoluteFreeEnergy):
         return i0, r0
 
     def _angle_geometry(self, lig_atoms: list[int]) -> list[tuple[list[int], float]]:
-        from tmd.potentials.bonded import kahan_angle
-
         assert self.anchors is not None and self.x0 is not None
         rec = self.anchors.rec_atoms
         i0 = [rec[1], rec[0], lig_atoms[0]]
@@ -497,8 +492,6 @@ class SepTopFreeEnergy(AbsoluteFreeEnergy):
         return [(i0, t0), (i1, t1)]
 
     def _dihedral_geometry(self, lig_atoms: list[int]) -> list[tuple[list[int], float]]:
-        from tmd.potentials.bonded import signed_torsion_angle
-
         assert self.anchors is not None and self.x0 is not None
         rec = self.anchors.rec_atoms
         i0 = [rec[2], rec[1], rec[0], lig_atoms[0]]
@@ -578,7 +571,6 @@ class SepTopFreeEnergy(AbsoluteFreeEnergy):
         Uses the same formula as
         :meth:`AbsoluteBindingFreeEnergy.get_restraint_correction`.
         """
-        from tmd.constants import BOLTZ
 
         assert self.rst_params is not None
         _, r0 = self._bond_geometry(lig_atoms)
