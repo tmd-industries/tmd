@@ -26,7 +26,7 @@ from tmd.fe.absolute.free_energy import RestraintParams
 from tmd.fe.free_energy import HREXParams, MDParams, compute_total_ns
 from tmd.fe.plots import plot_forward_and_reverse_dg
 from tmd.fe.rbfe import BATCH_MODE_ENV_VAR, DEFAULT_NUM_WINDOWS, HREXSimulationResult
-from tmd.fe.septop import COMPLEX_LEG, SOLVENT_LEG, run_septop
+from tmd.fe.septop import COMPLEX_LEG, SOLVENT_LEG, colocate_central_atoms, run_septop
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.md.builders import build_protein_system, build_water_system, compute_solvent_box_size, verify_pdb_structure
@@ -52,7 +52,7 @@ def run_septop_leg(
     enable_batching: bool,
     write_trajectories: bool,
     force_overwrite: bool,
-    water_box_size: float = 4.0,
+    solvent_padding: float = 1.0,
 ) -> dict[str, Any]:
     """Run a SepTop leg (solvent or complex).
 
@@ -107,10 +107,8 @@ def run_septop_leg(
         Whether to write out the endstate trajectories.
     force_overwrite : bool
         If results already exist, overwrite them; otherwise skip the leg.
-    water_box_size : float
-        Size of the water box for the solvent leg. Should be large enough to
-        avoid molecules interacting with copies of themselves across PBCs. Use
-        ``tmd.md.builders.compute_solvent_box_size`` to pick an appropriate size.
+    solvent_padding : float
+        Padding to add to solvent boxes.
 
     Returns
     -------
@@ -125,6 +123,11 @@ def run_septop_leg(
         print(f"Skipping existing leg {leg_name}: {get_mol_name(mol_a)} / {get_mol_name(mol_b)}")
         return dict(np.load(results_path))
 
+    if leg_name == SOLVENT_LEG:
+        # Superimpose ligands before generating solvent box.
+        mol_a, mol_b = Chem.Mol(mol_a), Chem.Mol(mol_b)
+        colocate_central_atoms(mol_a, mol_b)
+
     # Store top level data
     with open(file_client.full_path(edge_path / "md_params.pkl"), "wb") as ofs:
         pickle.dump(md_params, ofs)
@@ -135,14 +138,11 @@ def run_septop_leg(
         writer.write(mol_b)
 
     np.random.seed(md_params.seed)
-
-    # Batching in the HREX bisection path is controlled by an environment
-    # variable rather than a function argument, so set it here (inside the
-    # worker process) to enable batching throughout when requested.
     if enable_batching:
         os.environ[BATCH_MODE_ENV_VAR] = "on"
 
     if leg_name == SOLVENT_LEG:
+        water_box_size = compute_solvent_box_size([mol_a, mol_b], padding=solvent_padding)
         host_config = build_water_system(water_box_size, ff.water_ff, mols=[mol_a, mol_b])
     elif leg_name == COMPLEX_LEG:
         assert pdb_path is not None, "No pdb data provided"
@@ -313,10 +313,6 @@ def main():
     mol_a = mols_by_name[args.mol_a]
     mol_b = mols_by_name[args.mol_b]
 
-    water_box_size = 4.0
-    if SOLVENT_LEG in args.legs:
-        water_box_size = compute_solvent_box_size([mol_a, mol_b], padding=args.solvent_padding)
-
     output_dir = args.output_dir
     if output_dir is None:
         date = datetime.now()
@@ -373,7 +369,7 @@ def main():
             args.enable_batching,
             True,  # Always write out the trajectories
             args.force_overwrite,
-            water_box_size=water_box_size,
+            solvent_padding=args.solvent_padding,
         )
         futures.append(fut)
 

@@ -27,10 +27,11 @@ Both legs are driven by :func:`run_septop` via its ``leg`` argument:
 * ``leg="solvent"`` -- the two ligands share a single water box (no
   receptor). Instead of receptor restraints, one near-central atom is chosen
   in each ligand (see :func:`select_central_atoms`), the two ligands are
-  translated so those atoms coincide (see :func:`colocate_central_atoms`), and
-  a single constant zero-length harmonic bond is applied between them. The
-  symmetric bond cancels between endpoints, so the solvent leg needs no
-  standard-state correction.
+  translated so those atoms coincide (see :func:`colocate_central_atoms`,
+  which must be applied before the box is solvated), and a single constant
+  zero-length harmonic bond is applied between them. The symmetric bond
+  cancels between endpoints, so the solvent leg needs no standard-state
+  correction.
 
 The relative binding free energy is then
 ``ddG = dG_complex - dG_solvent + (corr_B - corr_A)``, where the per-ligand
@@ -249,25 +250,16 @@ def select_central_atoms(
 
 
 def colocate_central_atoms(mol_a: Chem.Mol, mol_b: Chem.Mol) -> None:
-    """Rigidly translate both ligands so their central atoms coincide.
+    """Rigidly translate both ligands so their central atoms sit at the origin.
 
     The solvent leg tethers the two ligands with a zero-length bond between the
-    atoms picked by :func:`select_central_atoms`. Input poses are arbitrary
-    (typically the docked poses from an SDF), so nothing otherwise guarantees
-    that those two atoms start anywhere near each other; a large initial
-    separation would leave the tether under enormous strain. Each ligand is
-    translated onto the midpoint of the two central atoms, which keeps the pair
-    centered on its original position and hence centered in the water box.
-
-    Both conformers are updated in place.
+    atoms picked by :func:`select_central_atoms`; this function avoids a large
+    initial strain.  Must be called before the host is built, since solvation carves the
+    cavity around whatever poses it is given.
     """
-    conf_a = get_romol_conf(mol_a)
-    conf_b = get_romol_conf(mol_b)
-    center_a = conf_a[_central_atom_index(mol_a)]
-    center_b = conf_b[_central_atom_index(mol_b)]
-    midpoint = 0.5 * (center_a + center_b)
-    set_romol_conf(mol_a, conf_a - center_a + midpoint)
-    set_romol_conf(mol_b, conf_b - center_b + midpoint)
+    for mol in (mol_a, mol_b):
+        conf = get_romol_conf(mol)
+        set_romol_conf(mol, conf - conf[_central_atom_index(mol)])
 
 
 def _apply_lambda_transform_to_slice(
@@ -809,11 +801,11 @@ def run_septop(
     leg
         ``"complex"`` (default) runs the receptor-bound leg with per-ligand
         Boresch restraints and returns the analytical restraint corrections.
-        ``"solvent"`` runs the solvent leg: the two ligands share a water box,
-        are superimposed on their central atoms, and are tethered by a single
-        zero-length bond between those atoms, so no anchors are picked and the
-        corrections are zero. Note that the solvent leg translates the
-        conformers of ``mol_a`` and ``mol_b`` in place.
+        ``"solvent"`` runs the solvent leg: the two ligands share a water box
+        and are tethered by a single zero-length bond between their central
+        atoms.  The caller must have already superimposed those atoms with
+        :func:`colocate_central_atoms` *before* building ``host_config``,
+        since the water box is carved around the poses it is given.
 
     Returns
     -------
@@ -839,12 +831,6 @@ def run_septop(
             n_eq_steps=DEFAULT_EQ_N_EQ_STEPS,
             n_frames=DEFAULT_EQ_N_FRAMES,
         )
-
-    # Superimpose the ligands before the host is relaxed around them, so that
-    # the solvent-leg tether starts at its zero-length equilibrium and the
-    # host pre-equilibration resolves any waters left clashing by the shift.
-    if leg == SOLVENT_LEG:
-        colocate_central_atoms(mol_a, mol_b)
 
     host_config = setup_optimized_host(host_config, [mol_a, mol_b], ff)
     temperature = DEFAULT_TEMP
