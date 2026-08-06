@@ -25,7 +25,9 @@ from rdkit import Chem
 import tmd.testsystems.fep_benchmark as fep_benchmark
 from tmd.constants import DEFAULT_PROTEIN_FF, DEFAULT_TEMP, DEFAULT_WATER_FF, NBParamIdx
 from tmd.fe import utils
+from tmd.fe.absolute.abfe import optimize_abfe_initial_state
 from tmd.fe.free_energy import Trajectory
+from tmd.fe.rbfe import setup_optimized_host
 from tmd.fe.septop import (
     RestraintParams,
     SepTopAnchors,
@@ -38,7 +40,6 @@ from tmd.fe.septop import (
 from tmd.fe.stored_arrays import StoredArrays
 from tmd.ff import Forcefield
 from tmd.md import builders
-from tmd.md.minimizer import MAX_FORCE_NORM
 from tmd.potentials import (
     HarmonicAngle,
     HarmonicBond,
@@ -482,8 +483,6 @@ def test_septop_endstate_minimizes(hif2a_complex, lamb):
     in the joint-frame assembly and the endpoint minimization, not the eq
     MD itself.
     """
-    from tmd.fe.absolute.abfe import optimize_abfe_initial_state
-    from tmd.fe.rbfe import setup_optimized_host
 
     mol_a, mol_b, _, host_config = hif2a_complex
     ff = Forcefield.load_default()
@@ -493,7 +492,6 @@ def test_septop_endstate_minimizes(hif2a_complex, lamb):
     trj = _make_synthetic_trajectory(host_config, mol_a, mol_b, n_frames=5)
     anchors = select_septop_anchors(host_config, mol_a, mol_b, trj)
 
-    n_host = len(host_config.conf)
     pos = trj.frames[-1]
     box = host_config.box
 
@@ -508,32 +506,4 @@ def test_septop_endstate_minimizes(hif2a_complex, lamb):
     )
     state = get_septop_initial_state(afe, ff, host_config, host_config.conf, DEFAULT_TEMP, seed=2026, lamb=lamb)
 
-    try:
-        optimize_abfe_initial_state(state)
-    except Exception as exc:
-        # Re-evaluate forces at x0 to surface where the residual large
-        # forces are.
-        from tmd.md.minimizer import get_val_and_grad_fn
-
-        val_and_grad = get_val_and_grad_fn(state.potentials, state.box0)
-        _, forces = val_and_grad(state.x0)
-        force_norms = np.linalg.norm(forces, axis=-1)
-        bad = np.where(force_norms > MAX_FORCE_NORM)[0]
-        n_a = mol_a.GetNumAtoms()
-        n_protein = n_host - host_config.num_water_atoms - host_config.num_membrane_atoms
-        groups = {"protein": 0, "water/ion": 0, "mol_a": 0, "mol_b": 0}
-        for i in bad:
-            if i < n_protein:
-                groups["protein"] += 1
-            elif i < n_host:
-                groups["water/ion"] += 1
-            elif i < n_host + n_a:
-                groups["mol_a"] += 1
-            else:
-                groups["mol_b"] += 1
-        msg = (
-            f"\nlambda={lamb}: minimization raised {type(exc).__name__}: {exc}\n"
-            f"atoms with |F| > {MAX_FORCE_NORM}: {len(bad)} / {len(force_norms)}\n"
-            f"  by group: {groups}\n"
-        )
-        pytest.fail(msg)
+    optimize_abfe_initial_state(state)
