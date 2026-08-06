@@ -99,6 +99,7 @@ from tmd.lib import LangevinIntegrator, MonteCarloBarostat
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.thermostat.utils import sample_velocities
 from tmd.potentials import HarmonicAngle, HarmonicBond, Nonbonded, PeriodicTorsion
+from tmd.potentials import HarmonicBond as _HarmonicBond
 from tmd.potentials.bonded import kahan_angle, signed_torsion_angle
 from tmd.potentials.jax_utils import delta_r
 from tmd.potentials.potential import get_potential_by_type
@@ -352,7 +353,6 @@ class SepTopFreeEnergy(AbsoluteFreeEnergy):
     # ---- coordinates ----
     def prepare_combined_coords(self, host_coords: NDArray | None = None) -> NDArray:
         """Concatenate ``[host, mol_a, mol_b]`` coordinates."""
-        from tmd.fe.utils import get_romol_conf
 
         a_coords = get_romol_conf(self.mol_a)
         b_coords = get_romol_conf(self.mol_b)
@@ -378,8 +378,6 @@ class SepTopFreeEnergy(AbsoluteFreeEnergy):
         restraints, if configured via ``self.anchors`` and ``self.rst_params``,
         are appended.
         """
-        from tmd.fe import topology
-        from tmd.fe.utils import get_mol_masses
 
         ff_params = ff.get_params()
         hgt = topology.HostGuestTopology(
@@ -618,7 +616,6 @@ def get_septop_initial_state(
     ligand index ranges and chooses ``interacting_atoms`` based on which
     ligand is fully coupled at the endpoint (A at lamb=0, B at lamb=1).
     """
-    from tmd.potentials import HarmonicBond as _HarmonicBond
 
     ubps, params, masses = afe.prepare_host_edge(ff, host_config, lamb)
     x0 = afe.prepare_combined_coords(host_coords=host_conf)
@@ -686,7 +683,6 @@ def get_septop_equilibration_state(
     fully coupled (and mutually non-interacting) with no restraints. Used to
     equilibrate the bound complex before anchor selection.
     """
-    from tmd.potentials import HarmonicBond as _HarmonicBond
 
     ubps, params, masses = afe.prepare_equilibration_edge(ff, host_config)
     x0 = afe.prepare_combined_coords(host_coords=host_conf)
@@ -982,7 +978,6 @@ def _setup_solvent_leg(
     w_interval: tuple[float, float] = (0.0, 1.0),
 ) -> tuple[SepTopFreeEnergy, HostConfig, NDArray, None]:
     """Build the dual-ligand solvent-leg system (no anchors, central bond)."""
-    from tmd.fe.utils import get_romol_conf
 
     host_conf = host_config.conf
     box = host_config.box
