@@ -19,7 +19,7 @@ Computes a relative binding free energy between two ligands ``mol_a`` and
 lambda coordinate, ``mol_a`` is decoupled as ``lambda`` goes 0 -> 1 while
 ``mol_b`` is simultaneously coupled (it follows ``1 - lambda``).
 
-Both legs are driven by :func:`estimate_septop` via its ``phase`` argument:
+Both legs are driven by :func:`run_septop` via its ``phase`` argument:
 
 * ``phase="complex"`` -- the two ligands share a single solvated receptor and
   each is held in place by Boresch-style restraints that turn on/off in
@@ -73,7 +73,6 @@ from tmd.fe.absolute.restraints import (
 from tmd.fe.cif_writer import build_openmm_topology
 from tmd.fe.free_energy import (
     AbsoluteFreeEnergy,
-    HREXSimulationResult,
     InitialState,
     MDParams,
     SimulationResult,
@@ -107,10 +106,10 @@ from tmd.potentials.potential import get_potential_by_type
 __all__ = (
     "RestraintParams",
     "SepTopAnchors",
+    "SepTopCorrections",
     "SepTopFreeEnergy",
-    "SepTopResult",
-    "estimate_septop",
     "get_septop_initial_state",
+    "run_septop",
     "select_central_atoms",
     "select_septop_anchors",
 )
@@ -139,21 +138,21 @@ class SepTopAnchors:
 
 
 @dataclass
-class SepTopResult:
-    """Result of a complex- or solvent-leg SepTop calculation."""
+class SepTopCorrections:
+    """Correction terms from SepTop restraints."""
 
-    sim_result: SimulationResult | HREXSimulationResult
     anchors: SepTopAnchors | None
     correction_a: float
     correction_b: float
 
+    @classmethod
+    def zero(cls):
+        return cls(None, 0, 0)
+
     @property
     def correction(self) -> float:
-        """Net restraint correction in kJ/mol.
-
-        ``ddG_complex_corrected = ddG_complex_raw - (correction_a - correction_b)``
-        """
-        return self.correction_a - self.correction_b
+        """Net restraint correction in kJ/mol."""
+        return self.correction_b - self.correction_a
 
 
 def select_septop_anchors(
@@ -758,7 +757,7 @@ def _equilibrate_joint(
     return trj
 
 
-def estimate_septop(
+def run_septop(
     mol_a: Chem.Mol,
     mol_b: Chem.Mol,
     ff: Forcefield,
@@ -774,7 +773,7 @@ def estimate_septop(
     w_lambda: float = 0.5,
     enable_batching: bool = False,
     phase: str = COMPLEX_LEG,
-) -> SepTopResult:
+) -> tuple[SimulationResult, SepTopCorrections]:
     """Run one leg of a SepTop calculation.
 
     Mirrors the structure of the ABFE estimator:
@@ -793,11 +792,7 @@ def estimate_septop(
 
     Returns
     -------
-    SepTopResult
-        Wraps the underlying :class:`SimulationResult` /
-        :class:`HREXSimulationResult`. For the complex leg it also carries the
-        chosen anchors and per-ligand analytical restraint corrections; for the
-        solvent leg ``anchors`` is ``None`` and the corrections are ``0``.
+    SimulationResult, SepTopCorrections
     """
     if phase not in (COMPLEX_LEG, SOLVENT_LEG):
         raise ValueError(f"unsupported SepTop phase: {phase!r}")
@@ -902,22 +897,14 @@ def estimate_septop(
         )
 
     if anchors is None:
-        return SepTopResult(
-            sim_result=sim_result,
-            anchors=None,
-            correction_a=0.0,
-            correction_b=0.0,
+        corrections = SepTopCorrections.zero()
+    else:
+        corrections = SepTopCorrections(
+            anchors=anchors,
+            correction_a=float(afe.get_restraint_correction(anchors.lig_atoms_a, temperature)),
+            correction_b=float(afe.get_restraint_correction(anchors.lig_atoms_b, temperature)),
         )
-
-    correction_a = float(afe.get_restraint_correction(anchors.lig_atoms_a, temperature))
-    correction_b = float(afe.get_restraint_correction(anchors.lig_atoms_b, temperature))
-
-    return SepTopResult(
-        sim_result=sim_result,
-        anchors=anchors,
-        correction_a=correction_a,
-        correction_b=correction_b,
-    )
+    return sim_result, corrections
 
 
 def _setup_complex_leg(

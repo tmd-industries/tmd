@@ -26,7 +26,7 @@ from tmd.fe.absolute.free_energy import RestraintParams
 from tmd.fe.free_energy import HREXParams, MDParams, compute_total_ns
 from tmd.fe.plots import plot_forward_and_reverse_dg
 from tmd.fe.rbfe import BATCH_MODE_ENV_VAR, DEFAULT_NUM_WINDOWS, HREXSimulationResult
-from tmd.fe.septop import SepTopResult, estimate_septop
+from tmd.fe.septop import run_septop
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.md.builders import build_protein_system, build_water_system, compute_solvent_box_size, verify_pdb_structure
@@ -107,7 +107,7 @@ def run_septop_leg(
         [w_lambda, 1.0].
     enable_batching : bool
         Batch the per-window MD during bisection. Enables batching for both the
-        non-HREX path (via ``estimate_septop``) and the HREX path (via the
+        non-HREX path (via ``run_septop``) and the HREX path (via the
         ``TMD_BATCH_MODE`` environment variable).
     write_trajectories : bool
         Whether to write out the endstate trajectories.
@@ -161,7 +161,7 @@ def run_septop_leg(
     prefix = f"{leg_name}_{get_mol_name(mol_a)}_{get_mol_name(mol_b)}"
 
     start = time.perf_counter()
-    result: SepTopResult = estimate_septop(
+    res, crctns = run_septop(
         mol_a,
         mol_b,
         ff,
@@ -179,21 +179,18 @@ def run_septop_leg(
     )
     took = time.perf_counter() - start
 
-    res = result.sim_result
-
     # Raw dG is the sum of the per-window dGs. The complex leg additionally
     # carries the analytical Boresch restraint correction; the corrected leg dG
     # is raw - (correction_a - correction_b). The solvent leg correction is 0.
     raw_dg = float(np.sum(res.final_result.dGs))
-    correction = float(result.correction)
-    pred_dg = raw_dg - correction
+    pred_dg = raw_dg + crctns.correction
     pred_dg_err = float(np.linalg.norm(res.final_result.dG_errs))
     print(
         " | ".join(
             [
                 f"{get_mol_name(mol_a)} / {get_mol_name(mol_b)} (kJ/mol)",
                 f"{leg_name} {pred_dg:.2f} +- {pred_dg_err:.2f}",
-                f"correction {correction:.2f}",
+                f"correction {crctns.correction:.2f}",
                 f"{took:.0f} Seconds",
             ]
         ),
@@ -205,9 +202,9 @@ def run_septop_leg(
         "pred_dg": pred_dg,
         "pred_dg_err": pred_dg_err,
         "raw_dg": raw_dg,
-        "correction": correction,
-        "correction_a": result.correction_a,
-        "correction_b": result.correction_b,
+        "correction": crctns.correction,
+        "correction_a": crctns.correction_a,
+        "correction_b": crctns.correction_b,
         "overlaps": res.final_result.overlaps,
         "n_windows": len(res.final_result.initial_states),
     }
