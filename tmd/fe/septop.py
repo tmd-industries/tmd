@@ -258,9 +258,6 @@ def _apply_lambda_transform_to_slice(
 
     Mirrors the per-ligand math in
     :py:meth:`tmd.fe.free_energy.AbsoluteFreeEnergy.prepare_host_edge`.
-
-    TODO: upstream into tmd as a public helper so SepTop can share the
-    implementation rather than duplicating it.
     """
     if lamb <= 0.0:
         return nb_params
