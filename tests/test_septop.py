@@ -484,26 +484,13 @@ def test_septop_endstate_minimizes(hif2a_complex, lamb):
     """
     from tmd.fe.absolute.abfe import optimize_abfe_initial_state
     from tmd.fe.rbfe import setup_optimized_host
-    from tmd.fe.utils import get_romol_conf
 
     mol_a, mol_b, _, host_config = hif2a_complex
     ff = Forcefield.load_default()
 
     host_config = setup_optimized_host(host_config, [mol_a, mol_b], ff, equilibration_steps=200)
 
-    def _joint_trj(mol_a, mol_b):
-        rng = np.random.default_rng(0)
-        coords = np.concatenate([host_config.conf, get_romol_conf(mol_a), get_romol_conf(mol_b)])
-        frames = [coords + rng.normal(scale=1e-3, size=coords.shape) for _ in range(5)]
-        boxes = [host_config.box for _ in range(5)]
-        return Trajectory(
-            frames=StoredArrays.from_chunks([frames]),
-            boxes=boxes,
-            final_velocities=None,
-            final_barostat_volume_scale_factor=1.0,
-        )
-
-    trj = _joint_trj(mol_a, mol_b)
+    trj = _make_synthetic_trajectory(host_config, mol_a, mol_b, n_frames=5)
     anchors = select_septop_anchors(host_config, mol_a, mol_b, trj)
 
     n_host = len(host_config.conf)
