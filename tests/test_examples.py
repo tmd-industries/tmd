@@ -969,6 +969,78 @@ def test_run_rbfe_legs(
         verify_simulations_match(Path(config_a["output_dir"]), Path(config_b["output_dir"]))
 
 
+@pytest.mark.parametrize(
+    "leg, n_windows, n_frames, n_eq_steps",
+    [("solvent", 5, 10, 200), ("complex", 5, 10, 200)],
+)
+@pytest.mark.parametrize("mol_a, mol_b", [("15", "30")])
+@pytest.mark.parametrize("seed", [2025])
+def test_run_septop_legs_deterministic(
+    leg,
+    n_windows,
+    n_frames,
+    n_eq_steps,
+    mol_a,
+    mol_b,
+    seed,
+):
+    """Two runs of run_septop with the same seed must agree bitwise."""
+    with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
+        config = dict(
+            mol_a=mol_a,
+            mol_b=mol_b,
+            sdf_path=hif2a_dir / "ligands.sdf",
+            pdb_path=hif2a_dir / "5tbm_prepared.pdb",
+            seed=seed,
+            legs=leg,
+            n_eq_steps=n_eq_steps,
+            n_frames=n_frames,
+            n_windows=n_windows,
+            forcefield=DEFAULT_FF,
+            force_overwrite=None,  # Force overwrite any existing data
+        )
+
+        output_dirs = []
+        for suffix in ["a", "b"]:
+            run_config = config.copy()
+            run_config["output_dir"] = f"{ARTIFACT_DIR_NAME}/septop_{mol_a}_{mol_b}_{leg}_{seed}_{suffix}"
+            proc = run_example("run_septop_legs.py", get_cli_args(run_config))
+            assert proc.returncode == 0
+            output_dirs.append(Path(run_config["output_dir"]))
+
+        ref_dir, comp_dir = output_dirs
+        assert ref_dir != comp_dir, "Runs are writing to the same output directory"
+
+        ref_results = np.load(str(ref_dir / leg / "results.npz"))
+        comp_results = np.load(str(comp_dir / leg / "results.npz"))
+        # The solvent leg carries no restraint correction, so pred_dg must equal raw_dg there.
+        if leg == "solvent":
+            np.testing.assert_equal(ref_results["correction"], 0.0)
+            np.testing.assert_equal(ref_results["pred_dg"], ref_results["raw_dg"])
+        for key in ["pred_dg", "pred_dg_err", "raw_dg", "correction", "correction_a", "correction_b", "n_windows"]:
+            np.testing.assert_equal(ref_results[key], comp_results[key], err_msg=f"{key} is not deterministic")
+        np.testing.assert_array_equal(ref_results["overlaps"], comp_results["overlaps"])
+
+        with open(ref_dir / leg / "final_pairbar_result.pkl", "rb") as ifs:
+            ref_final_pairbar = pickle.load(ifs)
+        with open(comp_dir / leg / "final_pairbar_result.pkl", "rb") as ifs:
+            comp_final_pairbar = pickle.load(ifs)
+        assert len(ref_final_pairbar.initial_states) == len(comp_final_pairbar.initial_states)
+
+        for ref_state, comp_state in zip(ref_final_pairbar.initial_states, comp_final_pairbar.initial_states):
+            np.testing.assert_array_equal(ref_state.x0, comp_state.x0)
+            np.testing.assert_array_equal(ref_state.v0, comp_state.v0)
+            np.testing.assert_array_equal(ref_state.box0, comp_state.box0)
+            np.testing.assert_array_equal(ref_state.ligand_idxs, comp_state.ligand_idxs)
+            assert_deep_eq(ref_state.potentials, comp_state.potentials)
+
+        for lamb in [0, 1]:
+            ref_traj = np.load(str(ref_dir / leg / f"lambda{lamb}_traj.npz"))
+            comp_traj = np.load(str(comp_dir / leg / f"lambda{lamb}_traj.npz"))
+            np.testing.assert_array_equal(ref_traj["coords"], comp_traj["coords"])
+            np.testing.assert_array_equal(ref_traj["boxes"], comp_traj["boxes"])
+
+
 @pytest.mark.fixed_output
 @pytest.mark.parametrize("enable_batching", [False, True])
 @pytest.mark.parametrize(
