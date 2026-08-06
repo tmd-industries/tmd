@@ -20,6 +20,7 @@ import os
 
 import numpy as np
 import pytest
+from rdkit import Chem
 
 import tmd.testsystems.fep_benchmark as fep_benchmark
 from tmd.constants import DEFAULT_PROTEIN_FF, DEFAULT_TEMP, DEFAULT_WATER_FF, NBParamIdx
@@ -29,6 +30,7 @@ from tmd.fe.septop import (
     RestraintParams,
     SepTopAnchors,
     SepTopFreeEnergy,
+    colocate_central_atoms,
     get_septop_initial_state,
     select_central_atoms,
     select_septop_anchors,
@@ -296,6 +298,35 @@ def test_select_central_atoms_in_range(hif2a_pair_in_water):
     central_a, central_b = select_central_atoms(host_config, mol_a, mol_b)
     assert n_host <= central_a < n_host + n_a
     assert n_host + n_a <= central_b < n_host + n_a + n_b
+
+
+@pytest.mark.nogpu
+def test_colocate_central_atoms(hif2a_pair_in_water):
+    """Superposition puts the central atoms on top of each other, rigidly."""
+    mol_a, mol_b, _ff, host_config = hif2a_pair_in_water
+    n_host = len(host_config.conf)
+    n_a = mol_a.GetNumAtoms()
+
+    # The fixture is module scoped, so work on copies.
+    mol_a = Chem.Mol(mol_a)
+    mol_b = Chem.Mol(mol_b)
+
+    # Displace mol_b far away to verify the superposition actually fixes it.
+    conf_a_before = utils.get_romol_conf(mol_a)
+    conf_b_before = utils.get_romol_conf(mol_b) + np.array([5.0, -3.0, 2.0])
+    utils.set_romol_conf(mol_b, conf_b_before)
+
+    central_a, central_b = select_central_atoms(host_config, mol_a, mol_b)
+    local_a = central_a - n_host
+    local_b = central_b - n_host - n_a
+    midpoint_before = 0.5 * (conf_a_before[local_a] + conf_b_before[local_b])
+
+    colocate_central_atoms(mol_a, mol_b)
+
+    conf_a = utils.get_romol_conf(mol_a)
+    conf_b = utils.get_romol_conf(mol_b)
+    np.testing.assert_allclose(conf_a[local_a], conf_b[local_b], atol=1e-6)
+    np.testing.assert_allclose(conf_a[local_a], midpoint_before, atol=1e-6)
 
 
 @pytest.mark.nogpu

@@ -26,18 +26,12 @@ from tmd.fe.absolute.free_energy import RestraintParams
 from tmd.fe.free_energy import HREXParams, MDParams, compute_total_ns
 from tmd.fe.plots import plot_forward_and_reverse_dg
 from tmd.fe.rbfe import BATCH_MODE_ENV_VAR, DEFAULT_NUM_WINDOWS, HREXSimulationResult
-from tmd.fe.septop import run_septop
+from tmd.fe.septop import COMPLEX_LEG, SOLVENT_LEG, run_septop
 from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.md.builders import build_protein_system, build_water_system, compute_solvent_box_size, verify_pdb_structure
 from tmd.parallel.client import AbstractFileClient, CUDAPoolClient, FileClient, SerialClient
 from tmd.parallel.utils import get_gpu_count
-
-SOLVENT_LEG = "solvent"
-COMPLEX_LEG = "complex"
-
-# Map the leg name used on the command line to the SepTop phase argument.
-LEG_TO_PHASE = {SOLVENT_LEG: "aqueous", COMPLEX_LEG: "complex"}
 
 
 def run_septop_leg(
@@ -175,7 +169,7 @@ def run_septop_leg(
         eps_scale_lambda=eps_scale_lambda,
         w_lambda=w_lambda,
         enable_batching=enable_batching,
-        phase=LEG_TO_PHASE[leg_name],
+        leg=leg_name,
     )
     took = time.perf_counter() - start
 

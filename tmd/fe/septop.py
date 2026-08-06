@@ -19,17 +19,18 @@ Computes a relative binding free energy between two ligands ``mol_a`` and
 lambda coordinate, ``mol_a`` is decoupled as ``lambda`` goes 0 -> 1 while
 ``mol_b`` is simultaneously coupled (it follows ``1 - lambda``).
 
-Both legs are driven by :func:`run_septop` via its ``phase`` argument:
+Both legs are driven by :func:`run_septop` via its ``leg`` argument:
 
-* ``phase="complex"`` -- the two ligands share a single solvated receptor and
+* ``leg="complex"`` -- the two ligands share a single solvated receptor and
   each is held in place by Boresch-style restraints that turn on/off in
   opposite directions along lambda.
-* ``phase="solvent"`` -- the two ligands share a single water box (no
+* ``leg="solvent"`` -- the two ligands share a single water box (no
   receptor). Instead of receptor restraints, one near-central atom is chosen
-  in each ligand (see :func:`select_central_atoms`) and a single constant
-  zero-length harmonic bond is applied between them. The symmetric bond
-  cancels between endpoints, so the solvent leg needs no standard-state
-  correction.
+  in each ligand (see :func:`select_central_atoms`), the two ligands are
+  translated so those atoms coincide (see :func:`colocate_central_atoms`), and
+  a single constant zero-length harmonic bond is applied between them. The
+  symmetric bond cancels between endpoints, so the solvent leg needs no
+  standard-state correction.
 
 The relative binding free energy is then
 ``ddG = dG_complex - dG_solvent - (corr_A - corr_B)``, where the per-ligand
@@ -108,6 +109,7 @@ __all__ = (
     "SepTopAnchors",
     "SepTopCorrections",
     "SepTopFreeEnergy",
+    "colocate_central_atoms",
     "get_septop_initial_state",
     "run_septop",
     "select_central_atoms",
@@ -219,6 +221,13 @@ def select_septop_anchors(
     )
 
 
+def _central_atom_index(mol: Chem.Mol) -> int:
+    """Index of the atom closest to the ligand's geometric center."""
+    conf = get_romol_conf(mol)
+    center = conf.mean(axis=0)
+    return int(np.argmin(np.linalg.norm(conf - center, axis=1)))
+
+
 def select_central_atoms(
     host_config: HostConfig,
     mol_a: Chem.Mol,
@@ -234,14 +243,31 @@ def select_central_atoms(
     n_host = len(host_config.conf)
     n_a = mol_a.GetNumAtoms()
 
-    def _central_local(mol: Chem.Mol) -> int:
-        conf = get_romol_conf(mol)
-        center = conf.mean(axis=0)
-        return int(np.argmin(np.linalg.norm(conf - center, axis=1)))
-
-    central_a = n_host + _central_local(mol_a)
-    central_b = n_host + n_a + _central_local(mol_b)
+    central_a = n_host + _central_atom_index(mol_a)
+    central_b = n_host + n_a + _central_atom_index(mol_b)
     return central_a, central_b
+
+
+def colocate_central_atoms(mol_a: Chem.Mol, mol_b: Chem.Mol) -> None:
+    """Rigidly translate both ligands so their central atoms coincide.
+
+    The solvent leg tethers the two ligands with a zero-length bond between the
+    atoms picked by :func:`select_central_atoms`. Input poses are arbitrary
+    (typically the docked poses from an SDF), so nothing otherwise guarantees
+    that those two atoms start anywhere near each other; a large initial
+    separation would leave the tether under enormous strain. Each ligand is
+    translated onto the midpoint of the two central atoms, which keeps the pair
+    centered on its original position and hence centered in the water box.
+
+    Both conformers are updated in place.
+    """
+    conf_a = get_romol_conf(mol_a)
+    conf_b = get_romol_conf(mol_b)
+    center_a = conf_a[_central_atom_index(mol_a)]
+    center_b = conf_b[_central_atom_index(mol_b)]
+    midpoint = 0.5 * (center_a + center_b)
+    set_romol_conf(mol_a, conf_a - center_a + midpoint)
+    set_romol_conf(mol_b, conf_b - center_b + midpoint)
 
 
 def _apply_lambda_transform_to_slice(
@@ -769,7 +795,7 @@ def run_septop(
     eps_scale_lambda: float = 0.25,
     w_lambda: float = 0.5,
     enable_batching: bool = False,
-    phase: str = COMPLEX_LEG,
+    leg: str = COMPLEX_LEG,
 ) -> tuple[SimulationResult, SepTopCorrections]:
     """Run one leg of a SepTop calculation.
 
@@ -780,19 +806,21 @@ def run_septop(
 
     Parameters
     ----------
-    phase
+    leg
         ``"complex"`` (default) runs the receptor-bound leg with per-ligand
         Boresch restraints and returns the analytical restraint corrections.
-        ``"solvent"`` runs the solvent leg: the two ligands share a water box
-        and are tethered by a single zero-length bond between their central
-        atoms, so no anchors are picked and the corrections are zero.
+        ``"solvent"`` runs the solvent leg: the two ligands share a water box,
+        are superimposed on their central atoms, and are tethered by a single
+        zero-length bond between those atoms, so no anchors are picked and the
+        corrections are zero. Note that the solvent leg translates the
+        conformers of ``mol_a`` and ``mol_b`` in place.
 
     Returns
     -------
     SimulationResult, SepTopCorrections
     """
-    if phase not in (COMPLEX_LEG, SOLVENT_LEG):
-        raise ValueError(f"unsupported SepTop phase: {phase!r}")
+    if leg not in (COMPLEX_LEG, SOLVENT_LEG):
+        raise ValueError(f"unsupported SepTop leg: {leg!r}")
 
     # Build the per-ligand decoupling intervals from the scalar knobs: decharge
     # over the symmetric ``[decharge_lambda, 1 - decharge_lambda]``, epsilon
@@ -812,11 +840,17 @@ def run_septop(
             n_frames=DEFAULT_EQ_N_FRAMES,
         )
 
+    # Superimpose the ligands before the host is relaxed around them, so that
+    # the solvent-leg tether starts at its zero-length equilibrium and the
+    # host pre-equilibration resolves any waters left clashing by the shift.
+    if leg == SOLVENT_LEG:
+        colocate_central_atoms(mol_a, mol_b)
+
     host_config = setup_optimized_host(host_config, [mol_a, mol_b], ff)
     temperature = DEFAULT_TEMP
 
     anchors: SepTopAnchors | None
-    if phase == COMPLEX_LEG:
+    if leg == COMPLEX_LEG:
         afe, host_config, host_conf_eq, anchors = _setup_complex_leg(
             mol_a,
             mol_b,
@@ -961,7 +995,12 @@ def _setup_solvent_leg(
     eps_scale_interval: tuple[float, float] = (0.2, 0.4),
     w_interval: tuple[float, float] = (0.0, 1.0),
 ) -> tuple[SepTopFreeEnergy, HostConfig, NDArray, None]:
-    """Build the dual-ligand solvent-leg system (no anchors, central bond)."""
+    """Build the dual-ligand solvent-leg system (no anchors, central bond).
+
+    Assumes the ligands have already been superimposed on their central atoms
+    by :func:`colocate_central_atoms`, so the zero-length tether starts
+    unstrained.
+    """
 
     host_conf = host_config.conf
     box = host_config.box
