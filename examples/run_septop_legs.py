@@ -271,9 +271,9 @@ def main():
     parser.add_argument(
         "--n_gpus", default=None, type=int, help="Number of GPUs to use, defaults to all GPUs if not provided"
     )
-    parser.add_argument("--kb", default=500.0, type=float, help="Bond restraint force constant (kcal/mol/nm^2)")
-    parser.add_argument("--ka", default=200.0, type=float, help="Angle restraint force constant (kcal/mol/rad^2)")
-    parser.add_argument("--kd", default=10.0, type=float, help="Dihedral restraint force constant (kcal/mol)")
+    parser.add_argument("--kb", default=500.0, type=float, help="Bond restraint force constant (kJ/mol/nm^2)")
+    parser.add_argument("--ka", default=200.0, type=float, help="Angle restraint force constant (kJ/mol/rad^2)")
+    parser.add_argument("--kd", default=10.0, type=float, help="Dihedral restraint force constant (kJ/mol)")
     parser.add_argument(
         "--decharge_lambda",
         default=0.25,
