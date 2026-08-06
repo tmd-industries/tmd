@@ -419,9 +419,13 @@ def test_septop_full_prepare_host_edge_with_real_complex(hif2a_complex):
         ubps, _params, masses = afe.prepare_host_edge(ff, host_config, lamb)
         assert len(masses) == len(host_config.conf) + mol_a.GetNumAtoms() + mol_b.GetNumAtoms()
         kinds = {type(p) for p in ubps}
-        # At minimum we expect bonds, angles, torsions, and Nonbonded to appear.
-        for kind in (HarmonicBond, HarmonicAngle, PeriodicTorsion, Nonbonded):
-            assert kind in kinds
+        assert kinds == {
+            HarmonicBond,
+            HarmonicAngle,
+            PeriodicTorsion,
+            Nonbonded,
+            NonbondedPairListPrecomputed,
+        }
 
     # Sanity: get_restraint_correction should return finite values.
     corr_a = afe.get_restraint_correction(anchors.lig_atoms_a, temperature=300.0)

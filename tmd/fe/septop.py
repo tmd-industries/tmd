@@ -33,7 +33,7 @@ Both legs are driven by :func:`run_septop` via its ``leg`` argument:
   standard-state correction.
 
 The relative binding free energy is then
-``ddG = dG_complex - dG_solvent - (corr_A - corr_B)``, where the per-ligand
+``ddG = dG_complex - dG_solvent + (corr_B - corr_A)``, where the per-ligand
 restraint corrections ``corr_A``/``corr_B`` come from the complex leg.
 
 References
