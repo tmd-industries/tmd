@@ -17,6 +17,7 @@ forces on failure.
 """
 
 import os
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -26,12 +27,13 @@ import tmd.testsystems.fep_benchmark as fep_benchmark
 from tmd.constants import DEFAULT_PROTEIN_FF, DEFAULT_TEMP, DEFAULT_WATER_FF, NBParamIdx
 from tmd.fe import utils
 from tmd.fe.absolute.abfe import optimize_abfe_initial_state
-from tmd.fe.free_energy import Trajectory
+from tmd.fe.free_energy import MDParams, Trajectory
 from tmd.fe.rbfe import setup_optimized_host
 from tmd.fe.septop import (
     RestraintParams,
     SepTopAnchors,
     SepTopFreeEnergy,
+    _equilibrate_joint,
     colocate_central_atoms,
     get_septop_initial_state,
     select_central_atoms,
@@ -471,36 +473,34 @@ def test_mol_a_mol_b_nonbonded_excluded(septop_potentials):
 
 @pytest.mark.parametrize("lamb", [0.0, 1.0])
 def test_septop_endstate_minimizes(hif2a_complex, lamb):
-    """``optimize_abfe_initial_state`` must succeed at SepTop endpoints.
-
-    Reproduces the joint-frame assembly + per-window minimization that
-    the complex leg performs via bisection's ``make_optimized``.
-    Uses a synthetic joint dual-ligand trajectory so we don't pay for the
-    pre-anchor equilibration; the failure mode this test guards against is
-    in the joint-frame assembly and the endpoint minimization, not the eq
-    MD itself.
-    """
-
+    """``optimize_abfe_initial_state`` must succeed at SepTop endpoints."""
     mol_a, mol_b, _, host_config = hif2a_complex
     ff = Forcefield.load_default()
 
+    # _equilibrate_joint rewrites the conformers in place
+    mol_a = Chem.Mol(mol_a)
+    mol_b = Chem.Mol(mol_b)
+
     host_config = setup_optimized_host(host_config, [mol_a, mol_b], ff, equilibration_steps=200)
 
-    trj = _make_synthetic_trajectory(host_config, mol_a, mol_b, n_frames=5)
+    seed = 2026
+    eq_md_params = MDParams(n_frames=5, n_eq_steps=200, steps_per_frame=100, seed=seed)
+    trj = _equilibrate_joint(mol_a, mol_b, ff, host_config, eq_md_params, seed)
     anchors = select_septop_anchors(host_config, mol_a, mol_b, trj)
 
-    pos = trj.frames[-1]
-    box = host_config.box
+    n_host = len(host_config.conf)
+    frame = trj.frames[-1]
+    host_config = replace(host_config, conf=frame[:n_host], box=trj.boxes[-1])
 
     afe = SepTopFreeEnergy(
         mol_a,
         mol_b,
         ff,
         anchors=anchors,
-        x0=pos,
-        box0=box,
+        x0=frame,
+        box0=host_config.box,
         rst_params=RestraintParams(),
     )
-    state = get_septop_initial_state(afe, ff, host_config, host_config.conf, DEFAULT_TEMP, seed=2026, lamb=lamb)
+    state = get_septop_initial_state(afe, ff, host_config, host_config.conf, DEFAULT_TEMP, seed=seed, lamb=lamb)
 
     optimize_abfe_initial_state(state)
