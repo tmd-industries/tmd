@@ -33,6 +33,7 @@ from tmd.constants import (
     DEFAULT_ATOM_MAPPING_KWARGS,
     DEFAULT_CHIRAL_ATOM_RESTRAINT_K,
     DEFAULT_CHIRAL_BOND_RESTRAINT_K,
+    NBParamIdx,
 )
 from tmd.fe import atom_mapping, single_topology
 from tmd.fe.dummy import MultipleAnchorWarning, canonicalize_bond
@@ -40,6 +41,10 @@ from tmd.fe.rbfe import _get_default_state_minimization_configs
 from tmd.fe.rest.bond import mkproper
 from tmd.fe.rest.queries import get_rotatable_bonds
 from tmd.fe.single_topology import (
+    DUMMY_A_BOND_MIN_MAX,
+    DUMMY_A_NONBONDED_PAIRLIST_TERM_W_MIN_MAX,
+    DUMMY_B_BOND_MIN_MAX,
+    DUMMY_B_NONBONDED_PAIRLIST_TERM_W_MIN_MAX,
     AtomMapFlags,
     AtomMapMixin,
     ChargePertubationError,
@@ -1620,3 +1625,82 @@ def test_pfkfb3_edge_doesnt_contain_ch2_chiral_restraints():
     system = st.setup_intermediate_state(0.0)
     assert len(system.chiral_atom.potential.idxs) > 0
     assert len(set(system.chiral_atom.potential.idxs[:, 0]).intersection(mol_c_ch2)) == 0
+
+
+@pytest.mark.nogpu
+def test_terminal_atom_pairs_in_nonbonded_pairlist_decoupled_until_after_bonds_engaged():
+    """Verify that nonbonded pairlist interactions between terminal atoms (only where both terminal atoms are from the same endstate)
+    are scaled such that they are not fully engaged until after the bonds have been fully engaged for these sets."""
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf") as ligand_path:
+        mols_by_name = read_sdf_mols_by_name(ligand_path)
+    src_mol = mols_by_name["65"]
+    dst_mol = mols_by_name["59"]
+
+    end_bond_a_lamb = DUMMY_A_BOND_MIN_MAX[0]
+    assert DUMMY_A_NONBONDED_PAIRLIST_TERM_W_MIN_MAX[0] < end_bond_a_lamb
+    end_bond_b_lamb = DUMMY_B_BOND_MIN_MAX[1]
+
+    assert end_bond_b_lamb < DUMMY_B_NONBONDED_PAIRLIST_TERM_W_MIN_MAX[1]
+
+    for mol_a, mol_b, in_state_b in [(src_mol, dst_mol, True), (dst_mol, src_mol, False)]:
+        kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+        kwargs["constrain_hydrogens"] = True
+
+        core = atom_mapping.get_cores(mol_a, mol_b, **kwargs)[0]
+
+        core, _ = filter_constraint_incompatible_hydrogens(mol_a, mol_b, core, ff)
+        st = SingleTopology(mol_a, mol_b, core, ff, verify_constraints=True)
+
+        pairlist_aligner = st.aligned_nonbonded_pair_list
+
+        terminal_flags = pairlist_aligner.terminal_flags
+
+        # There should be no terminal atom pairs that are not part of the core
+        mol_a_terminal = set(
+            [
+                st.a_to_c[atom.GetIdx()]
+                for atom in mol_a.GetAtoms()
+                if len(list(atom.GetNeighbors())) == 1 and st.c_flags[st.a_to_c[atom.GetIdx()]] == AtomMapFlags.MOL_A
+            ]
+        )
+        terminal_a_idxs = np.array(
+            [i for i in range(len(pairlist_aligner.idxs)) if set(pairlist_aligner.idxs[i]).issubset(mol_a_terminal)]
+        )
+        if in_state_b:
+            assert len(terminal_a_idxs) == 0
+        else:
+            assert len(terminal_a_idxs) > 0
+            assert np.all(terminal_flags[terminal_a_idxs])
+            pairlist = pairlist_aligner.interpolate(end_bond_a_lamb)
+            # The w coord should be greater than zero
+            assert np.all(pairlist.params[terminal_a_idxs, NBParamIdx.W_IDX] > 0.0)
+
+            interacting_terminal_a_lamb = DUMMY_A_NONBONDED_PAIRLIST_TERM_W_MIN_MAX[0]
+            pairlist = pairlist_aligner.interpolate(interacting_terminal_a_lamb)
+            # The w coord should be exactly zero at the max value
+            assert np.all(pairlist.params[terminal_a_idxs, NBParamIdx.W_IDX] == 0.0)
+
+        mol_b_terminal = set(
+            [
+                st.b_to_c[atom.GetIdx()]
+                for atom in mol_b.GetAtoms()
+                if len(list(atom.GetNeighbors())) == 1 and st.c_flags[st.b_to_c[atom.GetIdx()]] == AtomMapFlags.MOL_B
+            ]
+        )
+        terminal_b_idxs = np.array(
+            [i for i in range(len(pairlist_aligner.idxs)) if set(pairlist_aligner.idxs[i]).issubset(mol_b_terminal)]
+        )
+        if in_state_b:
+            assert len(terminal_b_idxs) > 0
+            assert np.all(terminal_flags[terminal_b_idxs])
+            pairlist = pairlist_aligner.interpolate(end_bond_b_lamb)
+            # The w coord should be greater than zero
+            assert np.all(pairlist.params[terminal_b_idxs, NBParamIdx.W_IDX] > 0.0)
+
+            interacting_terminal_b_lamb = DUMMY_B_NONBONDED_PAIRLIST_TERM_W_MIN_MAX[1]
+            pairlist = pairlist_aligner.interpolate(interacting_terminal_b_lamb)
+            # The w coord should be exactly zero at the max value
+            assert np.all(pairlist.params[terminal_b_idxs, NBParamIdx.W_IDX] == 0.0)
+        else:
+            assert len(terminal_b_idxs) == 0
