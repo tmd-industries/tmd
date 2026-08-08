@@ -145,6 +145,13 @@ DUMMY_A_TORSION_MIN_MAX = _flip_min_max(DUMMY_B_TORSION_MIN_MAX)
 #  src   ----------------------
 #        0       lambda       1
 
+
+# Terminal atoms in the pairlist are scaled differently to handle ring breaking/forming cases where the
+# the terminal atoms can get too close and lead to instability.
+# Should be fully engaged after the bonded terms are fully applied
+DUMMY_A_NONBONDED_PAIRLIST_TERM_W_MIN_MAX = [1 / 4, 1]
+DUMMY_B_NONBONDED_PAIRLIST_TERM_W_MIN_MAX = _flip_min_max(DUMMY_A_NONBONDED_PAIRLIST_TERM_W_MIN_MAX)
+
 DUMMY_A_NONBONDED_W_MIN_MAX = [2 / 3, 1]
 DUMMY_B_NONBONDED_W_MIN_MAX = _flip_min_max(DUMMY_A_NONBONDED_W_MIN_MAX)
 
@@ -991,9 +998,10 @@ batch_interpolate_chiral_atom_params = jax.jit(
 
 @jax.jit
 def batch_interpolate_nonbonded_pair_list_params(
-    cutoff,
+    cutoff: float,
     src_params,
     dst_params,
+    terminal_flags,
     lamb: float,
 ):
     """
@@ -1029,6 +1037,11 @@ def batch_interpolate_nonbonded_pair_list_params(
     # parameters for pairs that do not interact in the src state (dummy_B - core interaction, dummy_B - dummy_B interactions)
     # (these are pairs that are being turned on)
     w = interpolate.pad(interpolate_w_coord, cutoff, dst_w, lamb, *DUMMY_B_NONBONDED_W_MIN_MAX)
+    w = jnp.where(
+        terminal_flags,
+        interpolate.pad(interpolate_w_coord, cutoff, dst_w, lamb, *DUMMY_B_NONBONDED_PAIRLIST_TERM_W_MIN_MAX),
+        w,
+    )
     q = interpolate.pad(
         interpolate.linear_interpolation,
         jnp.zeros_like(dst_qlj[:, 0]),
@@ -1041,6 +1054,11 @@ def batch_interpolate_nonbonded_pair_list_params(
     # parameters for pairs that do not interact in the dst state (dummy_A - core interaction, dummy_A - dummy_A interactions)
     # (there are pairs that are being turned off)
     w = interpolate.pad(interpolate_w_coord, src_w, cutoff, lamb, *DUMMY_A_NONBONDED_W_MIN_MAX)
+    w = jnp.where(
+        terminal_flags,
+        interpolate.pad(interpolate_w_coord, src_w, cutoff, lamb, *DUMMY_A_NONBONDED_PAIRLIST_TERM_W_MIN_MAX),
+        w,
+    )
 
     q = interpolate.pad(
         interpolate.linear_interpolation,
@@ -1306,11 +1324,14 @@ class AlignedChiralAtom(AlignedPotential):
 @dataclass
 class AlignedNonbondedPairlist(AlignedPotential):
     cutoff: float
+    terminal_flags: NDArray[np.int32]
 
     def interpolate(self, lamb):
         # (ytz): batch_interpolate_nonbonded_pair_list_params currently fails to respect the self.mins and self.maxes
         # boundaries.
-        params = batch_interpolate_nonbonded_pair_list_params(self.cutoff, self.src_params, self.dst_params, lamb)
+        params = batch_interpolate_nonbonded_pair_list_params(
+            self.cutoff, self.src_params, self.dst_params, self.terminal_flags, lamb
+        )
         params = jnp.array(params)
         return NonbondedPairListPrecomputed(self.num_atoms, self.idxs, self.cutoff).bind(params)
 
@@ -1542,7 +1563,20 @@ class SingleTopology(AtomMapMixin):
             self.src_system.nonbonded_pair_list,
             self.dst_system.nonbonded_pair_list,
         )
+
+        # Find all atoms that are terminal, to flag the pairs of interactions
+        # between terminal atoms to scale them at a different rate to other pairwise interactions.
+        terminal_atom_idxs = set()
+        for a in self.mol_a.GetAtoms():
+            if len(a.GetNeighbors()) == 1:
+                terminal_atom_idxs.add(self.a_to_c[a.GetIdx()])
+
+        for a in self.mol_b.GetAtoms():
+            if len(a.GetNeighbors()) == 1:
+                terminal_atom_idxs.add(self.b_to_c[a.GetIdx()])
+
         idxs = idxs.reshape(-1, 2)
+        terminal_flags = jnp.array([len(set(pair).intersection(terminal_atom_idxs)) == 2 for pair in idxs])
         src_params = src_params.reshape(-1, 4)
         dst_params = dst_params.reshape(-1, 4)
         return AlignedNonbondedPairlist(
@@ -1553,6 +1587,7 @@ class SingleTopology(AtomMapMixin):
             mins=mins,
             maxes=maxes,
             cutoff=src_cutoff,
+            terminal_flags=terminal_flags,
         )
 
     def combine_masses(self, use_hmr: bool = False) -> list[float]:
