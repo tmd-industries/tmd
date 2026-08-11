@@ -87,3 +87,11 @@ class AnisotropicMonteCarloBarostat_f32:
 
 class AnisotropicMonteCarloBarostat_f64:
     pass
+
+
+class ConstraintGroups_f32:
+    pass
+
+
+class ConstraintGroups_f64:
+    pass

@@ -83,8 +83,8 @@ void LangevinIntegrator<RealType>::step_fwd(
 
   k_update_forward_baoab<RealType, D>
       <<<dim3(ceil_divide(N_, tpb), batch_size_), tpb, 0, stream>>>(
-          batch_size_, N_, ca_, d_idxs, d_cbs_, d_ccs_, d_rand_states_.data,
-          d_x_t, d_v_t, d_du_dx_, dt_);
+          batch_size_, N_, dt_, ca_, d_idxs, d_cbs_, d_ccs_,
+          d_rand_states_.data, d_x_t, d_v_t, d_du_dx_);
   gpuErrchk(cudaPeekAtLastError());
 }
 

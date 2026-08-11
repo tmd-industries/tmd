@@ -57,7 +57,6 @@ def get_hif2a_ligand_pair_single_topology():
             [8, 8],
             [9, 9],
             [10, 10],
-            [29, 11],
             [11, 12],
             [12, 13],
             [14, 15],
@@ -69,6 +68,7 @@ def get_hif2a_ligand_pair_single_topology():
             [21, 22],
         ]
     )
+
     return mol_a, mol_b, core
 
 

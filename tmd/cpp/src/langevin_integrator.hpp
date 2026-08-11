@@ -27,7 +27,7 @@ namespace tmd {
 template <typename RealType>
 class LangevinIntegrator : public Integrator<RealType> {
 
-private:
+protected:
   const int batch_size_;
   const int N_;
   const RealType temperature_;

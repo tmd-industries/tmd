@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +17,9 @@
 import io
 import os
 import pickle
+import time
 import unittest
+from collections import defaultdict
 from pathlib import Path
 from unittest.mock import patch
 
@@ -134,6 +137,14 @@ def environ_check():
     return os.environ["CUDA_VISIBLE_DEVICES"]
 
 
+def sleep_based_on_gpu():
+    start = time.perf_counter()
+    gpu_idx = int(os.environ["CUDA_VISIBLE_DEVICES"])
+    time.sleep(0.5 * gpu_idx)
+    end = time.perf_counter()
+    return gpu_idx, start, end
+
+
 class TestGPUCount(unittest.TestCase):
     @patch("tmd.parallel.utils.check_output")
     def test_get_gpu_count(self, mock_output):
@@ -199,8 +210,8 @@ def test_cuda_pool_submit_kwargs(pool):
 
 @pytest.mark.parametrize("klass", [client.CUDAPoolClient, client.CUDAMPSPoolClient])
 def test_cuda_pool_too_many_workers(klass):
-    # I look forward to the day that we have 814 GPUs
-    cli = klass(814)
+    # I look forward to the day that we have 32 GPUs
+    cli = klass(32)
     with pytest.raises(AssertionError):
         cli.verify()
 
@@ -218,9 +229,41 @@ def test_cuda_pool_single_worker(klass):
 def test_cuda_pool_multiple_workers_cuda_visible_devices(klass):
     with patch.dict("os.environ", {"CUDA_VISIBLE_DEVICES": "5,6,7"}):
         cli = klass(3)
+
     for i in range(10):
         result = cli.submit(environ_check).result()
         assert result == str(i % 3 + 5)
+
+
+@pytest.mark.parametrize("klass", [client.CUDAPoolClient, client.CUDAMPSPoolClient])
+def test_cuda_pool_multiple_workers_cuda_visible_devices_gpus_have_fixed_tasks(klass):
+    """Verify that assigning tasks of different wall clock times to different GPUs doesn't result in
+    more tasks allocated to a single GPU."""
+    with patch.dict("os.environ", {"CUDA_VISIBLE_DEVICES": "0,1"}):
+        if klass == client.CUDAPoolClient:
+            cli = klass(2)
+        else:
+            cli = klass(2, workers_per_gpu=1)
+
+    futures = [cli.submit(sleep_based_on_gpu) for _ in range(10)]
+    results_by_gpu = defaultdict(list)
+    for fut in futures:
+        gpu, start, end = fut.result()
+        results_by_gpu[gpu].append((start, end))
+
+    def verify_monotonic_timings(res):
+        # Verify that none of the times for a single GPU overlap
+        _, last_end = res[0]
+        for start, end in res[1:]:
+            assert start < end
+            assert start > last_end
+            last_end = last_end
+
+    for vals in results_by_gpu.values():
+        verify_monotonic_timings(vals)
+
+    # The final run time of GPU zero (which has no sleep) should be faster than the single GPU case
+    assert results_by_gpu[0][-1][1] < results_by_gpu[1][-1][1]
 
 
 def test_batch_list():

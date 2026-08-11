@@ -36,7 +36,7 @@ from tmd.fe.lambda_schedule import construct_pre_optimized_absolute_lambda_sched
 from tmd.fe.topology import BaseTopology
 from tmd.fe.utils import get_mol_name, get_romol_conf
 from tmd.ff import Forcefield
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat
+from tmd.lib import ConstrainedLangevinIntegrator, LangevinIntegrator, MonteCarloBarostat
 from tmd.md import builders, enhanced, minimizer, smc
 from tmd.md.barostat.moves import NPTMove
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
@@ -257,6 +257,7 @@ def setup_initial_states(
     temperature: float,
     lambda_schedule: Array,
     seed: int,
+    dt: float = 2.5e-3,
 ) -> list[InitialState]:
     """
     Setup the initial states for a series of lambda values. It is assumed that the lambda schedule
@@ -311,9 +312,11 @@ def setup_initial_states(
 
         bond_potential = get_potential_by_type(ubps, potentials.HarmonicBond)
 
-        hmr_masses = model_utils.apply_hmr(masses, bond_potential.idxs)
+        masses = masses
+        if dt > 1.5e-3:
+            masses = model_utils.apply_hmr(masses, bond_potential.idxs)
         group_idxs = get_group_indices(get_bond_list(bond_potential), len(masses))
-        baro = MonteCarloBarostat(len(hmr_masses), 1.0, temperature, group_idxs, 15, seed)
+        baro = MonteCarloBarostat(len(masses), 1.0, temperature, group_idxs, 15, seed)
         box0 = host_config.box
 
         v0 = np.zeros_like(x0)  # tbd resample from Maxwell-boltzman?
@@ -321,9 +324,13 @@ def setup_initial_states(
         num_total_atoms = len(x0)
         ligand_idxs = np.arange(num_total_atoms - num_ligand_atoms, num_total_atoms)
 
-        dt = 2.5e-3
         friction = 1.0
-        intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
+        intg: ConstrainedLangevinIntegrator | LangevinIntegrator
+        if dt > 2.5e-3:
+            constraints = afe.combine_constraints(host_config)
+            intg = ConstrainedLangevinIntegrator(temperature, dt, friction, masses, seed, constraints)
+        else:
+            intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
 
         state = InitialState(bps, intg, baro, x0, v0, box0, lamb, ligand_idxs, np.array([], dtype=np.int32))
         initial_states.append(state)

@@ -6,14 +6,17 @@ This tutorial covers setting up a [Relative Binding Free Energy](https://pmc.ncb
 
 Refer to the [installation details](https://github.com/tmd-industries/tmd?tab=readme-ov-file#installation) for initial setup.
 
-For guidance on optimizing TMD performance with MPS or experimental batched MD, see the [benchmarking guide](benchmarking.md).
+For guidance on optimizing TMD performance with [Nvidia MPS](https://docs.nvidia.com/deploy/mps/latest/index.html) or experimental batched MD, see the [benchmarking guide](benchmarking.md).
 
 ## Build an RBFE Graph
 
 RBFE requires defining a series of edges connecting different compounds. This example builds a graph with a k min cut of 3, providing a robust estimate of node predictions at the cost of increased runtime.
 
+> [!NOTE]
+> You will likely see a warning with a message that says `An NVIDIA GPU may be present on this machine, but a CUDA-enabled jaxlib is not installed. Falling back to cpu.`, this is expected and even desirable. The CUDA-enabled JAX can create unexpected issues and is not supported.
+
 ```
-python examples/build_rbfe_graph.py ../rbfe-datasets/datasets/jacs_set/tyk2/ligands.sdf tyk2_map.json --greedy_k_min_cut 3 --verbose
+python examples/build_rbfe_graph.py ../rbfe-datasets/datasets/jacs_set/tyk2/ligands.sdf tyk2_map.json --greedy_k_min_cut 3
 ```
 
 > [!IMPORTANT]
@@ -45,18 +48,18 @@ The TYK2 PDB structure has already been prepared for this tutorial. In practice,
 
 ### Run Graph
 
-Now, you can run the RBFE graph. This example uses 390 local MD steps followed by 10 global MD steps. You may want to reduce the number of local MD steps, depending on your system. Running with 390 local MD steps has been shown to be 18x faster than using global MD on the CDK2 dataset, with similar performance, but your results may vary.
+You can now run the RBFE graph. This example uses 390 local MD steps followed by 10 global MD steps per frame. You may want to reduce the number of local MD steps, depending on your system. Using 390 local MD steps has been shown to be 18x faster than using only global MD on the CDK2 dataset, with similar performance, but results may vary depending on the target.
 
 > [!IMPORTANT]
-> Ensure you set `--mps_workers` to the appropriate value. 6 may be too low for larger GPUs and too high for smaller GPUs.
+> Ensure you set `--mps_workers` to the appropriate value. 6 may be insufficient for larger GPUs and excessive for smaller GPUs. If [MPS](https://docs.nvidia.com/deploy/mps/latest/index.html) is not enabled, performance will be worse than expected. If MPS is not available consider using the [batched mode](benchmarking.md).
 
 ```
 python examples/run_rbfe_graph.py --sdf_path ../rbfe-datasets/datasets/jacs_set/tyk2/ligands.sdf --graph_json tyk2_map.json --pdb_path ../rbfe-datasets/datasets/jacs_set/tyk2/tyk2_structure.pdb --local_md_steps 390 --mps_workers 6 --forcefield smirnoff_2_0_0_amber_am1bcc.py --output_dir tyk2_rbfe_tutorial --legs complex solvent
 ```
 
-On an RTX 4090, a typical Tyk2 graph should take approximately 6 hours, though this may take a day or two depending on the GPU.
+On an RTX 4090, a typical Tyk2 graph should take approximately 6 hours, though this may take 1–2 days on a slower GPU.
 
-Once finished, the CSVs `dg_results.csv` and `ddg_results.csv` will be written to `tyk2_rbfe_tutorial/`, which can be used to plot the RBFE run’s results. The directory also contains plots for analyzing each edge’s simulation.
+Once finished, the CSVs `dg_results.csv` and `ddg_results.csv` will be written to `tyk2_rbfe_tutorial/`, which can be used to plot the results of the RBFE run. The directory also contains plots for analyzing each edge.
 
 > [!NOTE]
 > The command is idempotent, so if you need to rerun it, all completed legs will be skipped.

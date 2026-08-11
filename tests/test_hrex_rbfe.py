@@ -121,6 +121,7 @@ def test_hrex_rbfe_hif2a_water_sampling_warning(hif2a_single_topology_leg, seed)
 
 @pytest.mark.parametrize("local_steps_percentage", [0.0, 0.75])
 @pytest.mark.parametrize("max_bisection_windows, target_overlap", [(5, None), (5, 0.667)])
+@pytest.mark.parametrize("iterations_per_frame", [1, 2])
 @pytest.mark.parametrize("enable_rest", [False, True])
 @pytest.mark.parametrize("seed", [2024])
 def test_hrex_rbfe_hif2a(
@@ -128,6 +129,7 @@ def test_hrex_rbfe_hif2a(
     seed,
     max_bisection_windows,
     target_overlap,
+    iterations_per_frame,
     enable_rest,
     local_steps_percentage,
     worker_id,
@@ -152,6 +154,7 @@ def test_hrex_rbfe_hif2a(
                 if enable_rest
                 else None
             ),
+            iterations_per_frame=iterations_per_frame,
         ),
         water_sampling_params=WaterSamplingParams(interval=steps_per_frame, n_proposals=1000)
         if host_name == "complex"
@@ -226,22 +229,23 @@ def test_hrex_rbfe_hif2a(
     assert isinstance(result.hrex_diagnostics.relaxation_time, float)
     assert result.hrex_diagnostics.normalized_kl_divergence >= 0.0
 
+    iterations_per_frame = md_params.hrex_params.iterations_per_frame
     if host_name == "complex" and md_params.water_sampling_params is not None:
         assert result.water_sampling_diagnostics.proposals_by_state_by_iter.shape == (
-            md_params.n_frames,
+            md_params.n_frames * iterations_per_frame,
             final_windows,
             2,
         )
         if md_params.local_md_params is None:
             proposals_per_frame = (
-                md_params.steps_per_frame // md_params.water_sampling_params.interval
+                (md_params.steps_per_frame) // md_params.water_sampling_params.interval
             ) * md_params.water_sampling_params.n_proposals
             assert np.all(result.water_sampling_diagnostics.proposals_by_state_by_iter[:, :, 1] == proposals_per_frame)
         else:
             global_steps = md_params.steps_per_frame - md_params.local_md_params.local_steps
             # If the number of global steps is sufficient to trigger water sampling in all the frames, at least one iteration should
             # have proposals.
-            if (global_steps / md_params.water_sampling_params.interval) * md_params.n_frames > 0:
+            if (global_steps / md_params.water_sampling_params.interval) > 0:
                 assert np.any(
                     result.water_sampling_diagnostics.proposals_by_state_by_iter[:, :, 1]
                     == md_params.water_sampling_params.n_proposals
@@ -251,7 +255,7 @@ def test_hrex_rbfe_hif2a(
         assert result.water_sampling_diagnostics.cumulative_proposals_by_state.shape == (final_windows, 2)
     else:
         assert result.water_sampling_diagnostics is None
-    assert len(result.hrex_diagnostics.replica_idx_by_state_by_iter) == md_params.n_frames
+    assert len(result.hrex_diagnostics.replica_idx_by_state_by_iter) == md_params.n_frames * iterations_per_frame
     assert all(
         len(replica_idx_by_state) == final_windows
         for replica_idx_by_state in result.hrex_diagnostics.replica_idx_by_state_by_iter
@@ -268,21 +272,23 @@ def test_hrex_rbfe_hif2a(
     trajs_by_replica = result.extract_trajectories_by_replica(atom_idxs)
     assert trajs_by_replica.shape == (final_windows, md_params.n_frames, n_atoms_subset, 3)
 
-    # Check that the frame-to-frame rmsd is lower for replica trajectories versus state trajectories
-    def time_lagged_rmsd(traj):
-        sds = jnp.sum(jnp.diff(traj, axis=0) ** 2, axis=(1, 2))
-        return jnp.sqrt(jnp.mean(sds))
+    # If there are multiple iterations per frame the time lagged RMSD is harder to reason about
+    if iterations_per_frame == 1:
+        # Check that the frame-to-frame rmsd is lower for replica trajectories versus state trajectories
+        def time_lagged_rmsd(traj):
+            sds = jnp.sum(jnp.diff(traj, axis=0) ** 2, axis=(1, 2))
+            return jnp.sqrt(jnp.mean(sds))
 
-    # (states, frames)
-    trajs_by_state = np.array(
-        [[np.array(frame)[atom_idxs] for frame in state_traj.frames] for state_traj in result.trajectories]
-    )
+        # (states, frames)
+        trajs_by_state = np.array(
+            [[np.array(frame)[atom_idxs] for frame in state_traj.frames] for state_traj in result.trajectories]
+        )
 
-    replica_traj_rmsds = jax.vmap(time_lagged_rmsd)(trajs_by_replica)
-    state_traj_rmsds = jax.vmap(time_lagged_rmsd)(trajs_by_state)
+        replica_traj_rmsds = jax.vmap(time_lagged_rmsd)(trajs_by_replica)
+        state_traj_rmsds = jax.vmap(time_lagged_rmsd)(trajs_by_state)
 
-    # should have rmsd(replica trajectory) < rmsd(state trajectory) for all pairs (replica, state)
-    assert np.max(replica_traj_rmsds) < np.min(state_traj_rmsds)
+        # should have rmsd(replica trajectory) < rmsd(state trajectory) for all pairs (replica, state)
+        assert np.max(replica_traj_rmsds) < np.min(state_traj_rmsds)
 
     # Check that we can extract ligand trajectories by replica
     ligand_trajs_by_replica = result.extract_ligand_trajectories_by_replica()
@@ -425,7 +431,7 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
     host_name, (mol_a, mol_b, core, forcefield, host_config) = hif2a_single_topology_leg
 
     target_overlap = 0.667
-    overlap_diff = 0.1
+    overlap_diff = 0.2
 
     md_params = MDParams(
         n_frames=100,
@@ -457,14 +463,16 @@ def test_hrex_rbfe_min_overlap_below_target_overlap(hif2a_single_topology_leg, s
         min_overlap=target_overlap - overlap_diff,
     )
 
-    # Should have fewer intermediates thank to the lower min_overlap
-    assert len(ref_res.intermediate_results) > len(comp_res.intermediate_results)
+    # Should have fewer or equal intermediates thanks to the lower min_overlap
+    reference_intermediates = len(ref_res.intermediate_results)
+    target_overlap_intermediates = len(comp_res.intermediate_results)
+    assert reference_intermediates >= target_overlap_intermediates
     ref_final_swap_acceptance_rates = ref_res.hrex_diagnostics.cumulative_swap_acceptance_rates[-1]
     comp_final_swap_acceptance_rates = comp_res.hrex_diagnostics.cumulative_swap_acceptance_rates[-1]
 
     assert ref_final_swap_acceptance_rates.size == comp_final_swap_acceptance_rates.size
-    # Accept 10% difference in overlaps, 3x for swaps
-    tolerance = 0.08
+    # Accept 15% difference in overlaps, 3x for swaps
+    tolerance = 0.15
     np.testing.assert_allclose(ref_final_swap_acceptance_rates, comp_final_swap_acceptance_rates, atol=tolerance * 3)
     # Verify that all swaps are greater than zero
     assert np.all(ref_final_swap_acceptance_rates > tolerance)

@@ -103,6 +103,7 @@ private:
              unsigned int *d_atom_idxs, const cudaStream_t stream);
 
   RealType _get_temperature();
+  std::shared_ptr<ConstraintGroups<RealType>> _get_constraints_group() const;
 
   void _ensure_local_md_intialized();
 

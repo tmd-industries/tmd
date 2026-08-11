@@ -15,7 +15,7 @@
 #include "../fixed_point.hpp"
 #include "../gpu_utils.cuh"
 #include "k_fixed_point.cuh"
-#include "k_periodic_torsion.cuh" // reuse dot_product / cross_product
+#include "k_math.cuh"
 
 namespace tmd {
 

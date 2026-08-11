@@ -113,6 +113,9 @@ def test_bound_potential_execute_validation(harmonic_bond):
     bound_impl = harmonic_bond.to_gpu(np.float32).bound_impl
     verify_potential_validation(bound_impl.execute)
 
+    with pytest.raises(RuntimeError, match="provided with different number of systems than expected"):
+        bound_impl.execute(np.zeros((2, 3, 3), dtype=np.float32), np.ones(3, dtype=np.float32))
+
     execute_bound_impl(bound_impl)
 
 
@@ -127,6 +130,13 @@ def test_unbound_potential_execute_validation(harmonic_bond):
     unbound_impl.execute(
         np.zeros((3, 3), dtype=np.float32), harmonic_bond.params.astype(np.float32), np.eye(3, dtype=np.float32)
     )
+
+    with pytest.raises(RuntimeError, match="provided with different number of systems than expected"):
+        unbound_impl.execute_dim(
+            np.zeros((2, 3, 3), dtype=np.float32),
+            harmonic_bond.params.astype(np.float32),
+            np.ones((2, 3, 3), dtype=np.float32),
+        )
 
 
 def test_summed_potential_raises_on_inconsistent_lengths(harmonic_bond):

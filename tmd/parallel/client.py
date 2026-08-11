@@ -207,7 +207,7 @@ class ProcessPoolClient(AbstractClient):
         self.__init__(max_workers)
 
 
-class CUDAPoolClient(ProcessPoolClient):
+class CUDAPoolClient(AbstractClient):
     """
     Specialized wrapper for CUDA-dependent processes. Each call to submit()
     will run on a different GPU modulo num workers, which should be set to
@@ -215,20 +215,29 @@ class CUDAPoolClient(ProcessPoolClient):
     """
 
     def __init__(self, max_workers: int, max_tasks_per_child: int | None = None):
-        super().__init__(max_workers, max_tasks_per_child)
+        self.max_workers = max_workers
+        self._idx = 0
+        self._total_idx = 0
+        ctxt = multiprocessing.get_context("spawn")
         self._gpu_list = get_visible_gpus(max_workers)
+        # Have an executor per gpu, else multiple jobs can be running on the same GPU
+        self.executors = [
+            futures.ProcessPoolExecutor(max_workers=1, mp_context=ctxt, max_tasks_per_child=max_tasks_per_child)
+            for _ in range(len(self._gpu_list))
+        ]
 
     @staticmethod
-    def wrapper(max_workers, idx, fn, *args, **kwargs):
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(idx)
+    def wrapper(max_workers, gpu_idx, fn, *args, **kwargs):
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
         return fn(*args, **kwargs)
 
     def submit(self, task_fn, *args, **kwargs) -> BaseFuture:
         """
         See abstract class for documentation.
         """
-        future = self.executor.submit(
-            self.wrapper, self.max_workers, self._gpu_list[self._idx], task_fn, *args, **kwargs
+        gpu_idx = self._idx % len(self._gpu_list)
+        future = self.executors[gpu_idx].submit(
+            self.wrapper, self.max_workers, self._gpu_list[gpu_idx], task_fn, *args, **kwargs
         )
         job_id = str(self._total_idx)
         self._total_idx += 1
@@ -247,7 +256,7 @@ class CUDAPoolClient(ProcessPoolClient):
         assert len(self._gpu_list) <= gpus, "More GPUs requested than the machine has, check CUDA_VISIBLE_DEVICES"
 
 
-class CUDAMPSPoolClient(ProcessPoolClient):
+class CUDAMPSPoolClient(AbstractClient):
     """Specialized wrapper for CUDA-dependent processes, when running MPS (https://docs.nvidia.com/deploy/mps/index.html). If MPS is not running,
     this will perform worse than CUDAPoolClient.
     """
@@ -276,21 +285,31 @@ class CUDAMPSPoolClient(ProcessPoolClient):
         max_tasks_per_child: int or None
             Number of tasks to run before restarting the process. If None, will never restart child processes
         """
-        super().__init__(num_gpus * workers_per_gpu, max_tasks_per_child)
         assert workers_per_gpu > 0
         assert active_thread_usage_per_worker is None or active_thread_usage_per_worker > 0.0
+        self.max_workers = num_gpus * workers_per_gpu
+        self._idx = 0
+        self._total_idx = 0
         self.workers_per_gpu = workers_per_gpu
         self.num_gpus = num_gpus
         self._gpu_list = get_visible_gpus(num_gpus)
+
         if active_thread_usage_per_worker is None:
             # Heuristic taken from https://developer.nvidia.com/blog/maximizing-openmm-molecular-dynamics-throughput-with-nvidia-multi-process-service/#more_throughput_with_cuda_mps_active_thread_percentage%C2%A0
             self._active_thread_usage_per_worker = 200.0 / self.workers_per_gpu
         else:
             self._active_thread_usage_per_worker = active_thread_usage_per_worker
+        ctxt = multiprocessing.get_context("spawn")
+        self.executors = [
+            futures.ProcessPoolExecutor(
+                max_workers=workers_per_gpu, mp_context=ctxt, max_tasks_per_child=max_tasks_per_child
+            )
+            for _ in range(len(self._gpu_list))
+        ]
 
     @staticmethod
-    def wrapper(max_workers, idx, thread_percentage, fn, *args, **kwargs):
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(idx)
+    def wrapper(max_workers, gpu_idx, thread_percentage, fn, *args, **kwargs):
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
         os.environ["CUDA_MPS_ACTIVE_THREAD_PERCENTAGE"] = str(thread_percentage)
         return fn(*args, **kwargs)
 
@@ -298,10 +317,11 @@ class CUDAMPSPoolClient(ProcessPoolClient):
         """
         See abstract class for documentation.
         """
-        future = self.executor.submit(
+        gpu_idx = self._idx % len(self._gpu_list)
+        future = self.executors[gpu_idx].submit(
             self.wrapper,
             self.max_workers,
-            self._gpu_list[self._idx % len(self._gpu_list)],
+            self._gpu_list[gpu_idx],
             self._active_thread_usage_per_worker,
             task_fn,
             *args,

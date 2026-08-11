@@ -349,7 +349,7 @@ def test_imaging_frames():
     forcefield = Forcefield.load_default()
     seed = 2022
     frames = 1
-    steps_per_frame = 1
+    steps_per_frame = 100
     equil_steps = 1
 
     md_params = MDParams(n_frames=frames, n_eq_steps=equil_steps, steps_per_frame=steps_per_frame, seed=seed)
@@ -366,17 +366,18 @@ def test_imaging_frames():
     )
 
     # A buffer, as imaging doesn't ensure everything is perfectly in the box
-    padding = 0.3
+    padding = 0.1
 
     for i, (frames, boxes) in enumerate(zip(res.frames, res.boxes)):
         initial_state = res.final_result.initial_states[i]
         box_center = compute_box_center(boxes[0])
         box_extents = np.max(boxes, axis=(0, 1))
 
+        # Disabled since the solvent leg will image the ligands
         # Verify that coordinates are either outside of the box or below zero
-        assert np.any(np.max(frames, axis=(0, 1)) > box_extents + padding) or np.any(
-            np.min(frames, axis=(0, 1)) < -padding
-        )
+        # assert np.any(np.max(frames, axis=(0, 1)) > box_extents + padding) or np.any(
+        #     np.min(frames, axis=(0, 1)) < -padding
+        # )
         # Ligand won't be near center of box
         assert not np.allclose(np.mean(frames[0][initial_state.ligand_idxs], axis=0), box_center)
 

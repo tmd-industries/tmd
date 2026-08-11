@@ -47,6 +47,9 @@ def write_trajectory_as_cif(mol_a, mol_b, core, all_frames, host_topology, out_p
 
 
 def run_edge(mol_a, mol_b, protein_path, n_windows):
+    # Create copies of molecules to avoid minimization from adjusting the 3D coords
+    mol_a = Chem.Mol(mol_a)
+    mol_b = Chem.Mol(mol_b)
     all_cores = atom_mapping.get_cores(
         mol_a,
         mol_b,
@@ -278,13 +281,13 @@ $$$$
         state = setup_initial_state(st, lamb, None, DEFAULT_TEMP, 2024, True)
 
         free_idxs = get_free_idxs(state)
+
         x_opt_unrestrained = optimize_coords_state(state.potentials, state.x0, state.box0, free_idxs, False, k=0.0)
         x_opt_restrained = optimize_coords_state(state.potentials, state.x0, state.box0, free_idxs, False, k=2000.0)
-        interacting_atoms = state.interacting_atoms
         displacement_distances_unrestrained = distance_on_pairs(
-            state.x0[interacting_atoms], x_opt_unrestrained[interacting_atoms], box=state.box0
+            state.x0[free_idxs], x_opt_unrestrained[free_idxs], box=state.box0
         )
         displacement_distances_restrained = distance_on_pairs(
-            state.x0[interacting_atoms], x_opt_restrained[interacting_atoms], box=state.box0
+            state.x0[free_idxs], x_opt_restrained[free_idxs], box=state.box0
         )
         assert np.max(displacement_distances_unrestrained) > np.max(displacement_distances_restrained)

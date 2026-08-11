@@ -1,5 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
-# Modifications Copyright 2025, Forrest York
+# Modifications Copyright 2025-2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,20 +22,30 @@ import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 import pytest
-from common import ligand_from_smiles
+from common import convert_quaternion_for_scipy, ligand_from_smiles
 from hypothesis import event, given, seed
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from scipy.spatial.transform import Rotation
 
 from tmd import potentials
 from tmd.constants import (
     DEFAULT_ATOM_MAPPING_KWARGS,
     DEFAULT_CHIRAL_ATOM_RESTRAINT_K,
     DEFAULT_CHIRAL_BOND_RESTRAINT_K,
+    NBParamIdx,
 )
 from tmd.fe import atom_mapping, single_topology
 from tmd.fe.dummy import MultipleAnchorWarning, canonicalize_bond
+from tmd.fe.rbfe import _get_default_state_minimization_configs
+from tmd.fe.rest.bond import mkproper
+from tmd.fe.rest.queries import get_rotatable_bonds
 from tmd.fe.single_topology import (
+    DUMMY_A_BOND_MIN_MAX,
+    DUMMY_A_NONBONDED_PAIRLIST_TERM_W_MIN_MAX,
+    DUMMY_B_BOND_MIN_MAX,
+    DUMMY_B_NONBONDED_PAIRLIST_TERM_W_MIN_MAX,
+    AtomMapFlags,
     AtomMapMixin,
     ChargePertubationError,
     CoreBondChangeWarning,
@@ -45,13 +55,16 @@ from tmd.fe.single_topology import (
     canonicalize_chiral_atom_idxs,
     canonicalize_improper_idxs,
     cyclic_difference,
+    filter_constraint_incompatible_hydrogens,
     interpolate_w_coord,
     setup_dummy_interactions_from_ff,
 )
 from tmd.fe.system import minimize_scipy, simulate_system
 from tmd.fe.utils import get_mol_name, get_romol_conf, read_sdf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
+from tmd.md import minimizer
 from tmd.md.builders import build_water_system
+from tmd.potentials.bonded import signed_torsion_angle
 from tmd.potentials.jax_utils import pairwise_distances
 from tmd.utils import path_to_internal_file
 
@@ -541,6 +554,190 @@ def test_canonicalize_improper_idxs():
 
 
 @pytest.mark.nogpu
+def test_combine_confs_alignment():
+    """Test that combine_confs will perform RMSD alignment on the atoms associated with the dummy atoms
+
+    For lambda < 0.5, mol b atoms will be aligned to mol_a
+    and lambda >= 0.5 mol_a atoms will be aligned to mol_b
+    """
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
+        mols = read_sdf(path_to_ligand)
+
+    rng = np.random.default_rng(2026)
+
+    rng.shuffle(mols)
+
+    all_pairs = [[mols[i], mols[j]] for i in range(len(mols)) for j in range(i + 1, len(mols))]
+
+    subset = rng.choice(all_pairs, size=5)
+
+    compute_distance_matrix = functools.partial(pairwise_distances, box=None)
+
+    def get_max_distance(x0):
+        dij = compute_distance_matrix(x0)
+        return jnp.amax(dij)
+
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    for mol_a, mol_b in subset:
+        core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+
+        st = SingleTopology(mol_a, mol_b, core, ff)
+
+        ref_conf_a = get_romol_conf(mol_a)
+        ref_conf_b = get_romol_conf(mol_b)
+
+        identity = np.arange(st.get_num_atoms(), dtype=np.int32)
+
+        core_idxs = identity[st.c_flags == AtomMapFlags.CORE]
+        a_idxs = identity[st.c_flags == AtomMapFlags.MOL_A]
+        b_idxs = identity[st.c_flags == AtomMapFlags.MOL_B]
+
+        c_to_core_a = np.array([st.c_to_a[idx] for idx in core_idxs])
+        c_to_core_b = np.array([st.c_to_b[idx] for idx in core_idxs])
+        c_to_a_idxs = np.array([st.c_to_a[idx] for idx in a_idxs])
+        c_to_b_idxs = np.array([st.c_to_b[idx] for idx in b_idxs])
+
+        def combine_and_validate(conf_a, conf_b, lamb):
+            combined_conf = st.combine_confs(conf_a, conf_b, lamb=lamb)
+            if lamb < 0.5:
+                if len(a_idxs) > 0:
+                    assert np.all(combined_conf[a_idxs] == conf_a[c_to_a_idxs])
+                assert np.all(combined_conf[core_idxs] == conf_a[c_to_core_a])
+            else:
+                if len(b_idxs) > 0:
+                    assert np.all(combined_conf[b_idxs] == conf_b[c_to_b_idxs])
+                assert np.all(combined_conf[core_idxs] == conf_b[c_to_core_b])
+            return combined_conf
+
+        # Test the base case where the conformers are the input poses
+        for lamb in np.linspace(0.0, 1.0, 4):
+            combine_and_validate(ref_conf_a, ref_conf_b, lamb)
+
+        # Rotate and shift the ligand randomly. Verify molecules are RMSD aligned
+        quaternion = rng.normal(loc=0.0, scale=1.0, size=(1, 4))
+        rotation = Rotation.from_quat(convert_quaternion_for_scipy(quaternion))
+        updated_a = rotation.apply(ref_conf_a) + rng.uniform(4.0, 10.0, size=(3))
+        assert np.all(updated_a != ref_conf_a)
+
+        quaternion = rng.normal(loc=0.0, scale=1.0, size=(1, 4))
+        rotation = Rotation.from_quat(convert_quaternion_for_scipy(quaternion))
+        updated_b = rotation.apply(ref_conf_b) + rng.uniform(4.0, 10.0, size=(3))
+        assert np.all(updated_b != ref_conf_b)
+
+        ref_max_dist = get_max_distance(np.concatenate([updated_a, updated_b]))
+
+        for lamb in np.linspace(0.0, 1.0, 4):
+            combined_conf = combine_and_validate(updated_a, updated_b, lamb=lamb)
+            if lamb < 0.5:
+                if len(b_idxs) > 0:
+                    assert np.all(combined_conf[b_idxs] != updated_b[c_to_b_idxs])
+                assert np.all(combined_conf[core_idxs] != updated_b[c_to_core_b])
+            else:
+                if len(a_idxs) > 0:
+                    assert np.all(combined_conf[a_idxs] != updated_a[c_to_a_idxs])
+                assert np.all(combined_conf[core_idxs] != updated_a[c_to_core_a])
+
+            # The distance within the combined conf should be less than the distances
+            # of the two rotated confs
+            final_dist = get_max_distance(combined_conf)
+            assert final_dist < ref_max_dist
+
+
+@pytest.mark.nogpu
+def test_combine_confs_alignment_modified_torsions():
+    """Test that combine_confs will handles building conformers given the original core even if the torsions have flipped.
+
+    For lambda < 0.5, mol b atoms will be aligned to mol_a
+    and lambda >= 0.5 mol_a atoms will be aligned to mol_b
+    """
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
+        mols = read_sdf(path_to_ligand)
+
+    rng = np.random.default_rng(2026)
+
+    rng.shuffle(mols)
+
+    n_pairs = 3
+    n_confs = 5
+
+    all_pairs = [[mols[i], mols[j]] for i in range(len(mols)) for j in range(i + 1, len(mols))]
+
+    subset = rng.choice(all_pairs, size=n_pairs)
+
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    # Minimization should be handled by the default RBFE minimization protocol
+    minimizer_config = _get_default_state_minimization_configs()
+
+    for mol_a, mol_b in subset:
+        core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+
+        st = SingleTopology(mol_a, mol_b, core, ff)
+
+        rotatable_bonds_a = get_rotatable_bonds(mol_a)
+        torsions_a = [
+            mkproper(*idxs)
+            for idxs in st.src_system.proper.potential.idxs
+            for bond in rotatable_bonds_a
+            if mkproper(*idxs).idxs[1:3] == bond.idxs
+        ]
+        assert len(torsions_a) > 0
+
+        rotatable_bonds_b = get_rotatable_bonds(mol_a)
+        torsions_b = [
+            mkproper(*idxs)
+            for idxs in st.dst_system.proper.potential.idxs
+            for bond in rotatable_bonds_b
+            if mkproper(*idxs).idxs[1:3] == bond.idxs
+        ]
+        assert len(torsions_b) > 0
+
+        confs_a = [get_romol_conf(mol_a)]
+        confs_b = [get_romol_conf(mol_b)]
+
+        AllChem.EmbedMultipleConfs(mol_a, numConfs=n_confs, randomSeed=int(rng.integers(np.iinfo(np.int32).max)))
+        AllChem.EmbedMultipleConfs(mol_b, numConfs=n_confs, randomSeed=int(rng.integers(np.iinfo(np.int32).max)))
+
+        for i in range(n_confs):
+            confs_a.append(get_romol_conf(mol_a, conf_id=i))
+            confs_b.append(get_romol_conf(mol_b, conf_id=i))
+
+        box = np.eye(3) * 100.0
+
+        # Verify that at least one torsion has rotated
+        def verify_torsion_flipped(torsions, confs):
+            flipped = False
+            for torsion in torsions:
+                angles = []
+                for conf in confs:
+                    angles.append(signed_torsion_angle(*conf[torsion.idxs, :], box))
+                sorted_angles = sorted(angles)
+                flipped = np.abs(np.rad2deg(sorted_angles[0] - sorted_angles[-1])) > 180.0
+                if flipped:
+                    break
+            assert flipped
+
+        verify_torsion_flipped(torsions_a, confs_a)
+        verify_torsion_flipped(torsions_b, confs_b)
+
+        free_idxs = np.arange(st.get_num_atoms(), dtype=np.int32)
+
+        for lamb in [0.0, 1.0]:
+            state = st.setup_intermediate_state(lamb)
+
+            val_and_grad_fn = jax.jit(jax.value_and_grad(state.get_U_fn()))
+
+            for conf_a in confs_a:
+                for conf_b in confs_b:
+                    combined_conf = st.combine_confs(conf_a, conf_b, lamb=lamb)
+                    new_conf = minimizer.local_minimize(
+                        combined_conf, box, val_and_grad_fn, free_idxs, minimizer_config, verbose=False
+                    )
+                    assert np.any(combined_conf != new_conf)
+
+
+@pytest.mark.nogpu
 def test_combine_masses():
     C_mass = Chem.MolFromSmiles("C").GetAtomWithIdx(0).GetMass()
     Br_mass = Chem.MolFromSmiles("Br").GetAtomWithIdx(0).GetMass()
@@ -896,15 +1093,15 @@ def test_hif2a_pairs_setup_st(mol_a, mol_b):
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_nitrile():
+def test_chiral_fluoromethyl_to_nitrile():
     # test that we do not turn off chiral atom restraints even if some of
     # the angle terms are planar
     #
-    #     H        H
+    #     F        F
     #    .        /
-    # N#C-H -> F-C-H
+    # N#C-F -> F-C-F
     #    .        \
-    #     H        H
+    #     F        F
 
     mol_a = Chem.MolFromMolBlock(
         """
@@ -913,9 +1110,9 @@ def test_chiral_methyl_to_nitrile():
   5  4  0  0  0  0            999 V2000
     0.4146   -0.0001    0.4976 C   0  0  0  0  0  0  0  0  0  0  0  0
    -1.0830    0.0001    0.8564 F   0  0  0  0  0  0  0  0  0  0  0  0
-    0.5755   -0.0001   -1.0339 H   0  0  0  0  0  0  0  0  0  0  0  0
-    1.0830    1.2574    1.0841 H   0  0  0  0  0  0  0  0  0  0  0  0
-    1.0830   -1.2574    1.0841 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.5755   -0.0001   -1.0339 F   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0830    1.2574    1.0841 F   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0830   -1.2574    1.0841 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   1  4  1  0  0  0  0
   1  5  1  0  0  0  0
@@ -932,7 +1129,7 @@ $$$$""",
   3  2  0  0  0  0            999 V2000
     0.4146   -0.0001    0.4976 C   0  0  0  0  0  0  0  0  0  0  0  0
    -1.0830    0.0001    0.8564 N   0  0  0  0  0  0  0  0  0  0  0  0
-    0.5755   -0.0001   -1.0339 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.5755   -0.0001   -1.0339 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   1  2  3  0  0  0  0
 M  END
@@ -958,14 +1155,14 @@ $$$$""",
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_nitrogen():
+def test_chiral_fluoromethyl_to_nitrogen():
     # test that we maintain all 4 chiral idxs when morphing N#N into CH3
     #
-    #     H        H
+    #     F        F
     #    /        /
-    # N#N-H -> F-C-H
+    # N#N-F -> F-C-F
     #    \        \
-    #     H        H
+    #     F        F
     #
     # (we need at least one restraint to be turned on to enable this)
 
@@ -976,9 +1173,9 @@ def test_chiral_methyl_to_nitrogen():
   5  4  0  0  0  0            999 V2000
     0.1976    0.0344    0.3479 C   0  0  0  0  0  0  0  0  0  0  0  0
    -0.8624    0.0345    0.6018 F   0  0  0  0  0  0  0  0  0  0  0  0
-    0.3115    0.0344   -0.7361 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6707    0.9244    0.7630 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6707   -0.8555    0.7630 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3115    0.0344   -0.7361 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6707    0.9244    0.7630 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6707   -0.8555    0.7630 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   1  4  1  0  0  0  0
   1  5  1  0  0  0  0
@@ -1023,7 +1220,7 @@ $$$$""",
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_water():
+def test_chiral_fluoromethyl_to_water():
     mol_a = Chem.MolFromMolBlock(
         """
   Mrv2311 02222411113D
@@ -1031,9 +1228,9 @@ def test_chiral_methyl_to_water():
   5  4  0  0  0  0            999 V2000
    -1.1951   -0.2262   -0.1811 F   0  0  0  0  0  0  0  0  0  0  0  0
     0.1566   -0.1865    0.0446 C   0  0  0  0  0  0  0  0  0  0  0  0
-    0.4366    0.8050    0.4004 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.6863   -0.4026   -0.8832 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.4215   -0.9304    0.7960 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4366    0.8050    0.4004 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6863   -0.4026   -0.8832 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4215   -0.9304    0.7960 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  2  1  0  0  0  0
   2  3  1  0  0  0  0
   2  4  1  0  0  0  0
@@ -1078,17 +1275,17 @@ $$$$""",
 
 
 @pytest.mark.nogpu
-def test_chiral_methyl_to_ammonia():
+def test_chiral_fluoromethyl_to_ammonia():
     mol_a = Chem.MolFromMolBlock(
         """
   Mrv2311 02232411003D
 
   5  4  0  0  0  0            999 V2000
     0.0402    0.0126    0.1841 C   0  0  0  0  0  0  0  0  0  0  0  0
-    0.2304   -0.7511    0.9383 H   0  0  0  0  0  0  0  0  0  0  0  0
-    0.8502    0.0126   -0.5452 H   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.0173    0.9900    0.6632 H   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.9024   -0.2011   -0.3198 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2304   -0.7511    0.9383 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.8502    0.0126   -0.5452 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0173    0.9900    0.6632 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9024   -0.2011   -0.3198 F   0  0  0  0  0  0  0  0  0  0  0  0
   1  2  1  0  0  0  0
   1  3  1  0  0  0  0
   1  4  1  0  0  0  0
@@ -1138,8 +1335,8 @@ $$$$""",
 @pytest.mark.nogpu
 def test_chiral_core_ring_opening():
     # test that chiral restraints are maintained for dummy atoms when we open/close a ring,
-    # at lambda=0, all 7 chiral restraints are turned on, but at lambda=1
-    # only 4 chiral restraints are turned on.
+    # at lambda=0, 3 chiral restraints are turned on, but at lambda=1
+    # all 4 chiral restraints are turned on.
 
     mol_a = Chem.MolFromMolBlock(
         """
@@ -1150,7 +1347,7 @@ def test_chiral_core_ring_opening():
     0.2664   -0.0682    0.6077 O   0  0  0  0  0  0  0  0  0  0  0  0
     0.8332    1.6232   -0.6421 O   0  0  0  0  0  0  0  0  0  0  0  0
     1.3412    0.1809   -0.4674 O   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.0336    1.9673    1.3258 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0336    1.9673    1.3258 F   0  0  0  0  0  0  0  0  0  0  0  0
    -1.2364    1.3849   -0.0078 H   0  0  0  0  0  0  0  0  0  0  0  0
   1  3  1  0  0  0  0
   3  4  1  0  0  0  0
@@ -1187,28 +1384,32 @@ $$$$""",
         removeHs=False,
     )  # open ring
 
+    writer = Chem.SDWriter("example.sdf")
+    writer.write(mol_a)
+    writer.close()
+
     # map everything except a single hydrogen at the end
     core = np.array([[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5]])
 
-    # chiral force constants should be on for all 7 chiral
+    # chiral force constants should be on for the single chiral
     # terms at lambda=0
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     st = SingleTopology(mol_a, mol_b, core, ff)
     vs_0 = st.setup_intermediate_state(0.0)
     chiral_idxs_0 = vs_0.chiral_atom.potential.idxs
     chiral_params_0 = vs_0.chiral_atom.params
-    assert len(chiral_idxs_0) == 7
-    assert np.sum(chiral_params_0 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 7
+    assert len(chiral_idxs_0) == 1
+    assert np.sum(chiral_params_0 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 1
     vs_1 = st.setup_intermediate_state(1.0)
 
-    # chiral force constants should be on for all 4 of the 7
+    # chiral force constants should be off for all
     # chiral terms at lambda=1
     chiral_idxs_1 = vs_1.chiral_atom.potential.idxs
     chiral_params_1 = vs_1.chiral_atom.params
     assert len(chiral_idxs_0) == len(chiral_idxs_1)
 
-    assert np.sum(chiral_params_1 == 0) == 3
-    assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 4
+    assert np.sum(chiral_params_1 == 0) == 1
+    assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 0
 
 
 def permute_atom_indices(mol_a, mol_b, core, seed):
@@ -1388,3 +1589,118 @@ def test_hif2a_end_state_symmetry_nightly_test(mol_a, mol_b):
     print("testing", mol_a.GetProp("_Name"), "->", mol_b.GetProp("_Name"))
     core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
     assert_symmetric_interpolation(mol_a, mol_b, core)
+
+
+@pytest.mark.nogpu
+def test_pfkfb3_edge_doesnt_contain_ch2_chiral_restraints():
+    """Verify that CH2 atoms are not included as chiral centers"""
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf") as ligand_path:
+        mols_by_name = read_sdf_mols_by_name(ligand_path)
+    mol_a = mols_by_name["65"]
+    mol_b = mols_by_name["59"]
+
+    kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    kwargs["constrain_hydrogens"] = True
+
+    core = atom_mapping.get_cores(mol_a, mol_b, **kwargs)[0]
+
+    core, _ = filter_constraint_incompatible_hydrogens(mol_a, mol_b, core, ff)
+    st = SingleTopology(mol_a, mol_b, core, ff, verify_constraints=True)
+
+    def get_ch2_atoms(mol):
+        query = Chem.MolFromSmarts("[#6R!aH2:1]")
+        ch2_atoms = set()
+        for match in mol.GetSubstructMatches(query):
+            ch2_atoms.add(match[0])
+        return ch2_atoms
+
+    mol_a_ch2 = get_ch2_atoms(mol_a)
+    assert len(mol_a_ch2) == 0
+    mol_b_ch2 = get_ch2_atoms(mol_b)
+    assert len(mol_b_ch2) == 2
+
+    mol_c_ch2 = set(st.b_to_c[idx] for idx in mol_b_ch2)
+
+    system = st.setup_intermediate_state(0.0)
+    assert len(system.chiral_atom.potential.idxs) > 0
+    assert len(set(system.chiral_atom.potential.idxs[:, 0]).intersection(mol_c_ch2)) == 0
+
+
+@pytest.mark.nogpu
+def test_terminal_atom_pairs_in_nonbonded_pairlist_decoupled_until_after_bonds_engaged():
+    """Verify that nonbonded pairlist interactions between terminal atoms (only where both terminal atoms are from the same endstate)
+    are scaled such that they are not fully engaged until after the bonds have been fully engaged for these sets."""
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf") as ligand_path:
+        mols_by_name = read_sdf_mols_by_name(ligand_path)
+    src_mol = mols_by_name["65"]
+    dst_mol = mols_by_name["59"]
+
+    end_bond_a_lamb = DUMMY_A_BOND_MIN_MAX[0]
+    assert DUMMY_A_NONBONDED_PAIRLIST_TERM_W_MIN_MAX[0] < end_bond_a_lamb
+    end_bond_b_lamb = DUMMY_B_BOND_MIN_MAX[1]
+
+    assert end_bond_b_lamb < DUMMY_B_NONBONDED_PAIRLIST_TERM_W_MIN_MAX[1]
+
+    for mol_a, mol_b, in_state_b in [(src_mol, dst_mol, True), (dst_mol, src_mol, False)]:
+        kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+        kwargs["constrain_hydrogens"] = True
+
+        core = atom_mapping.get_cores(mol_a, mol_b, **kwargs)[0]
+
+        core, _ = filter_constraint_incompatible_hydrogens(mol_a, mol_b, core, ff)
+        st = SingleTopology(mol_a, mol_b, core, ff, verify_constraints=True)
+
+        pairlist_aligner = st.aligned_nonbonded_pair_list
+
+        terminal_flags = pairlist_aligner.terminal_flags
+
+        # There should be no terminal atom pairs that are not part of the core
+        mol_a_terminal = set(
+            [
+                st.a_to_c[atom.GetIdx()]
+                for atom in mol_a.GetAtoms()
+                if len(list(atom.GetNeighbors())) == 1 and st.c_flags[st.a_to_c[atom.GetIdx()]] == AtomMapFlags.MOL_A
+            ]
+        )
+        terminal_a_idxs = np.array(
+            [i for i in range(len(pairlist_aligner.idxs)) if set(pairlist_aligner.idxs[i]).issubset(mol_a_terminal)]
+        )
+        if in_state_b:
+            assert len(terminal_a_idxs) == 0
+        else:
+            assert len(terminal_a_idxs) > 0
+            assert np.all(terminal_flags[terminal_a_idxs])
+            pairlist = pairlist_aligner.interpolate(end_bond_a_lamb)
+            # The w coord should be greater than zero
+            assert np.all(pairlist.params[terminal_a_idxs, NBParamIdx.W_IDX] > 0.0)
+
+            interacting_terminal_a_lamb = DUMMY_A_NONBONDED_PAIRLIST_TERM_W_MIN_MAX[0]
+            pairlist = pairlist_aligner.interpolate(interacting_terminal_a_lamb)
+            # The w coord should be exactly zero at the max value
+            assert np.all(pairlist.params[terminal_a_idxs, NBParamIdx.W_IDX] == 0.0)
+
+        mol_b_terminal = set(
+            [
+                st.b_to_c[atom.GetIdx()]
+                for atom in mol_b.GetAtoms()
+                if len(list(atom.GetNeighbors())) == 1 and st.c_flags[st.b_to_c[atom.GetIdx()]] == AtomMapFlags.MOL_B
+            ]
+        )
+        terminal_b_idxs = np.array(
+            [i for i in range(len(pairlist_aligner.idxs)) if set(pairlist_aligner.idxs[i]).issubset(mol_b_terminal)]
+        )
+        if in_state_b:
+            assert len(terminal_b_idxs) > 0
+            assert np.all(terminal_flags[terminal_b_idxs])
+            pairlist = pairlist_aligner.interpolate(end_bond_b_lamb)
+            # The w coord should be greater than zero
+            assert np.all(pairlist.params[terminal_b_idxs, NBParamIdx.W_IDX] > 0.0)
+
+            interacting_terminal_b_lamb = DUMMY_B_NONBONDED_PAIRLIST_TERM_W_MIN_MAX[1]
+            pairlist = pairlist_aligner.interpolate(interacting_terminal_b_lamb)
+            # The w coord should be exactly zero at the max value
+            assert np.all(pairlist.params[terminal_b_idxs, NBParamIdx.W_IDX] == 0.0)
+        else:
+            assert len(terminal_b_idxs) == 0

@@ -23,6 +23,7 @@ from tmd.fe.rbfe import (
 from tmd.fe.rest.plots import plot_rest_region
 from tmd.fe.rest.single_topology import SingleTopologyREST
 from tmd.fe.rest.utils import assign_rest_atoms_from_smarts
+from tmd.fe.single_topology import filter_constraint_incompatible_hydrogens, verify_core_is_compatible_with_constraints
 from tmd.fe.utils import get_mol_experimental_value, get_mol_name, plot_atom_mapping_grid
 from tmd.ff import Forcefield
 from tmd.parallel.client import AbstractFileClient
@@ -223,6 +224,12 @@ def run_rbfe_leg(
     if core is None:
         core = atom_mapping.get_cores(mol_a, mol_b, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
 
+    if md_params.dt > 2.5e-3:
+        core, unmapped = filter_constraint_incompatible_hydrogens(mol_a, mol_b, core, ff)
+        if len(unmapped) > 0:
+            print(f"Pruned {len(unmapped)} atom mapping pairs to run with constraints")
+        verify_core_is_compatible_with_constraints(mol_a, mol_b, core, ff)
+
     # Store top level data
     file_client.store(edge_path / "atom_mapping.svg", plot_atom_mapping_grid(mol_a, mol_b, core).encode("utf-8"))
     with open(file_client.full_path(edge_path / "md_params.pkl"), "wb") as ofs:
@@ -361,9 +368,11 @@ def run_rbfe_leg(
     file_client.store(leg_path / "dg_errors.png", res.plots.dG_errs_png)
     file_client.store(leg_path / "overlap_summary.png", res.plots.overlap_summary_png)
     u_kln_by_lambda = res.final_result.u_kln_by_component_by_lambda.sum(1)
+
+    frames_per_step = min(u_kln_by_lambda.shape[-1] // 10, u_kln_by_lambda.shape[-1])
     file_client.store(
         leg_path / "forward_and_reverse_dg.png",
-        plot_forward_and_reverse_dg(u_kln_by_lambda, frames_per_step=min(100, u_kln_by_lambda.shape[-1])),
+        plot_forward_and_reverse_dg(u_kln_by_lambda, frames_per_step=max(frames_per_step, 1)),
     )
     # Contains initial states and the complete u_kln
     file_client.store(leg_path / "final_pairbar_result.pkl", pickle.dumps(res.final_result))

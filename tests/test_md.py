@@ -28,10 +28,17 @@ from tmd.fe.free_energy import AbsoluteFreeEnergy
 from tmd.fe.model_utils import apply_hmr
 from tmd.fe.rbfe import setup_optimized_host
 from tmd.fe.topology import BaseTopology
-from tmd.fe.utils import get_mol_masses, get_romol_conf, read_sdf
+from tmd.fe.utils import get_mol_masses, get_romol_conf, read_sdf, set_romol_conf
 from tmd.ff import Forcefield
 from tmd.integrator import langevin_coefficients
-from tmd.lib import Context, LangevinIntegrator, MonteCarloBarostat, VelocityVerletIntegrator, custom_ops
+from tmd.lib import (
+    ConstrainedLangevinIntegrator,
+    Context,
+    LangevinIntegrator,
+    MonteCarloBarostat,
+    VelocityVerletIntegrator,
+    custom_ops,
+)
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.builders import build_protein_system, build_water_system
 from tmd.md.enhanced import get_solvent_phase_system
@@ -501,7 +508,9 @@ def test_multiple_steps_local_selection_validation(freeze_reference):
     "num_systems",
     [1, 2, 16, 32, 48],
 )
-@pytest.mark.parametrize("integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator])
+@pytest.mark.parametrize(
+    "integrator_klass", [VelocityVerletIntegrator, LangevinIntegrator, ConstrainedLangevinIntegrator]
+)
 def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass):
     dt = 2.5e-3
 
@@ -536,6 +545,19 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
         friction = 1.0
         intg = LangevinIntegrator(constants.DEFAULT_TEMP, dt, friction, [masses for _ in range(num_systems)], seed)
         intg_impl = intg.impl(precision)
+    elif integrator_klass is ConstrainedLangevinIntegrator:
+        friction = 1.0
+        dt = 4e-3
+        constraints = bt.get_constraint_groups()
+        intg = ConstrainedLangevinIntegrator(
+            temperature=constants.DEFAULT_TEMP,
+            dt=dt,
+            friction=friction,
+            masses=[masses for _ in range(num_systems)],
+            seed=seed,
+            constraints=constraints,
+        )
+        intg_impl = intg.impl(precision)
     else:
         assert False, f"Unknown integrator type {integrator_klass}"
     assert intg_impl is not None
@@ -555,6 +577,7 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
 
         # Sanity check
         assert np.all(np.isfinite(du_dx))
+        check_force_norm(-du_dx)
         assert np.all(np.isfinite(u))
         if num_systems > 1:
             assert du_dx.shape == (num_systems, len(x0), 3)
@@ -575,18 +598,36 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
         [bp.to_gpu(precision).bound_impl for bp in bps],
         precision=precision,
     )
-    steps = 400
+    steps = 1000
     start = time.perf_counter()
     xs, boxes = ctxt.multiple_steps(steps)
     took = time.perf_counter() - start
     ns_per_day = (steps * num_systems) / took
     ns_per_day = ns_per_day * SECONDS_PER_DAY * dt * 1e-3
-    print(f"{num_systems} simulations took {time.perf_counter() - start}s, ns per day {ns_per_day}")
+    print(f"{num_systems} simulations took {time.perf_counter() - start:.3f}s, ns per day {ns_per_day:.2f}")
+    from rdkit import Chem
+
+    if num_systems == 1:
+        writer = Chem.SDWriter("jank.sdf")
+        writer.write(mol)
+        for x in xs:
+            copy = Chem.Mol(mol)
+            set_romol_conf(copy, x)
+            writer.write(copy)
+        writer.close()
+
     assert np.all(np.isfinite(xs))
     assert np.all(np.isfinite(boxes))
+    assert np.all(np.isfinite(ctxt.get_v_t()))
     if num_systems > 1:
         assert xs.shape == (1, num_systems, len(x0), 3)
         assert boxes.shape == (1, num_systems, 3, 3)
+
+        for bp in ctxt.get_potentials():
+            du_dx, u = bp.execute(xs.squeeze(), boxes.squeeze())
+            assert np.all(np.isfinite(u))
+            for du_dx_batch in du_dx:
+                check_force_norm(-du_dx_batch)
         # Each batch should be slightly different
         for i, x_batch in enumerate(xs.reshape(num_systems, len(x0), 3)[1:]):
             if integrator_klass == VelocityVerletIntegrator:
@@ -599,6 +640,10 @@ def test_vacuum_batch_simulation(precision, seed, num_systems, integrator_klass)
     else:
         assert xs.shape == (1, len(x0), 3)
         assert boxes.shape == (1, 3, 3)
+        for bp in ctxt.get_potentials():
+            du_dx, u = bp.execute(xs, boxes)
+            assert np.all(np.isfinite(u))
+            check_force_norm(-du_dx)
 
 
 @pytest.mark.parametrize("precision", [np.float32])
@@ -957,7 +1002,10 @@ def test_multiple_steps_local_consistency(freeze_reference):
     num_steps = 500
     x_interval = 100
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=True)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=True
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
     bps = []
     for p, pot in zip(sys_params, unbound_potentials):
@@ -1046,7 +1094,10 @@ def test_get_movers():
     friction = 0.0
     seed = 2022
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
     bps = []
     for p, pot in zip(sys_params, unbound_potentials):
@@ -1088,7 +1139,10 @@ def test_multiple_steps_local_entire_system(freeze_reference):
     radius = np.inf
     num_steps = 5
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
     bps = []
     for p, pot in zip(sys_params, unbound_potentials):
@@ -1465,7 +1519,10 @@ def test_setup_context_with_references():
     seed = 2022
     pressure = constants.DEFAULT_PRESSURE
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 1.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 1.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     def build_context(barostat_interval):
@@ -1568,9 +1625,10 @@ def test_local_md_nonbonded_all_pairs_subset(freeze_reference):
         ctxt.setup_local_md(temperature, freeze_reference)
 
 
-@pytest.mark.memcheck
+@pytest.mark.parametrize("num_systems", [pytest.param(1, marks=pytest.mark.memcheck), 4])
+@pytest.mark.parametrize("dt", [2.5e-3, 4e-3])
 @pytest.mark.parametrize("freeze_reference", [True, False])
-def test_local_md_setting_params_on_bp_potentials(freeze_reference):
+def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt, num_systems):
     """Test that when constructing a Context with a set of bound potentials that the underlying potentials
     used within Local MD are updated accordingly.
 
@@ -1581,15 +1639,18 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference):
 
     mol, _ = get_biphenyl()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    replace_conformer_with_minimized(mol, ff)
 
     temperature = constants.DEFAULT_TEMP
-    dt = 2.5e-3
     friction = 1.0
     seed = 2025
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(
-        mol, ff, 1.0, margin=0.1, minimize_energy=False
+    rng = np.random.default_rng(seed)
+
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 1.0, box_width=4.0, margin=0.1, minimize_energy=True
     )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     bonded_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
@@ -1603,20 +1664,33 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference):
     bps = []
     for i, (p, pot) in enumerate(zip(sys_params, unbound_potentials)):
         bound_impl = pot.bind(p.astype(np.float32))
+        for _ in range(num_systems - 1):
+            bound_impl = bound_impl.combine(pot.bind(p.astype(np.float32)))
         bps.append(bound_impl)
         if isinstance(pot, Nonbonded):
             assert nb_pot_idx is None and nb_params is None, "Already exists"
             nb_pot_idx = i
-            nb_params = p
+            nb_params = np.array(bound_impl.params)
 
     nb_params = nb_params.astype(np.float32)
     assert nb_pot_idx is not None and nb_params is not None, "No nonbonded potential"
 
-    intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
+    constraints = None
+    if dt > 2.5e-3:
+        bt = BaseTopology(mol, ff)
+        afe = AbsoluteFreeEnergy(mol, bt)
+        constraints = afe.combine_constraints(host_config)
+        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, [masses] * num_systems, seed, constraints)
+    else:
+        intg = LangevinIntegrator(temperature, dt, friction, [masses] * num_systems, seed)
 
     bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
 
-    ctxt = Context(coords, v0, box, intg.impl(), bound_impls)
+    coords_batch = np.array([coords] * num_systems, dtype=np.float32).squeeze()
+    v0_batch = np.array([v0] * num_systems, dtype=np.float32).squeeze()
+    box_batch = np.array([box] * num_systems, dtype=np.float32).squeeze()
+
+    ctxt = Context(coords_batch, v0_batch, box_batch, intg.impl(), bound_impls)
 
     xs, boxes = ctxt.multiple_steps(2000)
 
@@ -1625,9 +1699,12 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference):
     check_force_norm(-du_dx)
 
     # Construct params that are fully interacting, which should be clashy
-    fully_interacting_params = np.array(nb_params)
-    fully_interacting_params[:, constants.NBParamIdx.W_IDX] = 0.0
-    bps[nb_pot_idx].params = fully_interacting_params.astype(np.float32)
+    fully_interacting_params = np.array(nb_params).astype(np.float32)
+    if num_systems == 1:
+        fully_interacting_params[:, constants.NBParamIdx.W_IDX] = 0.0
+    else:
+        fully_interacting_params[:, :, constants.NBParamIdx.W_IDX] = 0.0
+    bps[nb_pot_idx].params = fully_interacting_params
     du_dx, _ = bps[nb_pot_idx].to_gpu(np.float32).bound_impl.execute(xs[-1], boxes[-1], compute_u=False)
     # forces should be unreasonable
     assert np.max(np.linalg.norm(du_dx, axis=-1)) > constants.MAX_FORCE_NORM
@@ -1660,12 +1737,41 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference):
 
     np.testing.assert_array_equal(np.array(fanout_bp.get_flat_params()).reshape(nb_params.shape), nb_params)
 
+    # Get a reference index
+    reference_idx = rng.choice(ligand_idxs)
+
     # If parameters propagated, then the forces of the final frame should be reasonable
-    local_xs, local_boxes = ctxt.multiple_steps_local(1000, ligand_idxs)
+    local_xs, local_boxes = ctxt.multiple_steps_local(100, [reference_idx])
 
     np.testing.assert_array_equal(np.array(fanout_bp.get_flat_params()).reshape(nb_params.shape), nb_params)
+
     du_dx, _ = bps[nb_pot_idx].to_gpu(np.float32).bound_impl.execute(local_xs[-1], local_boxes[-1], compute_u=False)
     check_force_norm(-du_dx)
+
+    flatbottom_bp = get_gpu_bp_by_type(local_md_bps, custom_ops.FlatBottomBond_f32)
+    bond_indices = flatbottom_bp.get_potential().get_idxs()
+    assert bond_indices[0, 0] in set(ligand_idxs)
+    # All indices should be identical, ie the reference atom
+    assert np.all(bond_indices[:, 0] == bond_indices[0, 0])
+    if constraints is not None:
+        system_idxs = flatbottom_bp.get_potential().get_system_idxs()
+        for i in range(num_systems):
+            sys_indices = system_idxs == i
+            free_atom_indices = set(bond_indices[sys_indices, 1])
+            free_grouped_atoms = []
+            frozen_grouped_atoms = []
+            for group in constraints.groups:
+                if group[0] in free_atom_indices and (not freeze_reference or reference_idx not in group):
+                    free_grouped_atoms.extend(group)
+                else:
+                    frozen_grouped_atoms.extend(group)
+
+            if num_systems == 1:
+                assert np.all(xs[-1, free_grouped_atoms] != local_xs[-1, free_grouped_atoms], axis=1).all()
+                np.testing.assert_array_equal(xs[-1, frozen_grouped_atoms], local_xs[-1, frozen_grouped_atoms])
+            else:
+                assert np.all(xs[-1, i, free_grouped_atoms] != local_xs[-1, i, free_grouped_atoms], axis=1).all()
+                np.testing.assert_array_equal(xs[-1, i, frozen_grouped_atoms], local_xs[-1, i, frozen_grouped_atoms])
 
     for i, bp in enumerate(bps):
         unbound_ref = bp.potential.to_gpu(np.float32).unbound_impl
@@ -1676,18 +1782,93 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference):
         matching_pot = matching_bp.get_potential()
         assert isinstance(matching_pot, type(unbound_ref))
 
-        ref_params = bp.params
-        comp_params = np.array(matching_bp.get_flat_params(), dtype=bp.params.dtype).reshape(bp.params.shape)
+        ref_params = np.array(bp.params).astype(np.float32)
+        comp_params = np.array(matching_bp.get_flat_params(), dtype=ref_params.dtype).reshape(ref_params.shape)
         np.testing.assert_array_equal(ref_params, comp_params)
 
         if hasattr(ref_pot, "idxs") and hasattr(unbound_ref, "get_idxs"):
-            np.testing.assert_array_equal(matching_pot.get_idxs(), ref_pot.idxs)
+            np.testing.assert_array_equal(matching_pot.get_idxs().reshape(-1), np.array(ref_pot.idxs).reshape(-1))
 
-        ref_du_dx, ref_du_dp, ref_u = unbound_ref.execute(coords, bp.params, box)
-        comp_du_dx, comp_du_dp, comp_u = matching_pot.execute(coords, comp_params, box)
+        if num_systems == 1:
+            ref_du_dx, ref_du_dp, ref_u = unbound_ref.execute(coords_batch, bp.params, box_batch)
+            comp_du_dx, comp_du_dp, comp_u = matching_pot.execute(coords_batch, comp_params, box_batch)
+        else:
+            ref_du_dx, ref_du_dp, ref_u = unbound_ref.execute_dim(coords_batch, bp.params, box_batch)
+            comp_du_dx, comp_du_dp, comp_u = matching_pot.execute_dim(coords_batch, comp_params, box_batch)
         np.testing.assert_array_equal(ref_du_dx, comp_du_dx, err_msg=f"Pot {type(ref_pot)} changed unexpectedly")
         np.testing.assert_array_equal(ref_du_dp, comp_du_dp, err_msg=f"Pot {type(ref_pot)} changed unexpectedly")
-        assert ref_u == comp_u
+        np.testing.assert_equal(ref_u, comp_u)
+
+
+@pytest.mark.parametrize("num_systems", [1, 4])
+@pytest.mark.parametrize("dt", [4e-3])
+def test_local_md_reference_in_constraint_group(dt, num_systems):
+    """Test verifies that when an atom in a constraint group is frozen, that all of the atoms in the group are frozen."""
+
+    mol, _ = get_biphenyl()
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    replace_conformer_with_minimized(mol, ff)
+
+    temperature = constants.DEFAULT_TEMP
+    friction = 1.0
+    seed = 2026
+
+    rng = np.random.default_rng(seed)
+
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 1.0, box_width=4.0, margin=0.1, minimize_energy=True
+    )
+    box = host_config.box
+    v0 = np.zeros_like(coords)
+
+    bonded_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
+
+    masses = np.array(apply_hmr(masses, get_bond_list(bonded_pot)))
+
+    bps = []
+    for i, (p, pot) in enumerate(zip(sys_params, unbound_potentials)):
+        bound_impl = pot.bind(p.astype(np.float32))
+        for _ in range(num_systems - 1):
+            bound_impl = bound_impl.combine(pot.bind(p.astype(np.float32)))
+        bps.append(bound_impl)
+
+    bt = BaseTopology(mol, ff)
+    afe = AbsoluteFreeEnergy(mol, bt)
+    constraints = afe.combine_constraints(host_config)
+    intg = ConstrainedLangevinIntegrator(temperature, dt, friction, [masses] * num_systems, seed, constraints)
+
+    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
+
+    coords_batch = np.array([coords] * num_systems, dtype=np.float32).squeeze()
+    v0_batch = np.array([v0] * num_systems, dtype=np.float32).squeeze()
+    box_batch = np.array([box] * num_systems, dtype=np.float32).squeeze()
+
+    ctxt = Context(coords_batch, v0_batch, box_batch, intg.impl(), bound_impls)
+
+    xs, boxes = ctxt.multiple_steps(100)
+
+    ligand_constraints = bt.get_constraint_groups()
+
+    num_host_atoms = len(host_config.conf)
+
+    last_frame = ctxt.get_x_t()
+    last_v = ctxt.get_v_t()
+    for group in ligand_constraints.groups:
+        updated_group = [x + num_host_atoms for x in group]
+        reference_atom = rng.choice(updated_group)
+
+        # Free an atom within the group
+        local_xs, local_boxes = ctxt.multiple_steps_local(1000, [reference_atom])
+
+        for i in range(num_systems):
+            if num_systems == 1:
+                np.testing.assert_array_equal(last_frame[updated_group], local_xs[-1, updated_group])
+                np.testing.assert_array_equal(last_v[updated_group], ctxt.get_v_t()[updated_group])
+            else:
+                np.testing.assert_array_equal(last_frame[i, updated_group], local_xs[-1, i, updated_group])
+                np.testing.assert_array_equal(last_v[i, updated_group], ctxt.get_v_t()[i, updated_group])
+            last_frame = ctxt.get_x_t()
+            last_v = ctxt.get_v_t()
 
 
 @pytest.mark.memcheck
@@ -1704,7 +1885,10 @@ def test_context_invalid_boxes(precision):
     steps = 1
     rng = np.random.default_rng(seed)
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     host_idxs = np.arange(len(coords) - mol.GetNumAtoms(), dtype=np.int32)
@@ -1754,7 +1938,10 @@ def test_context_invalid_boxes_without_nonbonded_potentials():
     seed = 2022
     steps = 1
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     bps = []
@@ -1786,7 +1973,10 @@ def test_unstable_simulation_failure():
     seed = 2024
     steps = 10
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     rng = np.random.default_rng(seed)
@@ -1811,6 +2001,48 @@ def test_unstable_simulation_failure():
 
 
 @pytest.mark.memcheck
+def test_non_finite_coordinates_simulation_failure():
+    mol, _ = get_biphenyl()
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    temperature = constants.DEFAULT_TEMP
+    dt = 2.5e-3
+    friction = 1.0
+    seed = 2026
+    steps = 10
+
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
+    v0 = np.zeros_like(coords)
+
+    bonded_pot = get_potential_by_type(unbound_potentials, HarmonicBond)
+    bond_list = get_bond_list(bonded_pot)
+    masses = apply_hmr(masses, bond_list)
+
+    bps = []
+    for p, pot in zip(sys_params, unbound_potentials):
+        bound_impl = pot.bind(p).to_gpu(np.float32).bound_impl
+        bps.append(bound_impl)
+
+    intg = LangevinIntegrator(temperature, dt, friction, masses, seed)
+
+    rng = np.random.default_rng(seed)
+
+    ctxt = Context(coords, v0, box, intg.impl(), bps)
+    # Run a few steps
+    ctxt.multiple_steps(steps)
+
+    random_inf_indice = rng.choice(np.arange(len(coords)))
+    partial_inf_coords = coords.copy()
+    partial_inf_coords[random_inf_indice] *= np.inf
+    ctxt.set_x_t(partial_inf_coords)
+    with pytest.raises(RuntimeError, match="simulation unstable: Coordinates contain non-finite numbers"):
+        ctxt.multiple_steps(steps)
+
+
+@pytest.mark.memcheck
 @pytest.mark.parametrize("k", [1.0, 1000.0, 10000.0])
 @pytest.mark.parametrize("radius", [1.2, 2.0])
 @pytest.mark.parametrize("freeze_reference", [True, False])
@@ -1827,7 +2059,10 @@ def test_local_md_potential_truncation(k, radius, freeze_reference):
 
     rng = np.random.default_rng(seed)
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     bps = []
@@ -1928,7 +2163,10 @@ def test_local_md_potential_truncation_more_scales_than_params(k, radius, freeze
 
     rng = np.random.default_rng(seed)
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(mol, ff, 0.0, minimize_energy=False)
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
+        mol, ff, 0.0, minimize_energy=False
+    )
+    box = host_config.box
     v0 = np.zeros_like(coords)
 
     bps = []

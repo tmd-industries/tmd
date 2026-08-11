@@ -81,7 +81,7 @@ def test_fit_solvent_absolute_hydration_ccc_params(forcefield):
     seed = 2026
     n_frames = 500
     n_eq_steps = 10000
-    n_windows = 6
+    n_windows = 8
     steps_per_frame = 400
 
     mols = fetch_freesolv()

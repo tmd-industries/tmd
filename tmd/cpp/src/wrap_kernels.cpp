@@ -28,6 +28,8 @@
 #include "centroid_restraint.hpp"
 #include "chiral_atom_restraint.hpp"
 #include "chiral_bond_restraint.hpp"
+#include "constrained_langevin_integrator.hpp"
+#include "constraint_groups.hpp"
 #include "context.hpp"
 #include "exceptions.hpp"
 #include "exchange.hpp"
@@ -668,6 +670,7 @@ void declare_context(py::module &m, const char *typestr) {
                 Box dimensions are invalid when a frame is collected
 
         Note: All boxes returned will be identical as local MD only runs under constant volume.
+        Note: If running with constraints, constraint groups will be either entirely free or entirely frozen depending on the heavy atom being free
     )pbdoc")
       .def(
           "multiple_steps_local_selection",
@@ -780,6 +783,7 @@ void declare_context(py::module &m, const char *typestr) {
                 Box dimensions are invalid when a frame is collected
 
         Note: All boxes returned will be identical as local MD only runs under constant volume.
+        Note: If running with constraints, constraint groups will be either entirely free or entirely frozen depending on the heavy atom being free
     )pbdoc")
       .def("setup_local_md", &Context<RealType>::setup_local_md,
            py::arg("temperature"), py::arg("freeze_reference"),
@@ -1044,6 +1048,207 @@ void declare_langevin_integrator(py::module &m, const char *typestr) {
            }),
            py::arg("masses"), py::arg("temperature"), py::arg("dt"),
            py::arg("friction"), py::arg("seed"));
+}
+
+template <typename RealType>
+void declare_constrained_langevin_integrator(py::module &m,
+                                             const char *typestr) {
+
+  using Class = ConstrainedLangevinIntegrator<RealType>;
+  std::string pyclass_name =
+      std::string("ConstrainedLangevinIntegrator_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>, LangevinIntegrator<RealType>>(
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def(
+          py::init([](const py::array_t<RealType, py::array::c_style> &masses,
+                      const RealType temperature, const RealType dt,
+                      const RealType friction, const int seed,
+                      std::shared_ptr<ConstraintGroups<RealType>> constraints) {
+            int num_systems = 1;
+            int N = masses.size();
+            if (masses.ndim() == 2) {
+              num_systems = masses.shape(0);
+              N = masses.shape(1);
+            } else if (masses.ndim() != 1) {
+              throw std::runtime_error(
+                  "masses must be either 1 or 2d dimensional, got " +
+                  std::to_string(masses.ndim()) + " dimensions");
+            }
+            return new Class(num_systems, N, masses.data(), temperature, dt,
+                             friction, seed, constraints);
+          }),
+          py::arg("masses"), py::arg("temperature"), py::arg("dt"),
+          py::arg("friction"), py::arg("seed"), py::arg("constraints"));
+}
+
+template <typename RealType>
+void declare_constraint_groups(py::module &m, const char *typestr) {
+
+  using Class = ConstraintGroups<RealType>;
+  std::string pyclass_name = std::string("ConstraintGroups_") + typestr;
+  py::class_<Class, std::shared_ptr<Class>>(
+      m, pyclass_name.c_str(), py::buffer_protocol(), py::dynamic_attr())
+      .def(py::init([](const py::array_t<RealType, py::array::c_style> &masses,
+                       const std::vector<std::vector<int>> groups,
+                       const std::vector<std::vector<RealType>> distances,
+                       const int iterations, const RealType tolerance) {
+             int num_systems = 1;
+             int N = masses.size();
+             if (masses.ndim() == 2) {
+               num_systems = masses.shape(0);
+               N = masses.shape(1);
+             } else if (masses.ndim() != 1) {
+               throw std::runtime_error(
+                   "masses must be either 1 or 2d dimensional, got " +
+                   std::to_string(masses.ndim()) + " dimensions");
+             }
+             return new Class(num_systems, N, masses.data(), groups, distances,
+                              iterations, tolerance);
+           }),
+           py::arg("masses"), py::arg("groups"), py::arg("distances"),
+           py::arg("iterations"), py::arg("tolerance"))
+      .def("num_systems", &Class::num_systems)
+      .def("num_atoms", &Class::num_atoms)
+      .def("n_groups", &Class::n_groups)
+      .def("max_group_size", &Class::max_group_size)
+      .def("iterations", &Class::iterations)
+      .def("tolerance", &Class::tolerance)
+      .def(
+          "constrain_positions",
+          [](Class &constraints,
+             const py::array_t<RealType, py::array::c_style> &coords,
+             std::optional<const py::array_t<unsigned int, py::array::c_style>>
+                 idxs) {
+            if (coords.ndim() != 3 && coords.ndim() != 2) {
+              throw std::runtime_error("coords must have 2 or 3 dimensions");
+            }
+
+            int num_atoms;
+            int num_systems;
+            if (coords.ndim() == 2) {
+              num_atoms = coords.shape()[0];
+              num_systems = 1;
+            } else {
+              num_systems = coords.shape()[0];
+              num_atoms = coords.shape()[1];
+            }
+
+            if (num_atoms != constraints.num_atoms()) {
+              throw std::runtime_error("coords N does not match constraints N");
+            }
+
+            unsigned int *h_idxs = nullptr;
+            if (idxs.has_value()) {
+              auto idxs_arr = idxs.value();
+              if (idxs_arr.ndim() != 2 || idxs_arr.shape()[0] != num_systems ||
+                  idxs_arr.shape()[1] != num_atoms) {
+                throw std::runtime_error(
+                    "idxs must have shape (num_systems, N)");
+              }
+              h_idxs = const_cast<unsigned int *>(idxs_arr.data());
+            }
+
+            RealType *h_result = constraints.constrain_positions_host(
+                num_systems, num_atoms, coords.data(), h_idxs);
+
+            std::vector<py::ssize_t> coords_shape(
+                coords.shape(), coords.shape() + coords.ndim());
+            py::array_t<RealType, py::array::c_style> out_coords(coords_shape);
+            for (int i = 0; i < coords.size(); i++) {
+              out_coords.mutable_data()[i] = h_result[i];
+            }
+
+            return out_coords;
+          },
+          py::arg("coords"), py::arg("idxs") = py::none(),
+          R"pbdoc(
+           Apply SHAKE constraints to positions.
+
+           Parameters
+           ----------
+           coords : NDArray
+               (N, 3) or (num_systems, N, 3) array of coordinates
+           idxs : NDArray, optional
+               (num_systems, N) array of frozen atom indices
+
+           Returns
+           -------
+           NDArray
+               Constrained coordinates with same shape as input
+           )pbdoc")
+      .def(
+          "constrain_velocities",
+          [](Class &constraints,
+             const py::array_t<RealType, py::array::c_style> &coords,
+             const py::array_t<RealType, py::array::c_style> &velocities,
+             std::optional<const py::array_t<unsigned int, py::array::c_style>>
+                 idxs) {
+            if (coords.ndim() != 3 && coords.ndim() != 2) {
+              throw std::runtime_error("coords must have 2 or 3 dimensions");
+            }
+            if (velocities.ndim() != 3 && velocities.ndim() != 2) {
+              throw std::runtime_error(
+                  "velocities must have 2 or 3 dimensions");
+            }
+
+            int N;
+            int num_systems;
+            if (coords.ndim() == 2) {
+              N = coords.shape()[0];
+              num_systems = 1;
+            } else {
+              num_systems = coords.shape()[0];
+              N = coords.shape()[1];
+            }
+
+            if (N != constraints.num_atoms()) {
+              throw std::runtime_error(
+                  "number of atoms must match constraints N");
+            }
+
+            unsigned int *h_idxs = nullptr;
+            if (idxs.has_value()) {
+              auto idxs_arr = idxs.value();
+              if (idxs_arr.ndim() != 2 || idxs_arr.shape()[0] != num_systems ||
+                  idxs_arr.shape()[1] != N) {
+                throw std::runtime_error(
+                    "idxs must have shape (num_systems, N)");
+              }
+              h_idxs = const_cast<unsigned int *>(idxs_arr.data());
+            }
+
+            RealType *h_result = constraints.constrain_velocities_host(
+                num_systems, N, coords.data(), velocities.data(), h_idxs);
+
+            std::vector<py::ssize_t> vel_shape(
+                velocities.shape(), velocities.shape() + velocities.ndim());
+            py::array_t<RealType, py::array::c_style> out_velocities(vel_shape);
+            for (int i = 0; i < velocities.size(); i++) {
+              out_velocities.mutable_data()[i] = h_result[i];
+            }
+
+            cudaFreeHost(h_result);
+            return out_velocities;
+          },
+          py::arg("coords"), py::arg("velocities"),
+          py::arg("idxs") = py::none(),
+          R"pbdoc(
+           Apply RATTLE constraints to velocities.
+
+           Parameters
+           ----------
+           coords : NDArray
+               (N, 3) or (num_systems, N, 3) array of coordinates
+           velocities : NDArray
+               (N, 3) or (num_systems, N, 3) array of velocities
+           idxs : NDArray, optional
+               (num_systems, N) array of frozen atom indices
+
+           Returns
+           -------
+           NDArray
+               Constrained velocities with same shape as input
+           )pbdoc");
 }
 
 template <typename RealType>
@@ -1470,6 +1675,12 @@ void declare_potential(py::module &m, const char *typestr) {
                   "Boxes must have same number of batches as coords");
             }
 
+            if (batches != pot.num_systems()) {
+              throw std::runtime_error(
+                  "Potential::execute_dim provided with different number of "
+                  "systems than expected");
+            }
+
             const long unsigned int N = coords.shape(1);
             const long unsigned int D = coords.shape(2);
 
@@ -1618,11 +1829,14 @@ void declare_bound_potential(py::module &m, const char *typestr) {
              bool compute_du_dx, bool compute_u) -> py::tuple {
             long unsigned int N;
             long unsigned int D;
+            int input_systems;
             if (coords.ndim() == 2) {
+              input_systems = 1;
               N = coords.shape()[0];
               D = coords.shape()[1];
               verify_coords_and_box(coords, box);
             } else if (coords.ndim() == 3) {
+              input_systems = coords.shape(0);
               N = coords.shape(1);
               D = coords.shape(2);
             } else {
@@ -1632,6 +1846,11 @@ void declare_bound_potential(py::module &m, const char *typestr) {
                   "BoundPotential::execute failed for unknown reason");
             }
             const int num_systems = bp.potential->num_systems();
+            if (input_systems != num_systems) {
+              throw std::runtime_error(
+                  "BoundPotential::execute provided with different number of "
+                  "systems than expected");
+            }
             // initialize with fixed garbage values for debugging convenience
             // (these should be overwritten by `execute_host`)
             std::vector<unsigned long long> du_dx;
@@ -2465,7 +2684,21 @@ void declare_flat_bottom_bond(py::module &m, const char *typestr) {
                  num_systems, num_atoms, combined_bond_vec, bond_system_idxs);
            }),
            py::arg("num_atoms"), py::arg("bond_idxs"))
-      .def("get_num_bonds", &Class::num_bonds);
+      .def("get_num_bonds", &Class::num_bonds)
+      .def("get_idxs",
+           [](Class &pot) -> py::array_t<int, py::array::c_style> {
+             std::vector<int> output_idxs = pot.get_idxs_host();
+             py::array_t<int, py::array::c_style> out_idx_buffer(
+                 {pot.get_num_idxs(), pot.IDXS_DIM}, output_idxs.data());
+             return out_idx_buffer;
+           })
+      .def("get_system_idxs",
+           [](Class &pot) -> py::array_t<int, py::array::c_style> {
+             std::vector<int> output_idxs = pot.get_system_idxs_host();
+             py::array_t<int, py::array::c_style> out_idx_buffer(
+                 {pot.get_num_idxs()}, output_idxs.data());
+             return out_idx_buffer;
+           });
 }
 
 template <typename RealType>
@@ -3793,10 +4026,15 @@ PYBIND11_MODULE(custom_ops, m) {
   declare_anisotropic_barostat<double>(m, "f64");
   declare_anisotropic_barostat<float>(m, "f32");
 
+  declare_constraint_groups<double>(m, "f64");
+  declare_constraint_groups<float>(m, "f32");
+
   declare_integrator<double>(m, "f64");
   declare_integrator<float>(m, "f32");
   declare_langevin_integrator<double>(m, "f64");
   declare_langevin_integrator<float>(m, "f32");
+  declare_constrained_langevin_integrator<double>(m, "f64");
+  declare_constrained_langevin_integrator<float>(m, "f32");
   declare_velocity_verlet_integrator<double>(m, "f64");
   declare_velocity_verlet_integrator<float>(m, "f32");
 

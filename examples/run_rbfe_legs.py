@@ -36,7 +36,7 @@ from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_FF
 from tmd.fe import atom_mapping
 from tmd.fe.free_energy import HREXParams, LocalMDParams, MDParams, RESTParams, WaterSamplingParams
 from tmd.fe.rbfe import DEFAULT_NUM_WINDOWS
-from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name
+from tmd.fe.utils import get_mol_name, read_sdf_mols_by_name, verify_mol
 from tmd.ff import Forcefield
 from tmd.md.builders import compute_solvent_box_size, verify_pdb_structure
 from tmd.md.exchange.utils import get_radius_of_mol_pair
@@ -53,6 +53,12 @@ def main():
     parser.add_argument("--n_eq_steps", default=200_000, type=int, help="Number of steps to perform equilibration")
     parser.add_argument("--n_frames", default=2000, type=int, help="Number of frames to simulate")
     parser.add_argument("--steps_per_frame", default=400, type=int, help="Steps per frame")
+    parser.add_argument(
+        "--hrex_iterations_per_frame",
+        default=1,
+        type=int,
+        help="Number of HREX iterations to run before collecting a frame. This will run steps_per_frame per each iteration, so it is suggested to reduce n_frames if increasing this value",
+    )
     parser.add_argument(
         "--n_windows", default=DEFAULT_NUM_WINDOWS, type=int, help="Max number of windows from bisection"
     )
@@ -132,16 +138,23 @@ def main():
         action="store_true",
         help="Add a POPC membrane to the protein. Refer to OpenMM for preparing proteins for adding Membranes",
     )
+    parser.add_argument("--dt_fs", default=2.5, type=float, help="Timestep in femptoseconds")
     args = parser.parse_args()
 
     if COMPLEX_LEG in args.legs:
         assert args.pdb_path is not None, "Must provide PDB to run complex leg"
+
+    assert args.dt_fs > 0.0
+    dt = args.dt_fs * 1e-3
 
     mols_by_name = read_sdf_mols_by_name(args.sdf_path)
     np.random.seed(args.seed)
 
     mol_a = mols_by_name[args.mol_a]
     mol_b = mols_by_name[args.mol_b]
+
+    verify_mol(mol_a)
+    verify_mol(mol_b)
 
     water_box_size = 4.0
     if SOLVENT_LEG in args.legs:
@@ -169,11 +182,13 @@ def main():
         n_frames=args.n_frames,
         steps_per_frame=args.steps_per_frame,
         seed=args.seed,
+        dt=dt,
         hrex_params=HREXParams(
             optimize_target_overlap=args.target_overlap,
             rest_params=RESTParams(
                 args.rest_max_temperature_scale, args.rest_temperature_scale_interpolation, args.rest_smarts_patterns
             ),
+            iterations_per_frame=args.hrex_iterations_per_frame,
         ),
         local_md_params=LocalMDParams(
             args.local_md_steps,

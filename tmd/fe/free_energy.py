@@ -26,7 +26,7 @@ from numpy.typing import NDArray
 from rdkit import Chem
 
 from tmd._vendored.pymbar.utils import kln_to_kn
-from tmd.constants import BOLTZ, NBParamIdx
+from tmd.constants import BOLTZ, DEFAULT_PRESSURE, DEFAULT_TEMP, NBParamIdx
 from tmd.fe import model_utils, topology
 from tmd.fe.bar import (
     bar_with_pessimistic_uncertainty,
@@ -38,6 +38,7 @@ from tmd.fe.bar import (
 )
 from tmd.fe.interpolate import linear_interpolation, pad
 from tmd.fe.lambda_schedule import construct_pre_optimized_relative_lambda_schedule, interpolate_pre_optimized_protocol
+from tmd.fe.model_utils import apply_hmr
 from tmd.fe.plots import (
     plot_as_png_fxn,
     plot_dG_errs_figure,
@@ -48,13 +49,15 @@ from tmd.fe.rest.single_topology import InterpolationFxnName
 from tmd.fe.stored_arrays import StoredArrays
 from tmd.fe.utils import get_mol_masses, get_romol_conf
 from tmd.ff import Forcefield, ForcefieldParams
-from tmd.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops
+from tmd.lib import ConstrainedLangevinIntegrator, ConstraintGroups, LangevinIntegrator, MonteCarloBarostat, custom_ops
 from tmd.lib.custom_ops import BoundPotential_f32, Context_f32, SummedPotential_f32
 from tmd.md.barostat.utils import compute_box_center, get_bond_list, get_group_indices
 from tmd.md.builders import HostConfig
+from tmd.md.constraints.utils import prune_constrained_valence_terms
 from tmd.md.exchange.exchange_mover import WaterSamplingDiagnostics, get_water_idxs
 from tmd.md.hrex import HREX, HREXDiagnostics, ReplicaIdx, StateIdx, get_swap_attempts_per_iter_heuristic
 from tmd.md.states import CoordsVelBox
+from tmd.md.thermostat.utils import sample_velocities
 from tmd.potentials import (
     BoundPotential,
     HarmonicBond,
@@ -118,17 +121,23 @@ class HREXParams:
 
     rest_params: RESTParams or None
        Parameters that control REST. Only compatible with SingleTopologyREST, will be ignored otherwise.
+
+    iterations_per_frame: int
+        The number of HREX iterations to run between frames collected. Each iteration will run MDParams.steps_per_frame
+        number of steps, so this number will linearly increase the number of steps
     """
 
     n_frames_bisection: int = 100
     max_delta_states: Optional[int] = 4
     optimize_target_overlap: Optional[float] = None
     rest_params: Optional[RESTParams] = None
+    iterations_per_frame: int = 1
 
     def __post_init__(self):
         assert self.n_frames_bisection > 0
         assert self.max_delta_states is None or self.max_delta_states > 0
         assert self.optimize_target_overlap is None or 0.0 < self.optimize_target_overlap < 1.0
+        assert self.iterations_per_frame >= 1
 
 
 @dataclass(frozen=True)
@@ -192,6 +201,7 @@ class MDParams:
     hrex_params: HREXParams | None = None
     # Setting water_sampling_params to None disables water sampling.
     water_sampling_params: WaterSamplingParams | None = None
+    dt: float = 2.5e-3
 
     def __post_init__(self):
         assert self.steps_per_frame > 0
@@ -210,7 +220,7 @@ class InitialState:
     """
 
     potentials: list[BoundPotential]
-    integrator: LangevinIntegrator
+    integrator: LangevinIntegrator | ConstrainedLangevinIntegrator
     barostat: Optional[MonteCarloBarostat]
     x0: NDArray
     v0: NDArray
@@ -390,6 +400,7 @@ class HREXSimulationResult(SimulationResult):
     hrex_diagnostics: HREXDiagnostics
     hrex_plots: HREXPlots
     water_sampling_diagnostics: WaterSamplingDiagnostics | None = None
+    iterations_per_frame: int = 1
 
     def extract_trajectories_by_replica(self, atom_idxs: NDArray) -> NDArray:
         """Returns an array of shape (n_replicas, n_frames, len(atom_idxs), 3) of trajectories for each replica
@@ -417,7 +428,9 @@ class HREXSimulationResult(SimulationResult):
         state_idx_by_iter_by_replica = np.argsort(replica_idx_by_iter_by_state, axis=0)
 
         # (replicas, frames, atoms, 3)
-        trajs_by_replica = np.take_along_axis(trajs_by_state, state_idx_by_iter_by_replica[:, :, None, None], axis=0)
+        trajs_by_replica = np.take_along_axis(
+            trajs_by_state, state_idx_by_iter_by_replica[:, :: self.iterations_per_frame, None, None], axis=0
+        )
 
         return trajs_by_replica
 
@@ -461,7 +474,10 @@ def compute_total_ns(res: SimulationResult | HREXSimulationResult, md_params: MD
     else:
         total_steps += md_params.n_eq_steps * n_windows
 
-    total_steps += md_params.steps_per_frame * md_params.n_frames * n_windows
+    steps_per_production_frame = md_params.steps_per_frame
+    if md_params.hrex_params is not None:
+        steps_per_production_frame *= md_params.hrex_params.iterations_per_frame
+    total_steps += steps_per_production_frame * md_params.n_frames * n_windows
 
     dt = res.final_result.initial_states[0].integrator.dt
     dt_in_fs = 1000 * dt
@@ -649,6 +665,20 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
         combined_masses = self._combine(ligand_masses, np.array(host_config.masses))
         return combined_potentials, tuple(combined_params), combined_masses
 
+    def combine_constraints(self, host_config: HostConfig) -> ConstraintGroups:
+        if host_config.constraints is None:
+            raise RuntimeError("HostConfig has no constraints")
+        vacuum_constraints = self.top.get_constraint_groups()
+        num_host_atoms = len(host_config.conf)
+        ligand_constraints = ConstraintGroups(
+            [[idx + num_host_atoms for idx in group] for group in vacuum_constraints.groups],
+            vacuum_constraints.distances,
+            vacuum_constraints.water_group_indices,
+            vacuum_constraints.tolerance,
+            vacuum_constraints.max_iter,
+        )
+        return host_config.constraints.concatenate(ligand_constraints).sort()
+
     def prepare_vacuum_edge(self, ff: Forcefield) -> tuple[tuple[Potential, ...], tuple, NDArray]:
         """
         Prepares the vacuum system
@@ -735,31 +765,34 @@ def get_summed_potential_from_bps(bps: Sequence[BoundPotential_f32]) -> SummedPo
 
 
 def get_batched_context(initial_states: Sequence[InitialState], md_params: Optional[MDParams] = None) -> Context_f32:
+    assert len(initial_states) > 1
+
     for s in initial_states[1:]:
         assert_ensembles_compatible(initial_states[0], s)
 
-    assert len(initial_states) > 1
-    bps = [bp for bp in initial_states[0].potentials]
-    for state in initial_states[1:]:
-        for i, pot in enumerate(state.potentials):
-            combined_pot = bps[i].combine(pot)
-            bps[i] = combined_pot
-
-    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
-
-    assert isinstance(initial_states[0].integrator, LangevinIntegrator)
-    intg = LangevinIntegrator(
-        initial_states[0].integrator.temperature,
-        initial_states[0].integrator.dt,
-        initial_states[0].integrator.friction,
-        np.array([initial_states[0].integrator.masses for _ in range(len(initial_states))]),
-        initial_states[0].integrator.seed,
-    )
+    intg = initial_states[0].integrator
+    assert isinstance(intg, (LangevinIntegrator, ConstrainedLangevinIntegrator))
+    if isinstance(intg, LangevinIntegrator):
+        intg = LangevinIntegrator(
+            intg.temperature,
+            intg.dt,
+            intg.friction,
+            np.array([intg.masses for _ in range(len(initial_states))]),
+            intg.seed,
+        )
+    elif isinstance(intg, ConstrainedLangevinIntegrator):
+        intg = ConstrainedLangevinIntegrator(
+            intg.temperature,
+            intg.dt,
+            intg.friction,
+            np.array([intg.masses for _ in range(len(initial_states))]),
+            intg.seed,
+            intg.constraints,
+        )
+    else:
+        raise TypeError(f"Unknown integrator type: {type(intg)}")
     intg_impl = intg.impl(np.float32)
     movers = []
-    if initial_states[0].barostat is not None:
-        # Requires that the barostat is consistent across states
-        movers.append(initial_states[0].barostat.impl(bound_impls))
 
     if md_params is not None and md_params.water_sampling_params is not None:
         hb_potential = get_bound_potential_by_type(initial_states[0].potentials, HarmonicBond).potential
@@ -792,6 +825,20 @@ def get_batched_context(initial_states: Sequence[InitialState], md_params: Optio
         )
         movers.append(water_sampler)
 
+    bps = [bp for bp in initial_states[0].potentials]
+    for state in initial_states[1:]:
+        for i, pot in enumerate(state.potentials):
+            combined_pot = bps[i].combine(pot)
+            bps[i] = combined_pot
+
+    if isinstance(initial_states[0].integrator, ConstrainedLangevinIntegrator):
+        bps = prune_constrained_valence_terms(bps, initial_states[0].integrator.constraints)
+
+    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in bps]
+    if initial_states[0].barostat is not None:
+        # Requires that the barostat is consistent across states
+        movers.append(initial_states[0].barostat.impl(bound_impls))
+
     return Context_f32(
         np.stack([state.x0 for state in initial_states]),
         np.stack([state.v0 for state in initial_states]),
@@ -807,20 +854,18 @@ def get_context(initial_state: InitialState, md_params: Optional[MDParams] = Non
     Construct a Context from the potentials defined by the initial state
     """
 
-    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in initial_state.potentials]
+    potentials = initial_state.potentials
     intg_impl = initial_state.integrator.impl()
     movers = []
-    if initial_state.barostat:
-        movers.append(initial_state.barostat.impl(bound_impls))
     if md_params is not None and md_params.water_sampling_params is not None:
         # Setup the water indices
-        hb_potential = get_bound_potential_by_type(initial_state.potentials, HarmonicBond).potential
+        hb_potential = get_bound_potential_by_type(potentials, HarmonicBond).potential
         group_indices = get_group_indices(get_bond_list(hb_potential), len(initial_state.integrator.masses))
 
         water_idxs = get_water_idxs(group_indices, ligand_idxs=initial_state.ligand_idxs)
 
         # Select a Nonbonded Potential to get the the cutoff, assumes all have same cutoff.
-        nb = get_bound_potential_by_type(initial_state.potentials, Nonbonded).potential
+        nb = get_bound_potential_by_type(potentials, Nonbonded).potential
 
         water_params = get_water_sampler_params(initial_state)
 
@@ -842,6 +887,13 @@ def get_context(initial_state: InitialState, md_params: Optional[MDParams] = Non
             batch_size=md_params.water_sampling_params.batch_size,
         )
         movers.append(water_sampler)
+
+    if isinstance(initial_state.integrator, ConstrainedLangevinIntegrator):
+        potentials = prune_constrained_valence_terms(potentials, initial_state.integrator.constraints)
+    bound_impls = [bp.to_gpu(np.float32).bound_impl for bp in potentials]
+
+    if initial_state.barostat:
+        movers.append(initial_state.barostat.impl(bound_impls))
 
     return Context_f32(initial_state.x0, initial_state.v0, initial_state.box0, intg_impl, bound_impls, movers=movers)
 
@@ -947,7 +999,7 @@ def sample_with_context_iter(
         if barostat is not None:
             barostat.set_interval(original_interval)
 
-    assert np.all(np.isfinite(ctxt.get_x_t())), "Equilibration resulted in a nan"
+        assert np.all(np.isfinite(ctxt.get_x_t())), "Equilibration resulted in a nan"
 
     for n_frames in batches(md_params.n_frames, batch_size):
         yield steps_func(n_frames * md_params.steps_per_frame, True)
@@ -1252,6 +1304,8 @@ def _run_sequential_bisection(
     assert len(bound_potentials) == len(get_initial_state(lambdas[0]).potentials)
     unbound_impls = [bp.get_potential() for bp in bound_potentials]
 
+    applies_constraints = isinstance(get_initial_state(lambdas[0]).integrator, ConstrainedLangevinIntegrator)
+
     @cache
     def get_samples(lamb: float) -> Trajectory:
         initial_state = get_initial_state(lamb)
@@ -1259,6 +1313,11 @@ def _run_sequential_bisection(
         context.set_v_t(initial_state.v0)
         context.set_box(initial_state.box0)
         for bp, state_bp in zip(bound_potentials, initial_state.potentials):
+            if applies_constraints:
+                state_bp = prune_constrained_valence_terms(
+                    [state_bp],
+                    initial_state.integrator.constraints,  # type: ignore
+                )[0]
             bp.set_params(state_bp.params)  # type: ignore
         for mover in context.get_movers():
             mover.set_step(0)
@@ -1408,7 +1467,9 @@ def _run_batched_bisection(
     assert np.all(np.diff(initial_lambdas) > 0), "initial lambda schedule must be monotonically increasing"
     if len(initial_lambdas) > batch_size:
         raise RuntimeError("Batched Bisection doesn't support more initial lambdas than batch size")
+
     get_initial_state = cache(make_initial_state)
+
     rng = np.random.default_rng(md_params.seed)
 
     if len(initial_lambdas) == 2:
@@ -1439,18 +1500,20 @@ def _run_batched_bisection(
     bound_potentials = context.get_potentials()
     assert len(bound_potentials) == len(get_initial_state(lambdas[0]).potentials)
 
-    temp_ctxt = get_context(get_initial_state(initial_lambdas[0]))
+    temp_ctxt = get_context(get_initial_state(lambdas[0]))
     nrg_pots = [bp.get_potential() for bp in temp_ctxt.get_potentials()]
     del temp_ctxt
 
     barostat = context.get_barostat()
 
-    first_state = get_initial_state(initial_lambdas[0])
+    first_state = get_initial_state(lambdas[0])
     initial_volume_scale_factor = 0.0
     ligand_idxs = first_state.ligand_idxs
     if barostat is not None:
         assert first_state.barostat is not None
         initial_volume_scale_factor = first_state.barostat.initial_volume_scale_factor or 0.0
+
+    applies_constraints = isinstance(first_state.integrator, ConstrainedLangevinIntegrator)
 
     trajs_by_lamb = {}
 
@@ -1461,7 +1524,14 @@ def _run_batched_bisection(
             context.set_v_t(np.stack([state.v0 for state in states]))
             context.set_box(np.stack([state.box0 for state in states]))
             for i, bp in enumerate(bound_potentials):
-                bp.set_params(np.stack([state.potentials[i].params for state in states]))
+                if not applies_constraints:
+                    bp.set_params(np.stack([state.potentials[i].params for state in states]))
+                else:
+                    pots = prune_constrained_valence_terms(
+                        [state.potentials[i] for state in states],
+                        first_state.integrator.constraints,  # type: ignore
+                    )
+                    bp.set_params(np.stack([pot.params for pot in pots]))
             for mover in context.get_movers():
                 mover.set_step(0)
                 if isinstance(mover, WATER_SAMPLER_MOVERS):
@@ -1902,6 +1972,10 @@ def assert_ensembles_compatible(state_a: InitialState, state_b: InitialState):
 
     assert (intg_a.masses == intg_b.masses).all()
     assert intg_a.temperature == intg_b.temperature
+    assert intg_a.dt == intg_b.dt
+    assert type(intg_a) is type(intg_b)
+    if isinstance(intg_a, ConstrainedLangevinIntegrator):
+        assert intg_a.constraints == intg_b.constraints  # type: ignore
 
     # assert same pressure (or same volume)
     assert (state_a.barostat is None) == (state_b.barostat is None), "should both be NVT or both be NPT"
@@ -2003,14 +2077,22 @@ def generate_pair_bar_ulkns(
     num_samples = len(samples_by_state[0].boxes)
     assert all([len(traj.boxes) == num_samples for traj in samples_by_state])
     if unbound_impls is None:
-        unbound_impls = [pot.potential.to_gpu(np.float32).unbound_impl for pot in initial_states[0].potentials]
+        pots = initial_states[0].potentials
+        if isinstance(initial_states[0].integrator, ConstrainedLangevinIntegrator):
+            pots = prune_constrained_valence_terms(pots, initial_states[0].integrator.constraints)
+        unbound_impls = [pot.potential.to_gpu(np.float32).unbound_impl for pot in pots]
     assert len(unbound_impls) == len(initial_states[0].potentials)
     kBT = temperature * BOLTZ
     # Construct an empty array
     energies_by_frames_by_params = np.zeros(
         (len(initial_states), len(initial_states), len(unbound_impls)), dtype=object
     )
-    params_by_state = [[bp.params for bp in initial_state.potentials] for initial_state in initial_states]
+    params_by_state = []
+    for initial_state in initial_states:
+        pots = initial_state.potentials
+        if isinstance(initial_state.integrator, ConstrainedLangevinIntegrator):
+            pots = prune_constrained_valence_terms(pots, initial_state.integrator.constraints)
+        params_by_state.append([bp.params for bp in pots])
     executor = custom_ops.PotentialExecutor_f32()
     for i, state in enumerate(initial_states):
         frames = np.array(samples_by_state[i].frames)
@@ -2308,7 +2390,10 @@ def run_sims_hrex(
     ligand_idxs = initial_states[0].ligand_idxs
 
     def get_state_params(initial_state: InitialState) -> list[NDArray]:
-        return [bp.params for bp in initial_state.potentials]
+        potentials = initial_state.potentials
+        if isinstance(initial_state.integrator, ConstrainedLangevinIntegrator):
+            potentials = prune_constrained_valence_terms(potentials, initial_state.integrator.constraints)
+        return [bp.params for bp in potentials]
 
     params_by_state = [get_state_params(initial_state) for initial_state in initial_states]
 
@@ -2353,42 +2438,44 @@ def run_sims_hrex(
 
     hrex_func = run_sequential_hrex_step if not batch_simulations else run_batched_hrex_step
 
+    iters_per_frame = md_params.hrex_params.iterations_per_frame
     for current_frame in range(md_params.n_frames):
-        hrex, samples_by_state_iter, U_kl_raw, water_sampler_proposals_by_state = hrex_func(
-            hrex,
-            nrg_pots,
-            params_by_state_by_pot,
-            water_params_by_state,
-            context,
-            md_params,
-            ligand_idxs,
-            temperature,
-            current_frame,
-        )
+        for i in range(iters_per_frame):
+            hrex, samples_by_state_iter, U_kl_raw, water_sampler_proposals_by_state = hrex_func(
+                hrex,
+                nrg_pots,
+                params_by_state_by_pot,
+                water_params_by_state,
+                context,
+                md_params,
+                ligand_idxs,
+                temperature,
+                current_frame * iters_per_frame + i,
+            )
 
-        water_sampler_proposals_by_state_by_iter.append(water_sampler_proposals_by_state)
+            water_sampler_proposals_by_state_by_iter.append(water_sampler_proposals_by_state)
 
-        # Sum the per-potential components for performing swaps
-        U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
+            # Sum the per-potential components for performing swaps
+            U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 
-        # Re-order energies by state
+            log_q_kl = -U_kl / kBT
+
+            replica_idx_by_state_by_iter.append(hrex.replica_idx_by_state)
+
+            hrex, fraction_accepted_by_pair = hrex.attempt_neighbor_swaps_fast(
+                neighbor_pairs, log_q_kl, n_swap_attempts_per_iter, md_params.seed + current_frame * iters_per_frame + i
+            )
+
+            if len(initial_states) == 2:
+                fraction_accepted_by_pair = fraction_accepted_by_pair[1:]  # remove stats for identity move
+
+            fraction_accepted_by_pair_by_iter.append(fraction_accepted_by_pair)
+
+        # Re-order energies by state, must use the replica_idx_by_state_iter replica_idx_by_state and not hrex.replica_idx_by_state
+        # else the energies will be wrong if iterations_per_frame > 1
         iterated_u_kln[:, :, :, current_frame] = (
-            sanitize_energies_for_bar(np.array(U_kl_raw[:, hrex.replica_idx_by_state])) / kBT
+            sanitize_energies_for_bar(np.array(U_kl_raw[:, replica_idx_by_state_by_iter[-1]])) / kBT
         )
-        log_q_kl = -U_kl / kBT
-
-        replica_idx_by_state_by_iter.append(hrex.replica_idx_by_state)
-
-        hrex, fraction_accepted_by_pair = hrex.attempt_neighbor_swaps_fast(
-            neighbor_pairs,
-            log_q_kl,
-            n_swap_attempts_per_iter,
-            md_params.seed + current_frame + 1,  # NOTE: "+ 1" is for bitwise compatibility with previous version
-        )
-
-        if len(initial_states) == 2:
-            fraction_accepted_by_pair = fraction_accepted_by_pair[1:]  # remove stats for identity move
-
         for samples, (xs, boxes, velos, final_barostat_volume_scale_factor) in zip(
             samples_by_state, samples_by_state_iter
         ):
@@ -2396,8 +2483,6 @@ def run_sims_hrex(
             samples.boxes.extend([boxes])
             samples.final_velocities = velos
             samples.final_barostat_volume_scale_factor = final_barostat_volume_scale_factor
-
-        fraction_accepted_by_pair_by_iter.append(fraction_accepted_by_pair)
 
         if print_diagnostics_interval and (current_frame + 1) % print_diagnostics_interval == 0:
             current_time = time.perf_counter()
@@ -2452,3 +2537,35 @@ def run_sims_hrex(
         ws_diagnostics = WaterSamplingDiagnostics(np.array(water_sampler_proposals_by_state_by_iter, dtype=np.int32))
 
     return PairBarResult(list(initial_states), pair_bar_results), samples_by_state, hrex_diagnostics, ws_diagnostics
+
+
+# TBD: Move this elsewhere, this file is way too large
+def initial_state_from_host_config(
+    host_config: HostConfig,
+    dt: float,
+    temperature: float = DEFAULT_TEMP,
+    seed: int = 2026,
+    barostat_interval: int = 25,
+) -> InitialState:
+    system = host_config.host_system
+    hmr_masses = apply_hmr(host_config.masses, system.bond.potential.idxs)
+
+    group_idxs = get_group_indices(get_bond_list(system.bond.potential), len(hmr_masses))
+    baro = None
+    if barostat_interval > 0:
+        baro = MonteCarloBarostat(len(hmr_masses), DEFAULT_PRESSURE, temperature, group_idxs, barostat_interval, seed)
+
+    x0 = host_config.conf
+    # initialize integrator
+    friction = 1.0
+    intg: ConstrainedLangevinIntegrator | LangevinIntegrator
+    if dt > 2.5e-3:
+        assert host_config.constraints
+        intg = ConstrainedLangevinIntegrator(temperature, dt, friction, hmr_masses, seed, host_config.constraints)
+    else:
+        intg = LangevinIntegrator(temperature, dt, friction, hmr_masses, seed)
+    protein_idxs = np.arange(0, len(hmr_masses) - host_config.num_water_atoms, dtype=np.int32)
+    ligand_idxs = np.array([], dtype=np.int32)
+
+    v0 = sample_velocities(hmr_masses, temperature, seed)
+    return InitialState(system.get_U_fns(), intg, baro, x0, v0, host_config.box, 0.0, ligand_idxs, protein_idxs)

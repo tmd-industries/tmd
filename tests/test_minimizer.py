@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,6 +18,7 @@ from time import time
 
 import numpy as np
 import pytest
+from common import ligand_from_smiles
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -30,7 +32,7 @@ from tmd.fe.utils import get_romol_conf, read_sdf, read_sdf_mols_by_name
 from tmd.ff import Forcefield
 from tmd.md import builders, minimizer
 from tmd.md.barostat.utils import compute_box_volume
-from tmd.md.minimizer import equilibrate_host_barker, make_host_du_dx_fxn
+from tmd.md.minimizer import combine_mols_and_host, equilibrate_host_barker, make_du_dx_fxn
 from tmd.potentials import NonbondedPairList
 from tmd.potentials.jax_utils import distance_on_pairs, idxs_within_cutoff
 from tmd.utils import path_to_internal_file
@@ -186,7 +188,8 @@ def test_pre_equilibrate_host_pfkfb3(host_name, mol_pair):
         ),
     ],
 )
-def test_pre_equilibrate_host_all_ligands(host_name, data_dir, pdb_name, sdf_name):
+@pytest.mark.parametrize("equilibrate_mols", [False, True])
+def test_pre_equilibrate_host_all_ligands(host_name, data_dir, pdb_name, sdf_name, equilibrate_mols):
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     with path_to_internal_file(data_dir, sdf_name) as ligand_path:
         mols = read_sdf(ligand_path)
@@ -196,7 +199,7 @@ def test_pre_equilibrate_host_all_ligands(host_name, data_dir, pdb_name, sdf_nam
     else:
         with path_to_internal_file(data_dir, pdb_name) as host_path:
             host_config = builders.build_protein_system(str(host_path), ff.protein_ff, ff.water_ff, mols=mols)
-    x_host, x_box = minimizer.pre_equilibrate_host(mols, host_config, ff)
+    x_host, x_box = minimizer.pre_equilibrate_host(mols, host_config, ff, equilibrate_mols=equilibrate_mols)
     assert np.all(x_box == host_config.box, axis=1).sum() == 0
     assert np.all(x_host == host_config.conf, axis=1).sum() == 0
 
@@ -205,8 +208,7 @@ def test_fire_minimize_host_adamantane():
     """With cagey molecules, can trap water molecules inside of them. Verify that molecule can be minimized
     in water without issue"""
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
-    mol = Chem.AddHs(Chem.MolFromSmiles("C1C3CC2CC(CC1C2)C3"))
-    AllChem.EmbedMolecule(mol, randomSeed=2024)
+    mol = ligand_from_smiles("C1C3CC2CC(CC1C2)C3")
     # If don't delete the relevant water this minimization fails
     host_config = builders.build_water_system(4.0, ff.water_ff, mols=[mol])
     x_host = minimizer.fire_minimize_host([mol], host_config, ff)
@@ -235,10 +237,12 @@ def test_equilibrate_host_barker():
 
     setups = {"A and B simultaneously": [mol_a, mol_b], "A alone": [mol_a], "B alone": [mol_b]}
 
+    host_idxs = np.arange(len(host_config.conf), dtype=np.int32)
     for key in setups:
         print(f"minimizing host given {key}...")
         mols = setups[key]
-        host_du_dx_fxn = make_host_du_dx_fxn(mols, host_config, ff)
+        hgt, combined_coords, _ = combine_mols_and_host(mols, host_config, ff)
+        host_du_dx_fxn = make_du_dx_fxn(hgt, host_config, mols, x0=combined_coords, free_idxs=host_idxs)
 
         print(f"using unadjusted Barker proposal @ temperature = {room_temperature} K...")
         t0 = time()

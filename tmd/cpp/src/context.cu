@@ -18,6 +18,7 @@
 #include "constants.hpp"
 #include "context.hpp"
 
+#include "constrained_langevin_integrator.hpp"
 #include "fixed_point.hpp"
 #include "flat_bottom_bond.hpp"
 #include "gpu_utils.cuh"
@@ -112,9 +113,16 @@ void Context<RealType>::_verify_coords_and_box(const RealType *coords_buffer,
             max(box_buffer[9 * i + 1 * 3 + 1], box_buffer[9 * i + 2 * 3 + 2]));
     const auto [min_coord, max_coord] = std::minmax_element(
         coords_buffer + i * N_ * 3, coords_buffer + (i + 1) * N_ * 3);
+    const RealType max_coord_delta = *max_coord - *min_coord;
+    // Check that the delta is not NaN/Inf, else the coords are tainted in some
+    // way
+    if (std::isnan(max_coord_delta) || std::isinf(max_coord_delta)) {
+      throw std::runtime_error("simulation unstable: Coordinates contain "
+                               "non-finite numbers (NaN or +/-Inf). Batch " +
+                               std::to_string(i));
+    }
     // Look at the largest difference in all dimensions, since coordinates are
     // not imaged into the home box per se, rather into the nearest periodic box
-    const RealType max_coord_delta = *max_coord - *min_coord;
     if (max_box_dim * 100.0 < max_coord_delta) {
       throw std::runtime_error(
           "simulation unstable: dimensions of coordinates two orders of "
@@ -129,9 +137,26 @@ template <typename RealType> RealType Context<RealType>::_get_temperature() {
           std::dynamic_pointer_cast<LangevinIntegrator<RealType>>(intg_);
       langevin != nullptr) {
     return langevin->get_temperature();
+  } else if (std::shared_ptr<ConstrainedLangevinIntegrator<RealType>> langevin =
+                 std::dynamic_pointer_cast<
+                     ConstrainedLangevinIntegrator<RealType>>(intg_);
+             langevin != nullptr) {
+    return langevin->get_temperature();
   } else {
     throw std::runtime_error("integrator must be LangevinIntegrator.");
   }
+}
+
+template <typename RealType>
+std::shared_ptr<ConstraintGroups<RealType>>
+Context<RealType>::_get_constraints_group() const {
+  if (std::shared_ptr<ConstrainedLangevinIntegrator<RealType>> langevin =
+          std::dynamic_pointer_cast<ConstrainedLangevinIntegrator<RealType>>(
+              intg_);
+      langevin != nullptr) {
+    return langevin->get_constraints();
+  }
+  return std::shared_ptr<ConstraintGroups<RealType>>(nullptr);
 }
 
 template <typename RealType>
@@ -154,8 +179,8 @@ void Context<RealType>::setup_local_md(RealType temperature,
     return;
   }
   this->local_md_pots_.reset(new LocalMDPotentials<RealType>(
-      num_systems_, N_, bps_, nonbonded_pots_, freeze_reference, temperature,
-      nblist_padding));
+      num_systems_, N_, bps_, nonbonded_pots_, this->_get_constraints_group(),
+      freeze_reference, temperature, nblist_padding));
 }
 
 template <typename RealType>

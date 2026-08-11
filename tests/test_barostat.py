@@ -1,4 +1,5 @@
 # Copyright 2019-2025, Relay Therapeutics
+# Modifications Copyright 2026, Forrest York
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -54,7 +55,7 @@ def test_barostat_validation(klass):
     mol_a, _, _ = get_hif2a_ligand_pair_single_topology()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(
+    unbound_potentials, sys_params, masses, coords, _ = get_solvent_phase_system(
         mol_a, ff, lamb=0.0, minimize_energy=False
     )
 
@@ -216,9 +217,10 @@ def test_barostat_partial_group_idxs():
     pressure = DEFAULT_PRESSURE  # bar
     mol_a, _, _ = get_hif2a_ligand_pair_single_topology()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
-    unbound_potentials, sys_params, masses, coords, complex_box = get_solvent_phase_system(
+    unbound_potentials, sys_params, masses, coords, complex_host_config = get_solvent_phase_system(
         mol_a, ff, lam, minimize_energy=False
     )
+    complex_box = complex_host_config.box
 
     # get list of molecules for barostat by looking at bond table
     harmonic_bond_potential = get_potential_by_type(unbound_potentials, HarmonicBond)
@@ -295,9 +297,10 @@ def test_barostat_is_deterministic(box_width, iterations, num_systems, klass):
     mol_a, _, _ = get_hif2a_ligand_pair_single_topology()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
         mol_a, ff, box_width=box_width, lamb=1.0, minimize_energy=False, margin=0.1
     )
+    box = host_config.box
 
     batch_coords = np.array([coords] * num_systems).astype(np.float32)
     batch_boxes = np.array([box] * num_systems).astype(np.float32)
@@ -441,7 +444,10 @@ def test_barostat_recentering_upon_acceptance(klass):
 
     mol_a, _, _ = get_hif2a_ligand_pair_single_topology()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
-    unbound_potentials, sys_params, masses, coords, complex_box = get_solvent_phase_system(mol_a, ff, lam, margin=0.0)
+    unbound_potentials, sys_params, masses, coords, complex_host_config = get_solvent_phase_system(
+        mol_a, ff, lam, margin=0.0
+    )
+    complex_box = complex_host_config.box
 
     # get list of molecules for barostat by looking at bond table
     harmonic_bond_potential = get_potential_by_type(unbound_potentials, HarmonicBond)
@@ -526,9 +532,10 @@ def test_molecular_ideal_gas(klass):
     # effectively discard ligands by running in AbsoluteFreeEnergy mode at lambda = 1.0
     mol_a, _, _ = get_hif2a_ligand_pair_single_topology()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
-    _unbound_potentials, _sys_params, masses, coords, complex_box = get_solvent_phase_system(
+    _unbound_potentials, _sys_params, masses, coords, complex_host_config = get_solvent_phase_system(
         mol_a, ff, lamb=1.0, margin=0.0
     )
+    complex_box = complex_host_config.box
 
     unbound_potentials = list(_unbound_potentials)
     sys_params = list(_sys_params)
@@ -672,9 +679,10 @@ def test_barostat_scaling_behavior(klass):
     mol_a, _, _ = get_hif2a_ligand_pair_single_topology()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
         mol_a, ff, lamb=0.0, minimize_energy=False
     )
+    box = host_config.box
 
     # get list of molecules for barostat by looking at bond table
     harmonic_bond_potential = get_potential_by_type(unbound_potentials, HarmonicBond)
@@ -773,9 +781,10 @@ def test_anisotropic_barostat(scale_x, scale_y, scale_z):
     mol_a, _, _ = get_hif2a_ligand_pair_single_topology()
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
 
-    unbound_potentials, sys_params, masses, coords, box = get_solvent_phase_system(
+    unbound_potentials, sys_params, masses, coords, host_config = get_solvent_phase_system(
         mol_a, ff, lamb=0.0, minimize_energy=False
     )
+    box = host_config.box
 
     # get list of molecules for barostat by looking at bond table
     harmonic_bond_potential = get_potential_by_type(unbound_potentials, HarmonicBond)

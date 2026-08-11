@@ -25,9 +25,10 @@ void __global__ k_construct_bonded_params_and_system_idxs(
         *__restrict__ d_num_idxs_per_system,  // Number of idxs in each system
     const int *__restrict__ d_reference_idxs, // Atom index to create bonds to
     const RealType k, const RealType r_min, const RealType r_max,
-    const unsigned int *__restrict__ idxs, // [K]
-    int *__restrict__ bonds,               // [K * 2]
-    RealType *__restrict__ params,         // [K * 3]
+    const unsigned int *__restrict__ idxs,    // [K]
+    const char *__restrict__ freed_hydrogens, // [num_systems, atoms_per_system]
+    int *__restrict__ bonds,                  // [K * 2]
+    RealType *__restrict__ params,            // [K * 3]
     int *__restrict__ system_idxs) {
 
   const int system_idx = blockIdx.y;
@@ -53,13 +54,21 @@ void __global__ k_construct_bonded_params_and_system_idxs(
   }
   // The free is partitioned at the front of this array, the frozen is at the
   // tail.
-  const unsigned int atom_idx =
+  unsigned int atom_idx =
       FROZEN_BONDS ? idxs[atoms_per_system * system_idx + idx + num_free_bonds]
                    : idxs[atoms_per_system * system_idx + idx];
   if (atom_idx >= atoms_per_system) {
     return;
   }
   idx += system_offset;
+
+  // If an atom is one of the freed hydrogens, then create a dummy bond from the
+  // reference to itself
+  atom_idx = (freed_hydrogens != nullptr &&
+              freed_hydrogens[system_idx * atoms_per_system + atom_idx] > 0)
+                 ? d_reference_idxs[system_idx]
+                 : atom_idx;
+
   system_idxs[idx] = system_idx;
   bonds[idx * 2 + 0] = d_reference_idxs[system_idx];
   bonds[idx * 2 + 1] = atom_idx;
@@ -73,6 +82,49 @@ template <typename T>
 void __global__ k_update_index(T *__restrict__ d_array, std::size_t idx,
                                T val) {
   d_array[idx] = val;
+}
+
+void __global__ k_adjust_constraint_groups(
+    const size_t num_systems, const size_t N, const int num_groups,
+    const bool freeze_ref, const int *__restrict__ d_reference_idxs,
+    const int *__restrict__ group_offsets,
+    const int *__restrict__ group_indices, char *__restrict__ flags,
+    char *__restrict__ free_hydrogens) {
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+
+  const int system_idxs_offset = system_idx * N;
+
+  const int ref_idx = freeze_ref ? d_reference_idxs[system_idx] : -1;
+
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (idx < num_groups) {
+    const int group_start = group_offsets[idx];
+    const int group_end = group_offsets[idx + 1];
+    const int num_atoms = group_end - group_start;
+    // The heavy atom determines if the whole group is free or frozen.
+    char new_flag =
+        flags[system_idxs_offset + group_indices[group_start]] > 0 ? 1 : 0;
+    // If the reference atom is frozen and any of the atoms are the reference
+    // freeze the entire group
+    if (freeze_ref) {
+      for (int i = 0; i < num_atoms; i++) {
+        const int atom_idx = group_indices[group_start + i];
+        new_flag = atom_idx == ref_idx ? 0 : new_flag;
+      }
+    }
+    for (int i = 0; i < num_atoms; i++) {
+      const int atom_idx = group_indices[group_start + i];
+      flags[system_idxs_offset + atom_idx] = new_flag;
+      if (i > 0) {
+        free_hydrogens[system_idxs_offset + atom_idx] = new_flag;
+      }
+    }
+
+    idx += gridDim.x * blockDim.x;
+  }
 }
 
 template <bool FREEZE_REF>
