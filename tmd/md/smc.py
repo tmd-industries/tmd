@@ -405,7 +405,7 @@ def refine_samples(samples: Samples, log_weights: LogWeights, propagate: BatchPr
 
     # weighted samples -> equally weighted samples
     # TODO: replace multinomial resampling with something less wasteful, like stratified or systematic resampling
-    resample = multinomial_resample  # but not: identity_resample or conditional_multinomial_resample
+    resample = stratified_resample  # but not: identity_resample or conditional_multinomial_resample
     resampled_inds, log_weights = resample(log_weights)
     assert np.isclose(np.std(log_weights), 0), "Need equally weighted samples"
 

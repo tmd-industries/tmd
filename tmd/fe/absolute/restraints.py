@@ -219,6 +219,7 @@ def _filter_receptor_atoms(
     skip_residues_end: int = 10,
     minimum_distance_nm=1.0,
     maximum_distance_nm=3.0,
+    rmsf: npt.NDArray | None = None,
 ) -> list[int]:
     """Select possible protein atoms for Boresch-style restraints.
 
@@ -285,12 +286,14 @@ def _filter_receptor_atoms(
         raise ValueError("no suitable receptor atoms could be found")
 
     if backbone.n_frames > 1:
-        superposed = copy.deepcopy(backbone)
-        superposed.superpose(superposed)
-
-        rmsf = mdtraj.rmsf(superposed, superposed, 0)  # nm
-
-        rigid_backbone_idxs = rigid_backbone_idxs[rmsf[rigid_backbone_idxs] < _RMSF_CUTOFF]
+        if rmsf is None: # backcompat
+            superposed = copy.deepcopy(backbone)
+            superposed.superpose(superposed)
+            rmsf_bb = mdtraj.rmsf(superposed, superposed, 0)  # nm
+            rigid_backbone_idxs = rigid_backbone_idxs[rmsf_bb[rigid_backbone_idxs] < _RMSF_CUTOFF]
+        else:
+            full_atom_idxs = backbone_idxs[rigid_backbone_idxs]
+            rigid_backbone_idxs = rigid_backbone_idxs[rmsf[full_atom_idxs] < _RMSF_CUTOFF]
 
     distances = scipy.spatial.distance.cdist(backbone.xyz[0, rigid_backbone_idxs, :], trj.xyz[-1, [ligand_ref_idx], :])
 
@@ -400,6 +403,7 @@ def rdmol_to_mdtraj(mol: Mol) -> mdtraj.Trajectory:
 def select_receptor_atoms_baumann(
     trj: mdtraj.Trajectory,
     ligand_ref_idxs: list[int],
+    rmsf: npt.NDArray | None = None,
 ) -> list[int]:
     """Select possible protein atoms for Boresch-style restraints.
 
@@ -419,7 +423,7 @@ def select_receptor_atoms_baumann(
     Raises:
         ValueError: if no suitable receptor atoms could be found
     """
-    receptor_idxs = _filter_receptor_atoms(trj, ligand_ref_idxs[0])
+    receptor_idxs = _filter_receptor_atoms(trj, ligand_ref_idxs[0], rmsf=rmsf)
 
     l1, l2, l3 = ligand_ref_idxs
 
