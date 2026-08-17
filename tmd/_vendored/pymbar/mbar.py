@@ -37,6 +37,7 @@ J. Chem. Phys. 129:124105, 2008.  http://dx.doi.org/10.1063/1.2978177
 
 """
 
+from copy import deepcopy
 from textwrap import dedent
 import logging
 import numpy as np
@@ -387,8 +388,8 @@ class MBAR:
                             "{pname} is not 'robust','default' or a tuple/list dictionaries, setting to 'default'"
                         )
                         prot = defl
-            # Avoid updating any of the global parameter sets
-            prot = tuple([options.copy() for options in prot])
+            # Avoid updating any of the global solver protocols
+            prot = tuple([deepcopy(options) for options in prot])
 
             for solver in prot:
                 if "options" not in solver:
