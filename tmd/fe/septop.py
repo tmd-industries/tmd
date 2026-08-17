@@ -213,7 +213,7 @@ def select_septop_anchors(
 
     # Receptor selection: use ligand A's atom indices in the joint frame; the
     # chosen receptor atoms apply to both ligands since they share the pocket.
-    rec_ids = select_receptor_atoms_baumann(full, [i + n_host for i in lig_ids_a_local])
+    rec_ids = select_receptor_atoms_baumann(full, [i + n_host for i in lig_ids_a_local], rmsf=rmsf)
 
     return SepTopAnchors(
         rec_atoms=list(rec_ids),
