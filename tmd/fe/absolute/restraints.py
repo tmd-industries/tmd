@@ -456,7 +456,6 @@ def select_receptor_atoms_baumann(
         r3_distances_prod = r3_distances_avg[:, 0] * r3_distances_avg[:, 1]
         found_r3 = valid_r3_idxs[r3_distances_prod.argmax()]
 
-        print(f"[rec-ids] {[found_r1, found_r2, found_r3]}")
         return [found_r1, found_r2, found_r3]
 
     raise ValueError("could not find a valid R3 atom within max distance")
