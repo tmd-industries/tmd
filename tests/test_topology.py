@@ -92,6 +92,20 @@ def test_base_topology_get_constraint_groups():
 
 
 @pytest.mark.nocuda
+def test_constraint_group_distances_are_independent_of_conformer():
+    mol = ligand_from_smiles("O")
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    expected = BaseTopology(mol, ff).get_constraint_groups().distances
+
+    coords = get_romol_conf(mol)
+    coords[1] += 0.1
+    set_romol_conf(mol, coords)
+
+    actual = BaseTopology(mol, ff).get_constraint_groups().distances
+    assert actual == expected
+
+
+@pytest.mark.nocuda
 @pytest.mark.parametrize("n_mols", [2, 5])
 def test_multi_topology_get_constraint_groups(n_mols):
     with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:

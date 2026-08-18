@@ -48,7 +48,7 @@ from tmd.ff import Forcefield
 from tmd.graph_utils import convert_to_nx
 from tmd.lib import ConstraintGroups
 from tmd.md.builders import HostConfig
-from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups
+from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups, parameterize_harmonic_bonds
 from tmd.potentials import (
     BoundPotential,
     ChiralAtomRestraint,
@@ -1342,8 +1342,7 @@ def _hydrogen_bond_lengths(mol: Chem.Mol, ff: Forcefield) -> dict[int, float]:
     A hydrogen has exactly one bond, so its constrained distance is unambiguous.
     The returned dict maps each hydrogen's atom index to its bond length (nm).
     """
-    assert ff.hb_handle is not None
-    params, idxs = ff.hb_handle.partial_parameterize(ff.hb_handle.params, mol)
+    params, idxs = parameterize_harmonic_bonds(mol, ff)
     params = np.asarray(params)
     lengths: dict[int, float] = {}
     for (i, j), p in zip(idxs, params):
@@ -1613,14 +1612,11 @@ class SingleTopology(AtomMapMixin):
         # HMR value for dummy atoms
         if use_hmr:
             # Can't use src_system, dst_system as these have dummy atoms attached
-            mol_a_top = topology.BaseTopology(self.mol_a, self.ff)
-            mol_b_top = topology.BaseTopology(self.mol_b, self.ff)
-            assert self.ff.hb_handle is not None
-            _, mol_a_hb = mol_a_top.parameterize_harmonic_bond(self.ff.hb_handle.params)
-            _, mol_b_hb = mol_b_top.parameterize_harmonic_bond(self.ff.hb_handle.params)
+            _, mol_a_bond_idxs = parameterize_harmonic_bonds(self.mol_a, self.ff)
+            _, mol_b_bond_idxs = parameterize_harmonic_bonds(self.mol_b, self.ff)
 
-            mol_a_masses = model_utils.apply_hmr(mol_a_masses, mol_a_hb.idxs)
-            mol_b_masses = model_utils.apply_hmr(mol_b_masses, mol_b_hb.idxs)
+            mol_a_masses = model_utils.apply_hmr(mol_a_masses, mol_a_bond_idxs)
+            mol_b_masses = model_utils.apply_hmr(mol_b_masses, mol_b_bond_idxs)
 
         mol_c_masses = []
         for c_idx in range(self.get_num_atoms()):
@@ -1644,7 +1640,7 @@ class SingleTopology(AtomMapMixin):
         """Return the hydrogen-bond constraint groups for the combined topology."""
         verify_core_is_compatible_with_constraints(self.mol_a, self.mol_b, self.core, self.ff)
 
-        result_a = get_hydrogen_bond_constraint_groups(self.mol_a)
+        result_a = get_hydrogen_bond_constraint_groups(self.mol_a, self.ff)
         groups_a = result_a.groups
         dists_a = result_a.distances
         groups_c_anchor_to_groups = {
@@ -1652,7 +1648,7 @@ class SingleTopology(AtomMapMixin):
         }
         groups_c_anchor_to_dists = {self.a_to_c[group[0]]: dists for group, dists in zip(groups_a, dists_a)}
 
-        result_b = get_hydrogen_bond_constraint_groups(self.mol_b)
+        result_b = get_hydrogen_bond_constraint_groups(self.mol_b, self.ff)
         groups_b = result_b.groups
         dists_b = result_b.distances
         groups_b_anchor_to_hydrogens = {
