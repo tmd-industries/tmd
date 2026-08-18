@@ -286,9 +286,8 @@ def _filter_receptor_atoms(
     if len(rigid_backbone_idxs) == 0:
         raise ValueError("no suitable receptor atoms could be found")
 
-    if backbone.n_frames > 1:
-        full_atom_idxs = backbone_idxs[rigid_backbone_idxs]
-        rigid_backbone_idxs = rigid_backbone_idxs[rmsf[full_atom_idxs] < _RMSF_CUTOFF]
+    trj_backbone_idxs = backbone_idxs[rigid_backbone_idxs]
+    rigid_backbone_idxs = rigid_backbone_idxs[rmsf[trj_backbone_idxs] < _RMSF_CUTOFF]
 
     distances = scipy.spatial.distance.cdist(backbone.xyz[0, rigid_backbone_idxs, :], trj.xyz[-1, [ligand_ref_idx], :])
 
