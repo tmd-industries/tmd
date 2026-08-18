@@ -47,7 +47,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-import copy
 import itertools
 import tempfile
 from collections.abc import Sequence
@@ -213,13 +212,13 @@ def select_ligand_atoms_baumann(mol: Mol, rmsf: list[float]) -> list[int]:
 def _filter_receptor_atoms(
     trj: mdtraj.Trajectory,
     ligand_ref_idx: int,
+    rmsf: npt.NDArray,
     min_helix_size: int = 8,
     min_sheet_size: int = 8,
     skip_residues_start: int = 20,
     skip_residues_end: int = 10,
     minimum_distance_nm=1.0,
     maximum_distance_nm=3.0,
-    rmsf: npt.NDArray | None = None,
 ) -> list[int]:
     """Select possible protein atoms for Boresch-style restraints.
 
@@ -228,6 +227,8 @@ def _filter_receptor_atoms(
     Args:
         trj: The system trajectory.
         ligand_ref_idx: first restrained ligand atom
+        rmsf: per-atom RMSF (nm) computed against the caller's chosen reference
+            frame, indexed by full-system atom index.
         min_helix_size: The minimum number of residues that have to be in an alpha-helix
             for it to be considered stable.
         min_sheet_size: The minimum number of residues that have to be in a beta-sheet
@@ -286,14 +287,8 @@ def _filter_receptor_atoms(
         raise ValueError("no suitable receptor atoms could be found")
 
     if backbone.n_frames > 1:
-        if rmsf is None: # backcompat
-            superposed = copy.deepcopy(backbone)
-            superposed.superpose(superposed)
-            rmsf_bb = mdtraj.rmsf(superposed, superposed, 0)  # nm
-            rigid_backbone_idxs = rigid_backbone_idxs[rmsf_bb[rigid_backbone_idxs] < _RMSF_CUTOFF]
-        else:
-            full_atom_idxs = backbone_idxs[rigid_backbone_idxs]
-            rigid_backbone_idxs = rigid_backbone_idxs[rmsf[full_atom_idxs] < _RMSF_CUTOFF]
+        full_atom_idxs = backbone_idxs[rigid_backbone_idxs]
+        rigid_backbone_idxs = rigid_backbone_idxs[rmsf[full_atom_idxs] < _RMSF_CUTOFF]
 
     distances = scipy.spatial.distance.cdist(backbone.xyz[0, rigid_backbone_idxs, :], trj.xyz[-1, [ligand_ref_idx], :])
 
@@ -403,7 +398,7 @@ def rdmol_to_mdtraj(mol: Mol) -> mdtraj.Trajectory:
 def select_receptor_atoms_baumann(
     trj: mdtraj.Trajectory,
     ligand_ref_idxs: list[int],
-    rmsf: npt.NDArray | None = None,
+    rmsf: npt.NDArray,
 ) -> list[int]:
     """Select possible protein atoms for Boresch-style restraints.
 
@@ -416,6 +411,8 @@ def select_receptor_atoms_baumann(
     Args:
         trj: The trj containing the receptor and ligands.
         ligand_ref_idxs: The indices of the three ligands atoms that will be restrained.
+        rmsf: per-atom RMSF (nm) computed against the caller's chosen reference
+            frame, indexed by full-system atom index.
 
     Returns:
         The indices of the three atoms to use for the restraint
@@ -423,7 +420,7 @@ def select_receptor_atoms_baumann(
     Raises:
         ValueError: if no suitable receptor atoms could be found
     """
-    receptor_idxs = _filter_receptor_atoms(trj, ligand_ref_idxs[0], rmsf=rmsf)
+    receptor_idxs = _filter_receptor_atoms(trj, ligand_ref_idxs[0], rmsf)
 
     l1, l2, l3 = ligand_ref_idxs
 
@@ -459,6 +456,7 @@ def select_receptor_atoms_baumann(
         r3_distances_prod = r3_distances_avg[:, 0] * r3_distances_avg[:, 1]
         found_r3 = valid_r3_idxs[r3_distances_prod.argmax()]
 
+        print(f"[rec-ids] {[found_r1, found_r2, found_r3]}")
         return [found_r1, found_r2, found_r3]
 
     raise ValueError("could not find a valid R3 atom within max distance")
