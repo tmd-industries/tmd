@@ -195,8 +195,7 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
         lig_ids = [i + ligand_offset for i in lig_ids]
 
         # select receptor atoms
-        # FIXME: reuse the rmsf calculation instead of redoing it in this routine
-        rec_ids = select_receptor_atoms_baumann(trj, lig_ids)
+        rec_ids = select_receptor_atoms_baumann(trj, lig_ids, rmsf)
 
         pos = tmtrj.frames[-1]
         box = tmtrj.boxes[-1]

@@ -266,7 +266,7 @@ class BaseTopology:
 
     def get_constraint_groups(self) -> ConstraintGroups:
         """Return the hydrogen-bond constraint groups for the molecule."""
-        return get_hydrogen_bond_constraint_groups(self.mol)
+        return get_hydrogen_bond_constraint_groups(self.mol, self.ff)
 
     def parameterize_nonbonded(
         self,
@@ -539,7 +539,7 @@ class MultiTopology(BaseTopology):
         combined_group = None
         offset = 0
         for mol in self.mols:
-            constraint_group = get_hydrogen_bond_constraint_groups(mol)
+            constraint_group = get_hydrogen_bond_constraint_groups(mol, self.ff)
             if offset > 0:
                 constraint_group = replace(
                     constraint_group, groups=[[g + offset for g in group] for group in constraint_group.groups]

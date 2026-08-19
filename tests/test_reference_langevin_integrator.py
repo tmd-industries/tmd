@@ -84,7 +84,7 @@ def test_constrained_langevin_single_water():
     rng = np.random.default_rng(2026)
     xs, vs = integrator.multiple_steps(x0, v0, n_steps=1000, rng=rng)
 
-    for frame, velo in zip(xs, vs):
+    for frame, velo in zip(xs[1:], vs[1:]):
         verify_constraints(frame, velo, constraint_groups, constraint_distances, integrator._solver._tol)
 
     # Determinism check
@@ -185,7 +185,7 @@ def test_constrained_langevin_inf_mass_atoms(seed):
 
     xs, vs = integrator.multiple_steps(x0, v0, n_steps=100, rng=rng)
 
-    for frame, velo in zip(xs, vs):
+    for frame, velo in zip(xs[1:], vs[1:]):
         verify_constraints(frame, velo, constraint_groups, constraint_distances, integrator._solver._tol)
 
 
@@ -202,18 +202,24 @@ def test_constrained_langevin_multiple_water_molecules():
     modeller = app.Modeller(top, pos)
     modeller.addSolvent(water_ff, numAdded=n_waters, neutralize=False, model=get_water_ff_model(DEFAULT_WATER_FF))
 
-    # System with constraints
+    # Keep flexible terms for minimization; TMD applies its own constraints during dynamics.
     omm_system = water_ff.createSystem(
         modeller.topology,
         nonbondedMethod=app.NoCutoff,
-        constraints=app.HBonds,
+        constraints=None,
+        rigidWater=False,
     )
 
     x0 = strip_units(modeller.positions).astype(np.float64)
     v0 = np.zeros_like(x0)
 
+    (bond, angle, proper, improper, nonbonded), masses = deserialize_system(omm_system, cutoff=1.2)
+
     # Verify the constraint groups from the system are reasonable
-    constraint_groups, constraint_distances = deserialize_constraints(modeller.topology, x0)
+    constraint_groups, constraint_distances = deserialize_constraints(
+        modeller.topology, bond.potential.idxs, bond.params
+    )
+    assert len(constraint_groups) == n_waters
 
     atoms_by_idx = list(modeller.topology.atoms())
     for group in constraint_groups:
@@ -222,8 +228,6 @@ def test_constrained_langevin_multiple_water_molecules():
         assert atoms_by_idx[anchor_atom].element.atomic_number > 1
         for atom in group[1:]:
             assert atoms_by_idx[atom].element.atomic_number == 1
-
-    (bond, angle, proper, improper, nonbonded), masses = deserialize_system(omm_system, cutoff=1.2)
 
     bond_list = bond.potential.idxs
 

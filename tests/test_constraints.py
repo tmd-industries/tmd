@@ -27,11 +27,11 @@ def ff():
 
 
 @pytest.mark.nogpu
-def test_constraint_groups_from_mol(simple_mol, water_mol):
-    constraints = get_hydrogen_bond_constraint_groups(simple_mol)
+def test_constraint_groups_from_mol(simple_mol, water_mol, ff):
+    constraints = get_hydrogen_bond_constraint_groups(simple_mol, ff)
     assert len(constraints.groups) == 0
 
-    constraints = get_hydrogen_bond_constraint_groups(water_mol)
+    constraints = get_hydrogen_bond_constraint_groups(water_mol, ff)
     assert len(constraints.groups) == 1
     assert constraints.groups[0] == [0, 1, 2]
     assert len(constraints.distances[0]) == 2
@@ -127,7 +127,7 @@ def test_constraint_groups_from_mol(simple_mol, water_mol):
 M  END""",
         removeHs=False,
     )
-    constraints = get_hydrogen_bond_constraint_groups(mol)
+    constraints = get_hydrogen_bond_constraint_groups(mol, ff)
     assert len(constraints.groups) == 12
 
     # Shuffling the atom order shouldn't change the results
@@ -135,7 +135,7 @@ M  END""",
         atom_ordering = np.arange(mol.GetNumAtoms())
         rng.shuffle(atom_ordering)
         mol = Chem.RenumberAtoms(mol, atom_ordering.tolist())
-        constraints = get_hydrogen_bond_constraint_groups(mol)
+        constraints = get_hydrogen_bond_constraint_groups(mol, ff)
         assert len(constraints.groups) == 12
 
 
@@ -268,7 +268,7 @@ def test_constrain_positions_already_satisfied(precision, water_mol, ff):
         )
     )
 
-    x0 = get_romol_conf(water_mol).astype(precision)
+    x0 = constraints.constrain_positions(get_romol_conf(water_mol).astype(precision))
     constrained = constraints.constrain_positions(x0)
 
     # If the coords already satisfy constraints, they should be nearly unchanged

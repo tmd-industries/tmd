@@ -60,7 +60,7 @@ from tmd.fe.single_topology import (
     setup_dummy_interactions_from_ff,
 )
 from tmd.fe.system import minimize_scipy, simulate_system
-from tmd.fe.utils import get_mol_name, get_romol_conf, read_sdf, read_sdf_mols_by_name
+from tmd.fe.utils import get_mol_name, get_romol_conf, read_sdf, read_sdf_mols_by_name, set_romol_conf
 from tmd.ff import Forcefield
 from tmd.md import minimizer
 from tmd.md.builders import build_water_system
@@ -73,6 +73,28 @@ setup_chiral_dummy_interactions_from_ff = functools.partial(
     chiral_atom_k=DEFAULT_CHIRAL_ATOM_RESTRAINT_K,
     chiral_bond_k=DEFAULT_CHIRAL_BOND_RESTRAINT_K,
 )
+
+
+@pytest.mark.nogpu
+def test_constraint_group_distances_use_equilibrium_bond_lengths():
+    mol = ligand_from_smiles("CO")
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    assert ff.hb_handle is not None
+
+    bond_params, bond_idxs = ff.hb_handle.partial_parameterize(ff.hb_handle.params, mol)
+    bond_lengths = {canonicalize_bond(tuple(idxs)): params[1] for idxs, params in zip(bond_idxs, bond_params)}
+
+    hydrogen_idx = next(atom.GetIdx() for atom in mol.GetAtoms() if atom.GetAtomicNum() == 1)
+    coords = get_romol_conf(mol)
+    coords[hydrogen_idx] += 0.1
+    set_romol_conf(mol, coords)
+
+    core = np.tile(np.arange(mol.GetNumAtoms())[:, None], (1, 2))
+    constraints = SingleTopology(mol, Chem.Mol(mol), core, ff, verify_constraints=True).get_constraint_groups()
+
+    for group, distances in zip(constraints.groups, constraints.distances):
+        expected = [bond_lengths[canonicalize_bond((group[0], idx))] for idx in group[1:]]
+        np.testing.assert_array_equal(distances, expected)
 
 
 def _get_hif2a_mol_pairs(shuffle: bool = False, seed: int = 2029) -> list[Chem.Mol]:
