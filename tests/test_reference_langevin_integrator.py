@@ -202,11 +202,12 @@ def test_constrained_langevin_multiple_water_molecules():
     modeller = app.Modeller(top, pos)
     modeller.addSolvent(water_ff, numAdded=n_waters, neutralize=False, model=get_water_ff_model(DEFAULT_WATER_FF))
 
-    # System with constraints
+    # Keep flexible terms for minimization; TMD applies its own constraints during dynamics.
     omm_system = water_ff.createSystem(
         modeller.topology,
         nonbondedMethod=app.NoCutoff,
-        constraints=app.HBonds,
+        constraints=None,
+        rigidWater=False,
     )
 
     x0 = strip_units(modeller.positions).astype(np.float64)
@@ -218,6 +219,7 @@ def test_constrained_langevin_multiple_water_molecules():
     constraint_groups, constraint_distances = deserialize_constraints(
         modeller.topology, bond.potential.idxs, bond.params
     )
+    assert len(constraint_groups) == n_waters
 
     atoms_by_idx = list(modeller.topology.atoms())
     for group in constraint_groups:

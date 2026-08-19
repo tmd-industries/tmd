@@ -1500,6 +1500,20 @@ def test_environment_bcc_full_protein(is_nn, env_nn_args):
 
 
 @pytest.mark.nogpu
+def test_deserialize_constraints_requires_harmonic_bonds():
+    water_ff = OMMForceField("tip3p.xml")
+    modeller = app.Modeller(app.Topology(), omm_unit.Quantity((), omm_unit.angstroms))
+    modeller.addSolvent(water_ff, numAdded=1, neutralize=False, model="tip3p")
+
+    with pytest.raises(ValueError, match="Missing harmonic bond parameters for hydrogen bond"):
+        deserialize_constraints(
+            modeller.topology,
+            np.empty((0, 2), dtype=np.int32),
+            np.empty((0, 2), dtype=np.float64),
+        )
+
+
+@pytest.mark.nogpu
 def test_deserialize_constraints_from_topology():
     """Verify that deserialize_constraints built from topology+harmonic bonds matches
     OpenMM's constraint system parameters."""

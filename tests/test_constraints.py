@@ -268,7 +268,7 @@ def test_constrain_positions_already_satisfied(precision, water_mol, ff):
         )
     )
 
-    x0 = get_romol_conf(water_mol).astype(precision)
+    x0 = constraints.constrain_positions(get_romol_conf(water_mol).astype(precision))
     constrained = constraints.constrain_positions(x0)
 
     # If the coords already satisfy constraints, they should be nearly unchanged

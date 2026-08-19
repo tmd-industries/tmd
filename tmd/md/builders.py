@@ -573,7 +573,8 @@ def build_host_config_from_omm(
 
     construct_system_func: func(app.ForceField, app.Modeller, dict[app.Residue, str]) -> openmm.System
         Function used to construct the OpenMM system object. Defaults to tmd.md.builders.construct_default_omm_system
-        Function is not allowed to change the number of atoms within the topology.
+        Function is not allowed to change the number of atoms within the topology. The returned System must not contain
+        constraints; usually this means creating it with constraints=None and rigidWater=False.
 
     ionic_concentration: optional float
         Concentration of ions, in molars, to add to the system. Defaults to 0.0, meaning no ions are added.
