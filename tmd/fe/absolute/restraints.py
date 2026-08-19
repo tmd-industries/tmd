@@ -47,7 +47,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-import copy
 import itertools
 import tempfile
 from collections.abc import Sequence
@@ -213,6 +212,7 @@ def select_ligand_atoms_baumann(mol: Mol, rmsf: list[float]) -> list[int]:
 def _filter_receptor_atoms(
     trj: mdtraj.Trajectory,
     ligand_ref_idx: int,
+    rmsf: npt.NDArray,
     min_helix_size: int = 8,
     min_sheet_size: int = 8,
     skip_residues_start: int = 20,
@@ -227,6 +227,8 @@ def _filter_receptor_atoms(
     Args:
         trj: The system trajectory.
         ligand_ref_idx: first restrained ligand atom
+        rmsf: per-atom RMSF (nm) computed against the caller's chosen reference
+            frame, indexed by full-system atom index.
         min_helix_size: The minimum number of residues that have to be in an alpha-helix
             for it to be considered stable.
         min_sheet_size: The minimum number of residues that have to be in a beta-sheet
@@ -284,13 +286,8 @@ def _filter_receptor_atoms(
     if len(rigid_backbone_idxs) == 0:
         raise ValueError("no suitable receptor atoms could be found")
 
-    if backbone.n_frames > 1:
-        superposed = copy.deepcopy(backbone)
-        superposed.superpose(superposed)
-
-        rmsf = mdtraj.rmsf(superposed, superposed, 0)  # nm
-
-        rigid_backbone_idxs = rigid_backbone_idxs[rmsf[rigid_backbone_idxs] < _RMSF_CUTOFF]
+    trj_backbone_idxs = backbone_idxs[rigid_backbone_idxs]
+    rigid_backbone_idxs = rigid_backbone_idxs[rmsf[trj_backbone_idxs] < _RMSF_CUTOFF]
 
     distances = scipy.spatial.distance.cdist(backbone.xyz[0, rigid_backbone_idxs, :], trj.xyz[-1, [ligand_ref_idx], :])
 
@@ -400,6 +397,7 @@ def rdmol_to_mdtraj(mol: Mol) -> mdtraj.Trajectory:
 def select_receptor_atoms_baumann(
     trj: mdtraj.Trajectory,
     ligand_ref_idxs: list[int],
+    rmsf: npt.NDArray,
 ) -> list[int]:
     """Select possible protein atoms for Boresch-style restraints.
 
@@ -412,6 +410,8 @@ def select_receptor_atoms_baumann(
     Args:
         trj: The trj containing the receptor and ligands.
         ligand_ref_idxs: The indices of the three ligands atoms that will be restrained.
+        rmsf: per-atom RMSF (nm) computed against the caller's chosen reference
+            frame, indexed by full-system atom index.
 
     Returns:
         The indices of the three atoms to use for the restraint
@@ -419,7 +419,7 @@ def select_receptor_atoms_baumann(
     Raises:
         ValueError: if no suitable receptor atoms could be found
     """
-    receptor_idxs = _filter_receptor_atoms(trj, ligand_ref_idxs[0])
+    receptor_idxs = _filter_receptor_atoms(trj, ligand_ref_idxs[0], rmsf)
 
     l1, l2, l3 = ligand_ref_idxs
 
