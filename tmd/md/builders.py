@@ -142,8 +142,10 @@ def get_box_from_coords(coords: NDArray[np.float64]) -> NDArray[np.float64]:
     return np.eye(3) * box_lengths
 
 
-def _build_constraint_groups(topology: app.Topology, coords: NDArray) -> ConstraintGroups:
-    constraint_groups, constraint_distances = openmm_deserializer.deserialize_constraints(topology, coords)
+def _build_constraint_groups(topology: app.Topology, bond_idxs: NDArray, bond_params: NDArray) -> ConstraintGroups:
+    constraint_groups, constraint_distances = openmm_deserializer.deserialize_constraints(
+        topology, bond_idxs, bond_params
+    )
     water_atom_idxs = set(
         [atom.index for res in topology.residues() for atom in res.atoms() if res.name == WATER_RESIDUE_NAME]
     )
@@ -497,7 +499,7 @@ def load_pdb_system(
 
     assert modeller.topology.getNumAtoms() == len(host_coords)
 
-    constraint_groups = _build_constraint_groups(modeller.topology, host_coords)
+    constraint_groups = _build_constraint_groups(modeller.topology, bond.potential.idxs, np.asarray(bond.params))
     assert len(constraint_groups.water_group_indices) == num_water_atoms // 3
 
     return HostConfig(
@@ -571,7 +573,8 @@ def build_host_config_from_omm(
 
     construct_system_func: func(app.ForceField, app.Modeller, dict[app.Residue, str]) -> openmm.System
         Function used to construct the OpenMM system object. Defaults to tmd.md.builders.construct_default_omm_system
-        Function is not allowed to change the number of atoms within the topology.
+        Function is not allowed to change the number of atoms within the topology. The returned System must not contain
+        constraints; usually this means creating it with constraints=None and rigidWater=False.
 
     ionic_concentration: optional float
         Concentration of ions, in molars, to add to the system. Defaults to 0.0, meaning no ions are added.
@@ -651,7 +654,7 @@ def build_host_config_from_omm(
         solvated_omm_host_system, cutoff=1.2
     )
 
-    constraint_groups = _build_constraint_groups(modeller.topology, solvated_host_coords)
+    constraint_groups = _build_constraint_groups(modeller.topology, bond.potential.idxs, np.asarray(bond.params))
     assert len(constraint_groups.water_group_indices) == num_water_atoms // 3
 
     solvated_host_system = HostSystem(
@@ -912,7 +915,7 @@ def build_water_system(
     box = get_box_from_coords(solvated_host_coords) + np.eye(3) * box_margin
     num_water_atoms = count_water_atoms(modeller.topology)
 
-    constraint_groups = _build_constraint_groups(modeller.topology, solvated_host_coords)
+    constraint_groups = _build_constraint_groups(modeller.topology, bond.potential.idxs, np.asarray(bond.params))
     assert len(constraint_groups.water_group_indices) == num_water_atoms // 3
 
     return HostConfig(

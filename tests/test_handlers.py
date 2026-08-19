@@ -37,7 +37,7 @@ from tmd.ff import Forcefield
 from tmd.ff.charges import AM1CCC_CHARGES
 from tmd.ff.handlers import bonded, nonbonded
 from tmd.ff.handlers import utils as h_utils
-from tmd.ff.handlers.openmm_deserializer import deserialize_constraints
+from tmd.ff.handlers.openmm_deserializer import deserialize_constraints, deserialize_system
 from tmd.md import builders
 from tmd.testsystems import fetch_freesolv
 from tmd.utils import path_to_internal_file
@@ -1500,8 +1500,22 @@ def test_environment_bcc_full_protein(is_nn, env_nn_args):
 
 
 @pytest.mark.nogpu
+def test_deserialize_constraints_requires_harmonic_bonds():
+    water_ff = OMMForceField("tip3p.xml")
+    modeller = app.Modeller(app.Topology(), omm_unit.Quantity((), omm_unit.angstroms))
+    modeller.addSolvent(water_ff, numAdded=1, neutralize=False, model="tip3p")
+
+    with pytest.raises(ValueError, match="Missing harmonic bond parameters for hydrogen bond"):
+        deserialize_constraints(
+            modeller.topology,
+            np.empty((0, 2), dtype=np.int32),
+            np.empty((0, 2), dtype=np.float64),
+        )
+
+
+@pytest.mark.nogpu
 def test_deserialize_constraints_from_topology():
-    """Verify that deserialize_constraints built from topology+coords matches
+    """Verify that deserialize_constraints built from topology+harmonic bonds matches
     OpenMM's constraint system parameters."""
 
     # Build a water system using OpenMM's ForceField
@@ -1519,8 +1533,6 @@ def test_deserialize_constraints_from_topology():
         constraints=app.HBonds,
     )
 
-    coords = np.array(modeller.positions.value_in_unit(omm_unit.nanometer), dtype=np.float64)
-
     # Get constraints from OpenMM system directly
     ref_constraint_groups = defaultdict(list)
     ref_distances = defaultdict(list)
@@ -1537,8 +1549,16 @@ def test_deserialize_constraints_from_topology():
             ref_constraint_groups[i_idx].append(j_idx)
             ref_distances[i_idx].append(distance.value_in_unit(omm_unit.nanometer))
 
-    # Build constraint groups from topology + coords
-    groups, dists = deserialize_constraints(modeller.topology, coords)
+    unconstrained_system = water_ff.createSystem(
+        modeller.topology,
+        nonbondedMethod=app.NoCutoff,
+        constraints=None,
+        rigidWater=False,
+    )
+    (bond, _, _, _, _), _ = deserialize_system(unconstrained_system, cutoff=1.2)
+
+    # Build constraint groups from topology + harmonic bond parameters
+    groups, dists = deserialize_constraints(modeller.topology, bond.potential.idxs, bond.params)
 
     assert len(groups) == len(ref_constraint_groups)
 

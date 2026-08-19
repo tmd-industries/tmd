@@ -161,6 +161,11 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
     list of lib.Potential, masses
 
     """
+    if system.getNumConstraints() > 0:
+        raise ValueError(
+            "OpenMM Systems with constraints are not supported because TMD does not enforce them during minimization. "
+            "Return an unconstrained System, usually by setting constraints=None and rigidWater=False."
+        )
 
     bond = angle = proper = improper = nonbonded = None
 
@@ -287,12 +292,13 @@ def deserialize_system(system: mm.System, cutoff: float) -> tuple[list[potential
 
 def deserialize_constraints(
     topology: app.Topology,
-    coords: NDArray,
+    bond_idxs: NDArray,
+    bond_params: NDArray,
 ) -> tuple[list[list[int]], list[list[float]]]:
-    """Construct constraint groups from an OpenMM topology and coordinates.
+    """Construct constraint groups from an OpenMM topology and harmonic bonds.
 
-    Identifies hydrogen-heavy atom bonds from the topology and uses the
-    provided coordinates to compute bond distances.
+    Identifies hydrogen-heavy atom bonds and uses the harmonic-bond equilibrium
+    lengths as target distances.
 
     Returns constraint groups in the same format as get_hydrogen_bond_constraint_groups,
     with each group having the heavy atom first followed by hydrogen indices,
@@ -302,8 +308,10 @@ def deserialize_constraints(
     ----------
     topology: openmm.app.Topology
         An OpenMM topology object with bond information.
-    coords: numpy.ndarray
-        N x 3 array of atom coordinates (nm) from which distances are computed.
+    bond_idxs: numpy.ndarray
+        B x 2 array of harmonic bond atom indices.
+    bond_params: numpy.ndarray
+        B x 2 array of harmonic bond force constants and equilibrium lengths.
 
     Returns
     -------
@@ -315,8 +323,12 @@ def deserialize_constraints(
     # Determine which atoms are hydrogens
     is_hydrogen = [atom.element.atomic_number == 1 for atom in topology.atoms()]
 
-    # Build set of H-heavy bonds from topology
-    h_heavy_bonds = []
+    bond_lengths = {
+        canonicalize_bond((int(i_idx), int(j_idx))): float(params[1])
+        for (i_idx, j_idx), params in zip(bond_idxs, bond_params)
+    }
+
+    heavy_to_hydrogens = defaultdict(list)
     for bond in topology.bonds():
         i_idx = bond[0].index
         j_idx = bond[1].index
@@ -324,17 +336,19 @@ def deserialize_constraints(
         j_is_h = is_hydrogen[j_idx]
 
         if i_is_h and not j_is_h:
-            h_heavy_bonds.append((i_idx, j_idx))
+            hydrogen_atom, heavy_atom = i_idx, j_idx
         elif j_is_h and not i_is_h:
-            h_heavy_bonds.append((j_idx, i_idx))
+            hydrogen_atom, heavy_atom = j_idx, i_idx
         elif j_is_h and i_is_h:
             assert False, "Unexpected hydrogen bonded to a hydrogen"
+        else:
+            continue
 
-    # Compute distances from coordinates and group by heavy atom
-    heavy_to_hydrogens = defaultdict(list)
-    for hydrogen_atom, heavy_atom in h_heavy_bonds:
-        dist = np.linalg.norm(coords[hydrogen_atom] - coords[heavy_atom])
-        heavy_to_hydrogens[heavy_atom].append((hydrogen_atom, float(dist)))
+        pair = canonicalize_bond((hydrogen_atom, heavy_atom))
+        if pair not in bond_lengths:
+            raise ValueError(f"Missing harmonic bond parameters for hydrogen bond {pair}")
+        distance = bond_lengths[pair]
+        heavy_to_hydrogens[heavy_atom].append((hydrogen_atom, distance))
 
     groups = []
     distances = []

@@ -482,6 +482,37 @@ def test_build_protein_system():
 
 
 @pytest.mark.nogpu
+@pytest.mark.parametrize(
+    "constraints, rigid_water",
+    [
+        pytest.param(app.HBonds, False, id="hydrogen-bonds"),
+        pytest.param(None, True, id="rigid-water"),
+    ],
+)
+def test_build_host_config_from_omm_rejects_constraints(constraints, rigid_water):
+    water_ff = app.ForceField("tip3p.xml")
+    modeller = app.Modeller(app.Topology(), unit.Quantity((), unit.angstroms))
+    modeller.addSolvent(water_ff, numAdded=1, neutralize=False, model="tip3p")
+
+    def construct_constrained_system(ff, modeller, residue_templates):
+        return ff.createSystem(
+            modeller.topology,
+            nonbondedMethod=app.NoCutoff,
+            constraints=constraints,
+            rigidWater=rigid_water,
+            residueTemplates=residue_templates,
+        )
+
+    with pytest.raises(ValueError, match="TMD does not enforce them during minimization"):
+        build_host_config_from_omm(
+            modeller,
+            water_ff,
+            construct_system_func=construct_constrained_system,
+            padding=0.5,
+        )
+
+
+@pytest.mark.nogpu
 def test_build_host_config_from_omm():
     """Verify that it is possible to setup a system that is not handled by the default build_protein_system
 

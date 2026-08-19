@@ -5,24 +5,31 @@ import numpy as np
 from numpy.typing import NDArray
 from rdkit import Chem
 
-from tmd.fe.utils import get_romol_conf
+from tmd.ff import Forcefield
 from tmd.ff.handlers.utils import canonicalize_bond
 from tmd.lib import ConstraintGroups
 from tmd.potentials import BoundPotential, HarmonicBond
-from tmd.potentials.jax_utils import distance
 from tmd.potentials.types import Params
 
 
-def get_hydrogen_bond_constraint_groups(mol: Chem.Mol) -> ConstraintGroups:
+def parameterize_harmonic_bonds(mol: Chem.Mol, forcefield: Forcefield) -> tuple[NDArray, NDArray]:
+    """Parameterize the harmonic bonds in a molecule."""
+    assert forcefield.hb_handle is not None
+    return forcefield.hb_handle.partial_parameterize(forcefield.hb_handle.params, mol)
+
+
+def get_hydrogen_bond_constraint_groups(mol: Chem.Mol, forcefield: Forcefield) -> ConstraintGroups:
     """Return hydrogen-bond constraint groups for a molecule.
 
     Builds connected components of heavy atoms and their bonded hydrogens.
-    Each group has the heavy atom first, followed by hydrogen indices.
+    Each group has the heavy atom first, followed by hydrogen indices. Target
+    distances are the harmonic-bond equilibrium lengths.
 
     Returns
     -------
     ConstraintGroups object
     """
+    bond_params, bond_idxs = parameterize_harmonic_bonds(mol, forcefield)
     graph = nx.Graph()
     for atom in mol.GetAtoms():
         if atom.GetAtomicNum() == 1:
@@ -40,13 +47,13 @@ def get_hydrogen_bond_constraint_groups(mol: Chem.Mol) -> ConstraintGroups:
         )
         constraint_groups.append(heavy_atom_first_component)
 
-    conf = get_romol_conf(mol)
+    bond_lengths = {canonicalize_bond(tuple(idxs)): float(params[1]) for idxs, params in zip(bond_idxs, bond_params)}
     distances = []
     for group in constraint_groups:
         # Only support up to 6 bonds (+1 for the heavy atom)
         assert 1 < len(group) <= 7
         heavy = group[0]
-        group_dist = [float(distance(conf[heavy], conf[idx], None)) for idx in group[1:]]
+        group_dist = [bond_lengths[canonicalize_bond((heavy, idx))] for idx in group[1:]]
         distances.append(group_dist)
     return ConstraintGroups(constraint_groups, distances, np.array([], dtype=np.int_))
 
