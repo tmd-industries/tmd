@@ -16,3 +16,5 @@ Taken https://github.com/choderalab/pymbar/commit/683644086ca57c5077fb99ac85f623
 * Changes `force_no_jax=True` to avoid memory issues mentioned in https://github.com/choderalab/pymbar/issues/564
 * Update imports to reflect vendoring
 * Remove `numexpr` dependency, since only used to compute logsumexp
+* Passes relative_tolerance to the protocol solvers.
+* Fixes a bug where the default MBAR protocols were being modified over time
