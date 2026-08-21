@@ -671,8 +671,8 @@ def get_oxy_ring():
 
   5  5  0  0  0  0            999 V2000
     0.4018    1.6964    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.3828    1.4415    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0
-    0.3155    2.5169    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3828    1.4415    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3155    2.5169    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
     0.5733    0.8895    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
     1.2268    1.6964    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
   1  2  1  0  0  0  0
@@ -693,9 +693,9 @@ def get_broken_ring():
 
   4  3  0  0  0  0            999 V2000
    -0.0110   -0.0156    0.0270 N   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.3291   -0.4654   -0.8338 F   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.3291    0.9548   -0.0138 F   0  0  0  0  0  0  0  0  0  0  0  0
-    1.0099    0.0080   -0.0138 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3291   -0.4654   -0.8338 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3291    0.9548   -0.0138 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0099    0.0080   -0.0138 H   0  0  0  0  0  0  0  0  0  0  0  0
   1  2  1  0  0  0  0
   1  3  1  0  0  0  0
   1  4  1  0  0  0  0
@@ -746,23 +746,20 @@ def _assert_bonded_term(lamb, bonded_idxs, param_idx, atol, min_max, itm_params,
 
 
 def test_core_dummy_chiral_conversion():
-    #  F1    D4      F1    O4
+    #  H1    D4      H1    O4
     #    \  / .        \  / |
     #     N0  .  -->    C0  |
     #    /  \ .        /  \ |
-    #  F2    F3      F2    O3
+    #  H2    H3      H2    O3
     #
     # note: choice of core anchor and bond broken is arbitrary
     # another possibility is the N0-D4 bond being broken
-    # Since aliphatic carbons with matching terminal atoms are excluded from
-    # chiral restraints, the molecules have a Flourine. Doesn't impact correctness
-    # of the test.
 
     # lhs chiral volumes       rhs chiral volumes
-    # OFF: N0-F1-F2-F3         ON: N0-F1-F2-F3
-    #  ON: N0-F1-D4-F3         ON: N0-F1-D4-F3
-    #  ON: N0-F2-D4-F3         ON: N0-F2-D4-F3
-    #  ON: N0-F1-D4-F2         ON: N0-F1-D4-F2
+    # OFF: N0-H1-H2-H3         ON: N0-H1-H2-H3
+    #  ON: N0-H1-D4-H3         ON: N0-H1-D4-H3
+    #  ON: N0-H2-D4-H3         ON: N0-H2-D4-H3
+    #  ON: N0-H1-D4-H2         ON: N0-H1-D4-H2
 
     mol_a = get_broken_ring()
     mol_b = get_oxy_ring()
@@ -777,8 +774,8 @@ def test_core_dummy_chiral_conversion():
     assert len(rhs.chiral_atom.potential.idxs) == 4
     np.testing.assert_array_equal(lhs.chiral_atom.potential.idxs, rhs.chiral_atom.potential.idxs)
 
-    assert sum([x == DEFAULT_CHIRAL_ATOM_RESTRAINT_K for x in lhs.chiral_atom.params]) == 4
-    assert sum([x == 0 for x in lhs.chiral_atom.params]) == 0
+    assert sum([x == DEFAULT_CHIRAL_ATOM_RESTRAINT_K for x in lhs.chiral_atom.params]) == 3
+    assert sum([x == 0 for x in lhs.chiral_atom.params]) == 1
 
     assert sum([x == DEFAULT_CHIRAL_ATOM_RESTRAINT_K for x in rhs.chiral_atom.params]) == 4
     assert sum([x == 0 for x in rhs.chiral_atom.params]) == 0
@@ -787,36 +784,27 @@ def test_core_dummy_chiral_conversion():
     # these tags are for readability only, and the tags may change if the ordering
     # of the indices themselves change.
     class BondTag(enum.IntEnum):
-        N0_F3 = 0  # CORE
-        F3_D4 = 1  # DUMMY
-        N0_F1 = 2  # CORE
-        N0_D4 = 4  # DUMMY
-        N0_F2 = 3  # CORE
-
-    #    [[1 0 3]
-    # [1 0 4]
-    # [1 0 2]
-    # [2 0 4]
-    # [2 0 3]
-    # [0 3 4]
-    # [3 0 4]
-    # [0 4 3]]
+        N0_H3 = 0  # CORE
+        H3_D4 = 1  # DUMMY
+        N0_H1 = 2  # CORE
+        N0_D4 = 3  # DUMMY
+        N0_H2 = 4  # CORE
 
     class AngleTag(enum.IntEnum):
-        F2_N0_F3 = 4  # CORE    - CHIRAL
-        F1_N0_D4 = 1  # DUMMY   - CHIRAL but non-converting
-        F1_N0_F2 = 2  # CORE    - CHIRAL
-        F2_N0_D4 = 3  # DUMMY   - CHIRAL but non-converting
-        F1_N0_F3 = 0  # CORE    - CHIRAL
-        N0_F3_D4 = 5  # DUMMY   - CHIRAL but non-converting
-        F3_N0_D4 = 6  # DUMMY   - CHIRAL
-        N0_D4_F3 = 7  # DUMMY   - CHIRAL but non-converting
+        H2_N0_H3 = 0  # CORE    - CHIRAL
+        H1_N0_D4 = 1  # DUMMY   - CHIRAL but non-converting
+        H1_N0_H2 = 2  # CORE    - CHIRAL
+        H2_N0_D4 = 3  # DUMMY   - CHIRAL but non-converting
+        H1_N0_H3 = 4  # CORE    - CHIRAL
+        N0_H3_D4 = 5  # DUMMY   - CHIRAL but non-converting
+        H3_N0_D4 = 6  # DUMMY   - CHIRAL
+        N0_D4_H3 = 7  # DUMMY   - CHIRAL but non-converting
 
     class ChiralAtomTag(enum.IntEnum):
-        N0_F1_D4_F2 = 0
-        N0_F1_F3_D4 = 1
-        N0_F2_F3_D4 = 2
-        N0_F1_F3_F2 = 3  # CORE, CHIRAL, CONVERTING
+        N0_H1_D4_H2 = 0
+        N0_H1_H3_D4 = 1
+        N0_H2_H3_D4 = 2
+        N0_H1_H3_H2 = 3  # CORE, CHIRAL, CONVERTING
 
     # no chiral conversion happens, so we should be using the full schedule for bonds and angles
     atol_k = 1e-3
@@ -828,12 +816,12 @@ def test_core_dummy_chiral_conversion():
         # ########## #
 
         # core bonds:
-        #   N0_F3, N0_F1, N0_F2
+        #   N0_H3, N0_H1, N0_H2
         # dummy bonds:
-        #   F3-D4, N0-D4
+        #   H3-D4, N0-D4
         _assert_bonded_term(
             lamb,
-            BondTag.N0_F1,
+            BondTag.N0_H1,
             0,
             atol_k,
             single_topology.CORE_BOND_MIN_MAX,
@@ -843,7 +831,7 @@ def test_core_dummy_chiral_conversion():
         )
         _assert_bonded_term(
             lamb,
-            BondTag.N0_F2,
+            BondTag.N0_H2,
             0,
             atol_k,
             single_topology.CORE_BOND_MIN_MAX,
@@ -853,7 +841,7 @@ def test_core_dummy_chiral_conversion():
         )
         _assert_bonded_term(
             lamb,
-            BondTag.N0_F3,
+            BondTag.N0_H3,
             0,
             atol_k,
             single_topology.CORE_BOND_MIN_MAX,
@@ -866,10 +854,10 @@ def test_core_dummy_chiral_conversion():
         assert abs(itm.bond.params[BondTag.N0_D4][0] - lhs.bond.params[BondTag.N0_D4][0]) < atol_k
         assert abs(itm.bond.params[BondTag.N0_D4][0] - rhs.bond.params[BondTag.N0_D4][0]) < atol_k
 
-        # dummy bond F3-D4 is interpolated over achiral bounds
+        # dummy bond H3-D4 is interpolated over achiral bounds
         _assert_bonded_term(
             lamb,
-            BondTag.F3_D4,
+            BondTag.H3_D4,
             0,
             atol_k,
             single_topology.DUMMY_B_BOND_MIN_MAX,
@@ -879,7 +867,7 @@ def test_core_dummy_chiral_conversion():
         )
         _assert_bonded_term(
             lamb,
-            BondTag.N0_F2,
+            BondTag.N0_H2,
             0,
             atol_k,
             single_topology.CORE_BOND_MIN_MAX,
@@ -895,20 +883,20 @@ def test_core_dummy_chiral_conversion():
         # test angle interpolation for chiral core atoms
         _assert_bonded_term(
             lamb,
-            AngleTag.F2_N0_F3,
+            AngleTag.H2_N0_H3,
             0,
             atol_k,
-            single_topology.CORE_ANGLE_MIN_MAX,
+            single_topology.CORE_CHIRAL_ANGLE_CONVERTING_ON_MIN_MAX,
             itm.angle.params,
             lhs.angle.params,
             rhs.angle.params,
         )
         _assert_bonded_term(
             lamb,
-            AngleTag.F1_N0_F2,
+            AngleTag.H1_N0_H2,
             0,
             atol_k,
-            single_topology.CORE_ANGLE_MIN_MAX,
+            single_topology.CORE_CHIRAL_ANGLE_CONVERTING_ON_MIN_MAX,
             itm.angle.params,
             lhs.angle.params,
             rhs.angle.params,
@@ -916,10 +904,10 @@ def test_core_dummy_chiral_conversion():
 
         _assert_bonded_term(
             lamb,
-            AngleTag.F1_N0_F3,
+            AngleTag.H1_N0_H3,
             0,
             atol_k,
-            single_topology.CORE_ANGLE_MIN_MAX,
+            single_topology.CORE_CHIRAL_ANGLE_CONVERTING_ON_MIN_MAX,
             itm.angle.params,
             lhs.angle.params,
             rhs.angle.params,
@@ -928,7 +916,7 @@ def test_core_dummy_chiral_conversion():
         # test angle interpolation for achiral dummy atoms
         _assert_bonded_term(
             lamb,
-            AngleTag.F1_N0_D4,
+            AngleTag.H1_N0_D4,
             0,
             atol_k,
             single_topology.DUMMY_B_ANGLE_MIN_MAX,
@@ -940,7 +928,7 @@ def test_core_dummy_chiral_conversion():
         # lhs/rhs are the same in this case.
         _assert_bonded_term(
             lamb,
-            AngleTag.F2_N0_D4,
+            AngleTag.H2_N0_D4,
             0,
             atol_k,
             single_topology.DUMMY_B_ANGLE_MIN_MAX,
@@ -951,7 +939,7 @@ def test_core_dummy_chiral_conversion():
 
         _assert_bonded_term(
             lamb,
-            AngleTag.N0_F3_D4,
+            AngleTag.N0_H3_D4,
             0,
             atol_k,
             single_topology.DUMMY_B_ANGLE_MIN_MAX,
@@ -962,7 +950,7 @@ def test_core_dummy_chiral_conversion():
 
         _assert_bonded_term(
             lamb,
-            AngleTag.N0_D4_F3,
+            AngleTag.N0_D4_H3,
             0,
             atol_k,
             single_topology.DUMMY_B_ANGLE_MIN_MAX,
@@ -973,7 +961,7 @@ def test_core_dummy_chiral_conversion():
 
         _assert_bonded_term(
             lamb,
-            AngleTag.F3_N0_D4,
+            AngleTag.H3_N0_D4,
             0,
             atol_k,
             single_topology.DUMMY_B_ANGLE_MIN_MAX,
@@ -987,7 +975,7 @@ def test_core_dummy_chiral_conversion():
         # ################### #
         _assert_bonded_term(
             lamb,
-            ChiralAtomTag.N0_F1_F3_F2,
+            ChiralAtomTag.N0_H1_H3_H2,
             None,
             atol_k,
             single_topology.CORE_CHIRAL_ATOM_CONVERTING_ON_MIN_MAX,
@@ -997,13 +985,13 @@ def test_core_dummy_chiral_conversion():
         )
 
         _assert_identical_end_states(
-            ChiralAtomTag.N0_F1_D4_F2, itm.chiral_atom.params, lhs.chiral_atom.params, rhs.chiral_atom.params
+            ChiralAtomTag.N0_H1_D4_H2, itm.chiral_atom.params, lhs.chiral_atom.params, rhs.chiral_atom.params
         )
         _assert_identical_end_states(
-            ChiralAtomTag.N0_F1_F3_D4, itm.chiral_atom.params, lhs.chiral_atom.params, rhs.chiral_atom.params
+            ChiralAtomTag.N0_H1_H3_D4, itm.chiral_atom.params, lhs.chiral_atom.params, rhs.chiral_atom.params
         )
         _assert_identical_end_states(
-            ChiralAtomTag.N0_F2_F3_D4, itm.chiral_atom.params, lhs.chiral_atom.params, rhs.chiral_atom.params
+            ChiralAtomTag.N0_H2_H3_D4, itm.chiral_atom.params, lhs.chiral_atom.params, rhs.chiral_atom.params
         )
 
 
