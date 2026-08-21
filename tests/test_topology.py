@@ -20,7 +20,7 @@ from typing import no_type_check
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from common import check_split_ixns
+from common import check_split_ixns, ligand_from_smiles
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
