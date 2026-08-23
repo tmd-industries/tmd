@@ -2019,8 +2019,8 @@ def compute_u_kln(trajs: Sequence[Trajectory], initial_states: Sequence[InitialS
         assert_ensembles_compatible(initial_states[0], s)
 
     N_k = np.array([len(traj.frames) for traj in trajs], dtype=np.int32)
-    kBTs = [BOLTZ * state.integrator.temperature for state in initial_states]
-    assert len(set(kBTs)) == 1
+    inv_kBTs = [1 / (BOLTZ * state.integrator.temperature) for state in initial_states]
+    assert len(set(inv_kBTs)) == 1
     summed_pot = make_summed_potential(initial_states[0].potentials)
     K = len(initial_states)
     P = len(summed_pot.params)
@@ -2040,7 +2040,7 @@ def compute_u_kln(trajs: Sequence[Trajectory], initial_states: Sequence[InitialS
             traj.frames, all_params, traj.boxes, compute_du_dx=False, compute_du_dp=False, compute_u=True
         )
         Us = Us.T  # Transpose to get energies by params
-        us = Us.reshape(K, N_k[i]) / kBTs[i]
+        us = Us.reshape(K, N_k[i]) * inv_kBTs[i]
         u_kln[i, :, : N_k[i]] = np.nan_to_num(us, nan=+np.inf)
     return u_kln, N_k
 
@@ -2094,6 +2094,7 @@ def generate_pair_bar_ulkns(
             pots = prune_constrained_valence_terms(pots, initial_state.integrator.constraints)
         params_by_state.append([bp.params for bp in pots])
     executor = custom_ops.PotentialExecutor_f32()
+    inv_kbt = 1 / kBT
     for i, state in enumerate(initial_states):
         frames = np.array(samples_by_state[i].frames)
         boxes = np.asarray(samples_by_state[i].boxes)
@@ -2115,7 +2116,7 @@ def generate_pair_bar_ulkns(
             compute_du_dp=False,
             compute_u=True,
         )
-        us = Us / kBT
+        us = Us * inv_kbt
         for j in range(len(unbound_impls)):
             # Transpose to get energies by params
             per_pot_us = us[j].T
@@ -2430,15 +2431,22 @@ def run_sims_hrex(
 
     kBT = temperature * BOLTZ
 
+    iters_per_frame = md_params.hrex_params.iterations_per_frame
     iterated_u_kln = np.full(
-        (len(initial_states[0].potentials), len(initial_states), len(initial_states), md_params.n_frames),
+        (
+            len(initial_states[0].potentials),
+            len(initial_states),
+            len(initial_states),
+            md_params.n_frames * iters_per_frame,
+        ),
         np.inf,
         dtype=np.float32,
     )
 
     hrex_func = run_sequential_hrex_step if not batch_simulations else run_batched_hrex_step
 
-    iters_per_frame = md_params.hrex_params.iterations_per_frame
+    inv_kbt = 1 / kBT
+
     for current_frame in range(md_params.n_frames):
         for i in range(iters_per_frame):
             hrex, samples_by_state_iter, U_kl_raw, water_sampler_proposals_by_state = hrex_func(
@@ -2458,7 +2466,13 @@ def run_sims_hrex(
             # Sum the per-potential components for performing swaps
             U_kl = verify_and_sanitize_potential_matrix(U_kl_raw.sum(0), hrex.replica_idx_by_state)
 
-            log_q_kl = -U_kl / kBT
+            log_q_kl = -U_kl * inv_kbt
+
+            # Re-order energies by state, must use the replica_idx_by_state_iter replica_idx_by_state and not hrex.replica_idx_by_state
+            # else the energies will be wrong if iterations_per_frame > 1
+            iterated_u_kln[:, :, :, current_frame * iters_per_frame + i] = sanitize_energies_for_bar(
+                np.array(U_kl_raw[:, hrex.replica_idx_by_state]) * inv_kbt
+            )
 
             replica_idx_by_state_by_iter.append(hrex.replica_idx_by_state)
 
@@ -2471,11 +2485,6 @@ def run_sims_hrex(
 
             fraction_accepted_by_pair_by_iter.append(fraction_accepted_by_pair)
 
-        # Re-order energies by state, must use the replica_idx_by_state_iter replica_idx_by_state and not hrex.replica_idx_by_state
-        # else the energies will be wrong if iterations_per_frame > 1
-        iterated_u_kln[:, :, :, current_frame] = (
-            sanitize_energies_for_bar(np.array(U_kl_raw[:, replica_idx_by_state_by_iter[-1]])) / kBT
-        )
         for samples, (xs, boxes, velos, final_barostat_volume_scale_factor) in zip(
             samples_by_state, samples_by_state_iter
         ):
