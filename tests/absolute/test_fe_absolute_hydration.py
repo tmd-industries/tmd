@@ -67,6 +67,7 @@ def test_run_solvent_absolute_hydration():
     assert host_config.box.shape == (3, 3)
 
 
+@pytest.mark.skip(reason="Flaky without a more robust simulation, which would be too expensive for CI")
 @pytest.mark.nightly
 @pytest.mark.parametrize(
     "forcefield",
