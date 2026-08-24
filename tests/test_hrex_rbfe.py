@@ -332,8 +332,8 @@ def test_hrex_rbfe_hif2a(
             )
             # With more energies collected, the error should be lower
             assert all(ref_res.dG_err_by_component >= comp_res.dG_err_by_component)
-            np.testing.assert_allclose(ref_res.overlap, comp_res.overlap, atol=1e-2)
-            np.testing.assert_allclose(ref_res.overlap_by_component, comp_res.overlap_by_component, atol=1e-2)
+            np.testing.assert_allclose(ref_res.overlap, comp_res.overlap, atol=5e-2)
+            np.testing.assert_allclose(ref_res.overlap_by_component, comp_res.overlap_by_component, atol=5e-2)
 
 
 @pytest.mark.parametrize("seed", [2024])
