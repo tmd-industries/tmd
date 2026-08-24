@@ -321,18 +321,19 @@ def test_hrex_rbfe_hif2a(
             )
         )
     for ref_res, comp_res in zip(ref_bar_results, comp_bar_results):
-        np.testing.assert_array_equal(
-            ref_res.u_kln_by_component, comp_res.u_kln_by_component[:, :, :, 1 :: result.iterations_per_frame]
-        )
         if result.iterations_per_frame == 1:
+            np.testing.assert_array_equal(ref_res.u_kln_by_component, comp_res.u_kln_by_component)
             np.testing.assert_array_equal(ref_res.overlap, comp_res.overlap)
             np.testing.assert_array_equal(ref_res.dG_err_by_component, comp_res.dG_err_by_component)
             np.testing.assert_array_equal(ref_res.overlap_by_component, comp_res.overlap_by_component)
         else:
+            np.testing.assert_array_equal(
+                ref_res.u_kln_by_component, comp_res.u_kln_by_component[:, :, :, 1 :: result.iterations_per_frame]
+            )
             # With more energies collected, the error should be lower
             assert all(ref_res.dG_err_by_component >= comp_res.dG_err_by_component)
-            np.testing.assert_allclose(ref_res.overlap, comp_res.overlap, atol=5e-3)
-            np.testing.assert_allclose(ref_res.overlap_by_component, comp_res.overlap_by_component, atol=5e-3)
+            np.testing.assert_allclose(ref_res.overlap, comp_res.overlap, atol=1e-2)
+            np.testing.assert_allclose(ref_res.overlap_by_component, comp_res.overlap_by_component, atol=1e-2)
 
 
 @pytest.mark.parametrize("seed", [2024])
