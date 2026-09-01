@@ -80,8 +80,12 @@ ConstraintGroups<RealType>::ConstraintGroups(
     cudaSafeMalloc(&d_unadjusted_group_coords_,
                    this->batch_size_ * total_atoms_in_constraints_ * 3 *
                        sizeof(*d_unadjusted_group_coords_));
+    cudaSafeMalloc(&d_unadjusted_group_deltas_,
+                   this->batch_size_ * flat_distances.size() * 3 *
+                       sizeof(*d_unadjusted_group_deltas_));
   } else {
     d_unadjusted_group_coords_ = nullptr;
+    d_unadjusted_group_deltas_ = nullptr;
   }
 
   k_invert_array<RealType>
@@ -103,6 +107,9 @@ template <typename RealType> ConstraintGroups<RealType>::~ConstraintGroups() {
   if (d_unadjusted_group_coords_ != nullptr) {
     gpuErrchk(cudaFree(d_unadjusted_group_coords_));
   }
+  if (d_unadjusted_group_deltas_ != nullptr) {
+    gpuErrchk(cudaFree(d_unadjusted_group_deltas_));
+  }
 }
 
 template <typename RealType>
@@ -115,6 +122,57 @@ void ConstraintGroups<RealType>::constrain_positions(
     return;
   }
   this->run_shake(num_systems, N, d_x_t, idxs, store_current_x, stream);
+}
+
+template <typename RealType>
+void ConstraintGroups<RealType>::store_constraint_deltas(
+    const int num_systems, const int N, const RealType *d_x_t,
+    const unsigned int *idxs, cudaStream_t stream) const {
+  constexpr int D = 3;
+  constexpr int tpb = DEFAULT_THREADS_PER_BLOCK;
+  const dim3 constraint_dim(ceil_divide(max(1, n_groups_), tpb), num_systems);
+  switch (max_group_size_) {
+  case 2:
+    k_copy_constraint_deltas<RealType, D, 2>
+        <<<constraint_dim, tpb, 0, stream>>>(
+            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
+            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
+    break;
+  case 3:
+    k_copy_constraint_deltas<RealType, D, 3>
+        <<<constraint_dim, tpb, 0, stream>>>(
+            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
+            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
+    break;
+  case 4:
+    k_copy_constraint_deltas<RealType, D, 4>
+        <<<constraint_dim, tpb, 0, stream>>>(
+            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
+            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
+    break;
+  case 5:
+    k_copy_constraint_deltas<RealType, D, 5>
+        <<<constraint_dim, tpb, 0, stream>>>(
+            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
+            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
+    break;
+  case 6:
+    k_copy_constraint_deltas<RealType, D, 6>
+        <<<constraint_dim, tpb, 0, stream>>>(
+            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
+            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
+    break;
+  case 7:
+    k_copy_constraint_deltas<RealType, D, 7>
+        <<<constraint_dim, tpb, 0, stream>>>(
+            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
+            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
+    break;
+  default:
+    throw std::runtime_error("Unexpected group size " +
+                             std::to_string(max_group_size_));
+  }
+  gpuErrchk(cudaPeekAtLastError());
 }
 
 template <typename RealType>
@@ -182,42 +240,42 @@ void ConstraintGroups<RealType>::run_shake(const int num_systems, const int N,
     k_apply_shake<RealType, D, 2><<<constraint_dim, tpb, 0, stream>>>(
         num_systems, N, iterations_, n_groups_, tolerance_, idxs,
         d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
-        d_inv_masses_, d_x_t,
+        d_inv_masses_, d_unadjusted_group_deltas_, d_x_t,
         store_current_x ? d_unadjusted_group_coords_ : nullptr);
     break;
   case 3:
     k_apply_shake<RealType, D, 3><<<constraint_dim, tpb, 0, stream>>>(
         num_systems, N, iterations_, n_groups_, tolerance_, idxs,
         d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
-        d_inv_masses_, d_x_t,
+        d_inv_masses_, d_unadjusted_group_deltas_, d_x_t,
         store_current_x ? d_unadjusted_group_coords_ : nullptr);
     break;
   case 4:
     k_apply_shake<RealType, D, 4><<<constraint_dim, tpb, 0, stream>>>(
         num_systems, N, iterations_, n_groups_, tolerance_, idxs,
         d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
-        d_inv_masses_, d_x_t,
+        d_inv_masses_, d_unadjusted_group_deltas_, d_x_t,
         store_current_x ? d_unadjusted_group_coords_ : nullptr);
     break;
   case 5:
     k_apply_shake<RealType, D, 5><<<constraint_dim, tpb, 0, stream>>>(
         num_systems, N, iterations_, n_groups_, tolerance_, idxs,
         d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
-        d_inv_masses_, d_x_t,
+        d_inv_masses_, d_unadjusted_group_deltas_, d_x_t,
         store_current_x ? d_unadjusted_group_coords_ : nullptr);
     break;
   case 6:
     k_apply_shake<RealType, D, 6><<<constraint_dim, tpb, 0, stream>>>(
         num_systems, N, iterations_, n_groups_, tolerance_, idxs,
         d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
-        d_inv_masses_, d_x_t,
+        d_inv_masses_, d_unadjusted_group_deltas_, d_x_t,
         store_current_x ? d_unadjusted_group_coords_ : nullptr);
     break;
   case 7:
     k_apply_shake<RealType, D, 7><<<constraint_dim, tpb, 0, stream>>>(
         num_systems, N, iterations_, n_groups_, tolerance_, idxs,
         d_group_offsets_, d_group_indices_, d_distance_offsets_, d_distances_,
-        d_inv_masses_, d_x_t,
+        d_inv_masses_, d_unadjusted_group_deltas_, d_x_t,
         store_current_x ? d_unadjusted_group_coords_ : nullptr);
     break;
   default:
@@ -253,11 +311,16 @@ RealType *ConstraintGroups<RealType>::constrain_positions_host(
     d_idxs_buffer.copy_from(h_idxs);
   }
 
-  constrain_positions(num_systems, N, d_coords.data,
-                      h_idxs ? d_idxs_buffer.data : nullptr, false,
-                      static_cast<cudaStream_t>(0));
+  cudaStream_t stream = static_cast<cudaStream_t>(0);
 
-  gpuErrchk(cudaStreamSynchronize(static_cast<cudaStream_t>(0)));
+  if (n_groups_ > 0) {
+    store_constraint_deltas(num_systems, N, d_coords.data,
+                            h_idxs ? d_idxs_buffer.data : nullptr, stream);
+  }
+  constrain_positions(num_systems, N, d_coords.data,
+                      h_idxs ? d_idxs_buffer.data : nullptr, false, stream);
+
+  gpuErrchk(cudaStreamSynchronize(stream));
 
   RealType *h_result = nullptr;
   cudaMallocHost(&h_result, total_elements * sizeof(RealType));

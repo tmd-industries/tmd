@@ -38,8 +38,9 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
               const int *__restrict__ distance_offsets, // [n_groups + 1]
               const RealType *__restrict__ distances,
               const RealType *__restrict__ inv_masses, // [num_systems, N]
-              RealType *__restrict__ x_t,              // [num_systems, N, D]
-              RealType *__restrict__ x_t_copy          // [atoms_in_group, 3]
+              const RealType *__restrict__ constraint_deltas, // [distances, 3]
+              RealType *__restrict__ x_t,     // [num_systems, N, D]
+              RealType *__restrict__ x_t_copy // [atoms_in_group, 3]
 ) {
 
   const int system_idx = blockIdx.y;
@@ -50,6 +51,8 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
   // Will be zero if aren't copying out initial coordinates
   const int atoms_in_constraints =
       x_t_copy != nullptr ? group_offsets[n_groups] : 0;
+
+  const int num_deltas = distance_offsets[n_groups];
 
   int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (kernel_idx < n_groups) {
@@ -87,9 +90,13 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
       const RealType atom_x = x_t[system_idx * N * D + atom_idx * D + 0];
       const RealType atom_y = x_t[system_idx * N * D + atom_idx * D + 1];
       const RealType atom_z = x_t[system_idx * N * D + atom_idx * D + 2];
-      ref_deltas[j][0] = anchor_x - atom_x;
-      ref_deltas[j][1] = anchor_y - atom_y;
-      ref_deltas[j][2] = anchor_z - atom_z;
+      // Retrieve the deltas
+      ref_deltas[j][0] = constraint_deltas[system_idx * num_deltas * D +
+                                           (dist_start + j) * D + 0];
+      ref_deltas[j][1] = constraint_deltas[system_idx * num_deltas * D +
+                                           (dist_start + j) * D + 1];
+      ref_deltas[j][2] = constraint_deltas[system_idx * num_deltas * D +
+                                           (dist_start + j) * D + 2];
 
       if (atoms_in_constraints > 0) {
         x_t_copy[system_idx * atoms_in_constraints * D +
@@ -158,6 +165,66 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
     x_t[system_idx * N * D + anchor_atom * D + 0] = anchor_x;
     x_t[system_idx * N * D + anchor_atom * D + 1] = anchor_y;
     x_t[system_idx * N * D + anchor_atom * D + 2] = anchor_z;
+
+    kernel_idx += gridDim.x * blockDim.x;
+  }
+}
+
+template <typename RealType, int D, int MAX_GROUP_SIZE>
+__global__ void k_copy_constraint_deltas(
+    const int num_systems, const int N, const int n_groups,
+    const unsigned int *__restrict__ idxs, // [num_systems, N]
+    const int *__restrict__ group_offsets, // [n_groups + 1]
+    const int *__restrict__ group_indices,
+    const int *__restrict__ distance_offsets, // [n_groups + 1]
+    const RealType *__restrict__ x_t,         // [num_systems, N, D]
+    RealType *__restrict__ delta_output       // [atoms_in_group, 3]
+) {
+
+  const int system_idx = blockIdx.y;
+  if (system_idx >= num_systems) {
+    return;
+  }
+
+  // The total number of distances and deltas are identical, allowing us to use
+  // distances offset here.
+  const int num_deltas = distance_offsets[n_groups];
+
+  int kernel_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (kernel_idx < n_groups) {
+    const int dist_start = distance_offsets[kernel_idx];
+    const int offset_start = group_offsets[kernel_idx];
+    const int offset_end = group_offsets[kernel_idx + 1];
+    const int anchor_atom = group_indices[offset_start];
+
+    // If the anchor atom is frozen, all of the other atoms in the constraint
+    // group are expected to be frozen.
+    if (idxs == nullptr ? false : idxs[system_idx * N + anchor_atom] >= N) {
+      kernel_idx += gridDim.x * blockDim.x;
+      continue;
+    }
+
+    const int n_hydrogens = (offset_end - offset_start) - 1;
+
+    RealType anchor_x = x_t[system_idx * N * D + anchor_atom * D + 0];
+    RealType anchor_y = x_t[system_idx * N * D + anchor_atom * D + 1];
+    RealType anchor_z = x_t[system_idx * N * D + anchor_atom * D + 2];
+
+    // Setup the reference distances using the initial coordinates
+    RealType ref_deltas[MAX_GROUP_SIZE][D];
+    for (int j = 0; j < n_hydrogens; j++) {
+      int atom_idx = group_indices[offset_start + j + 1];
+      const RealType atom_x = x_t[system_idx * N * D + atom_idx * D + 0];
+      const RealType atom_y = x_t[system_idx * N * D + atom_idx * D + 1];
+      const RealType atom_z = x_t[system_idx * N * D + atom_idx * D + 2];
+
+      delta_output[system_idx * num_deltas * D + (dist_start + j) * D + 0] =
+          anchor_x - atom_x;
+      delta_output[system_idx * num_deltas * D + (dist_start + j) * D + 1] =
+          anchor_y - atom_y;
+      delta_output[system_idx * num_deltas * D + (dist_start + j) * D + 2] =
+          anchor_z - atom_z;
+    }
 
     kernel_idx += gridDim.x * blockDim.x;
   }

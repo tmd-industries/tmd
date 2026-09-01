@@ -31,9 +31,16 @@ void ConstrainedLangevinIntegrator<RealType>::step_fwd(
                                    d_box_t,
                                    this->d_du_dx_, // we only need the forces
                                    nullptr, nullptr, stream);
+  const int num_groups = constraints_->n_groups();
+
   constexpr int D = 3;
   constexpr int tpb = DEFAULT_THREADS_PER_BLOCK;
   const dim3 intg_dim(ceil_divide(this->N_, tpb), this->batch_size_);
+
+  if (num_groups > 0) {
+    constraints_->store_constraint_deltas(this->batch_size_, this->N_, d_x_t,
+                                          d_idxs, stream);
+  }
 
   // Perform the initial Kick that adjusts velocity based on forces
   k_update_forward_kick<RealType, D><<<intg_dim, tpb, 0, stream>>>(
@@ -50,8 +57,6 @@ void ConstrainedLangevinIntegrator<RealType>::step_fwd(
 
   constraints_->constrain_positions(this->batch_size_, this->N_, d_x_t, d_idxs,
                                     true, stream);
-
-  const int num_groups = constraints_->n_groups();
 
   // Correct the final velocities, only if constrains are being applied
   if (num_groups > 0) {

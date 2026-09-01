@@ -20,6 +20,9 @@ private:
   int *d_group_indices_;
   int *d_distance_offsets_;
   RealType *d_distances_;
+
+  // Vectors of the constraint groups prior to running a step
+  RealType *d_unadjusted_group_deltas_;
   // Optionally store positions of constrained atoms before applying positional
   // restraints Useful for some integrators (BAOAB notably)
   RealType *d_unadjusted_group_coords_;
@@ -53,6 +56,10 @@ public:
   RealType *get_previous_group_coords() const {
     return d_unadjusted_group_coords_;
   }
+
+  void store_constraint_deltas(const int num_systems, const int N,
+                               const RealType *d_x_t, const unsigned int *idxs,
+                               cudaStream_t stream) const;
 
   void constrain_positions(const int num_systems, const int N, RealType *d_x_t,
                            const unsigned int *idxs, const bool store_current_x,
