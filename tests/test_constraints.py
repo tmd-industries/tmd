@@ -6,6 +6,7 @@ from rdkit import Chem
 from tmd.fe.topology import BaseTopology
 from tmd.fe.utils import get_mol_masses, get_romol_conf
 from tmd.ff import Forcefield
+from tmd.integrator import ConstraintSolver
 from tmd.lib import ConstraintGroups, custom_ops
 from tmd.md.constraints.utils import get_hydrogen_bond_constraint_groups, prune_constrained_valence_terms
 from tmd.potentials import HarmonicBond
@@ -250,6 +251,69 @@ def test_constrain_positions_water(precision, water_mol, ff):
             assert np.abs(dist - target_dist) <= tol, (
                 f"Constraint violated: |dist - target| = {np.abs(dist - target_dist):.2e} for atoms ({anchor}, {atom})"
             )
+
+
+def _max_constraint_violation(x, groups, distances):
+    violations = []
+    for group, dists in zip(groups, distances):
+        anchor = group[0]
+        for atom, target_dist in zip(group[1:], dists):
+            dist = np.linalg.norm(x[anchor] - x[atom])
+            violations.append(abs(dist - target_dist))
+    return max(violations)
+
+
+def _perturb_coordinates(x0, rng, magnitude: float = 1.0):
+    """Perturb every atom by some quantity. This should result in coordinates that are
+    difficult to fix up with constraints
+    """
+    return x0 + magnitude * rng.normal(size=x0.shape)
+
+
+@pytest.mark.parametrize("precision", [np.float32, np.float64])
+@pytest.mark.parametrize("seed", range(5))
+def test_constrain_positions_strongly_perturbed_water(precision, seed, water_mol, ff):
+    rng = np.random.default_rng(seed)
+    bt = BaseTopology(water_mol, ff)
+    masses = get_mol_masses(water_mol).astype(precision)
+    constraints_obj = bt.get_constraint_groups()
+
+    tol = 1e-6
+    if precision == np.float64:
+        tol = 1e-8
+
+    constraints = (
+        custom_ops.ConstraintGroups_f32(
+            masses, constraints_obj.groups, [[float(x) for x in d] for d in constraints_obj.distances], 15, tol
+        )
+        if precision == np.float32
+        else custom_ops.ConstraintGroups_f64(
+            masses, constraints_obj.groups, [[float(x) for x in d] for d in constraints_obj.distances], 15, tol
+        )
+    )
+
+    x0 = get_romol_conf(water_mol).astype(precision)
+    constrained = constraints.constrain_positions(_perturb_coordinates(x0, rng).astype(precision))
+
+    violation = _max_constraint_violation(constrained, constraints_obj.groups, constraints_obj.distances)
+    assert violation < tol, f"Constraint violation {violation:.2e} >= {tol:.0e} (seed={seed}, precision={precision})"
+
+
+@pytest.mark.nocuda
+@pytest.mark.parametrize("seed", range(5))
+def test_reference_shake_strongly_perturbed_water(seed, water_mol, ff):
+    rng = np.random.default_rng(seed)
+    bt = BaseTopology(water_mol, ff)
+    masses = np.array(get_mol_masses(water_mol), dtype=np.float64)
+    constraints_obj = bt.get_constraint_groups()
+
+    solver = ConstraintSolver(masses, constraints_obj.groups, constraints_obj.distances)
+    x0 = np.array(get_romol_conf(water_mol), dtype=np.float64)
+
+    constrained = solver.apply_shake(_perturb_coordinates(x0, rng))
+
+    violation = _max_constraint_violation(constrained, constraints_obj.groups, constraints_obj.distances)
+    assert violation < 1e-8, f"Constraint violation {violation:.2e} >= 1e-8 (seed={seed})"
 
 
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
