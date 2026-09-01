@@ -86,10 +86,6 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
     // Setup the reference distances using the initial coordinates
     RealType ref_deltas[MAX_GROUP_SIZE][D];
     for (int j = 0; j < n_hydrogens; j++) {
-      int atom_idx = group_indices[offset_start + j + 1];
-      const RealType atom_x = x_t[system_idx * N * D + atom_idx * D + 0];
-      const RealType atom_y = x_t[system_idx * N * D + atom_idx * D + 1];
-      const RealType atom_z = x_t[system_idx * N * D + atom_idx * D + 2];
       // Retrieve the deltas
       ref_deltas[j][0] = constraint_deltas[system_idx * num_deltas * D +
                                            (dist_start + j) * D + 0];
@@ -99,12 +95,16 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
                                            (dist_start + j) * D + 2];
 
       if (atoms_in_constraints > 0) {
+        const int atom_idx = group_indices[offset_start + j + 1];
         x_t_copy[system_idx * atoms_in_constraints * D +
-                 (offset_start + j + 1) * D + 0] = atom_x;
+                 (offset_start + j + 1) * D + 0] =
+            x_t[system_idx * N * D + atom_idx * D + 0];
         x_t_copy[system_idx * atoms_in_constraints * D +
-                 (offset_start + j + 1) * D + 1] = atom_y;
+                 (offset_start + j + 1) * D + 1] =
+            x_t[system_idx * N * D + atom_idx * D + 1];
         x_t_copy[system_idx * atoms_in_constraints * D +
-                 (offset_start + j + 1) * D + 2] = atom_z;
+                 (offset_start + j + 1) * D + 2] =
+            x_t[system_idx * N * D + atom_idx * D + 2];
       }
     }
 
@@ -170,6 +170,27 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
   }
 }
 
+/**
+ * CUDA kernel storing the constraint vectors given the initial positions.
+ * Used downstream in k_apply_shake.
+ *
+ * @tparam RealType Floating-point type (e.g. float, double).
+ * @tparam D Number of dimensions
+ * @tparam MAX_GROUP_SIZE Max number of non-anchor atoms per group.
+ * @param num_systems Number of independent systems processed in parallel.
+ * @param N Number of atoms per system.
+ * @param n_groups Total number of groups across all systems.
+ * @param idxs Optional [num_systems x N] array; if non-null, entries < N
+ *             mark frozen atoms.
+ * @param group_offsets [n_groups + 1] start/end indices into group_indices.
+ * @param group_indices Flattened list of atom indices per group; first entry
+ *                      is the anchor.
+ * @param distance_offsets [n_groups + 1] start/end indices into distance of
+ * constraints. Reused for delta offsets.
+ * @param x_t [num_systems x N x D] position array (read-only).
+ * @param delta_output [num_systems x atoms_in_group x D] Stores the vectors
+ * associated with each constraint.
+ */
 template <typename RealType, int D, int MAX_GROUP_SIZE>
 __global__ void k_copy_constraint_deltas(
     const int num_systems, const int N, const int n_groups,
@@ -178,7 +199,7 @@ __global__ void k_copy_constraint_deltas(
     const int *__restrict__ group_indices,
     const int *__restrict__ distance_offsets, // [n_groups + 1]
     const RealType *__restrict__ x_t,         // [num_systems, N, D]
-    RealType *__restrict__ delta_output       // [atoms_in_group, 3]
+    RealType *__restrict__ ref_vectors // [num_systems, atoms_in_group, 3]
 ) {
 
   const int system_idx = blockIdx.y;
@@ -216,11 +237,11 @@ __global__ void k_copy_constraint_deltas(
       const RealType atom_y = x_t[system_idx * N * D + atom_idx * D + 1];
       const RealType atom_z = x_t[system_idx * N * D + atom_idx * D + 2];
 
-      delta_output[system_idx * num_deltas * D + (dist_start + j) * D + 0] =
+      ref_vectors[system_idx * num_deltas * D + (dist_start + j) * D + 0] =
           anchor_x - atom_x;
-      delta_output[system_idx * num_deltas * D + (dist_start + j) * D + 1] =
+      ref_vectors[system_idx * num_deltas * D + (dist_start + j) * D + 1] =
           anchor_y - atom_y;
-      delta_output[system_idx * num_deltas * D + (dist_start + j) * D + 2] =
+      ref_vectors[system_idx * num_deltas * D + (dist_start + j) * D + 2] =
           anchor_z - atom_z;
     }
 
