@@ -152,6 +152,27 @@ def test_empty_constraints(precision, simple_mol):
     assert constraints.n_groups() == 0
 
 
+@pytest.mark.parametrize("precision", [np.float32])
+def test_wrong_number_of_systems_for_constraints(precision, simple_mol):
+    masses = get_mol_masses(simple_mol).astype(precision)
+    constraints = (
+        custom_ops.ConstraintGroups_f32(masses, [], [], 15, 1e-8)
+        if precision == np.float32
+        else custom_ops.ConstraintGroups_f64(masses, [], [], 15, 1e-8)
+    )
+    assert constraints.num_systems() == 1
+    assert constraints.num_atoms() == len(masses)
+    assert constraints.n_groups() == 0
+
+    x0 = get_romol_conf(simple_mol).astype(precision)
+
+    constrained = constraints.constrain_positions(x0)
+    np.testing.assert_array_equal(x0, constrained)
+
+    with pytest.raises(RuntimeError, match="number of systems must match, got 3 expected 1"):
+        constraints.constrain_positions(np.stack([x0] * 3))
+
+
 @pytest.mark.parametrize("precision", [np.float32, np.float64])
 def test_single_group_constraints(precision, water_mol, ff):
     bt = BaseTopology(water_mol, ff)

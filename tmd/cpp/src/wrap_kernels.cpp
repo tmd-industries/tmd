@@ -1133,6 +1133,13 @@ void declare_constraint_groups(py::module &m, const char *typestr) {
               num_atoms = coords.shape()[1];
             }
 
+            if (num_systems != constraints.num_systems()) {
+              throw std::runtime_error(
+                  "number of systems must match, got " +
+                  std::to_string(num_systems) + " expected " +
+                  std::to_string(constraints.num_systems()));
+            }
+
             if (num_atoms != constraints.num_atoms()) {
               throw std::runtime_error("coords N does not match constraints N");
             }
