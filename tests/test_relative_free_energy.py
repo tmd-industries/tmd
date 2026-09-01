@@ -34,6 +34,7 @@ from tmd.fe.rbfe import (
     estimate_relative_free_energy_bisection,
     estimate_relative_free_energy_bisection_hrex,
     rebalance_lambda_schedule,
+    run_complex_with_host_config,
     run_solvent,
     run_vacuum,
 )
@@ -42,6 +43,49 @@ from tmd.md import builders
 from tmd.md.barostat.utils import compute_box_center
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 from tmd.utils import path_to_internal_file
+
+
+def test_run_complex_with_host_config():
+    mol_a = Mock()
+    mol_b = Mock()
+    core = Mock()
+    forcefield = Mock()
+    host_config = Mock()
+    optimized_host_config = Mock()
+    md_params = Mock(seed=2026)
+    expected_result = Mock()
+
+    with (
+        patch("tmd.fe.rbfe.setup_optimized_host", return_value=optimized_host_config) as setup_optimized_host,
+        patch("tmd.fe.rbfe.estimate_relative_free_energy_bisection_or_hrex", return_value=expected_result) as estimate,
+    ):
+        result, returned_host_config = run_complex_with_host_config(
+            mol_a,
+            mol_b,
+            core,
+            forcefield,
+            host_config,
+            md_params,
+            n_windows=12,
+            min_overlap=0.1,
+            min_cutoff=0.5,
+        )
+
+    assert result is expected_result
+    assert returned_host_config is optimized_host_config
+    setup_optimized_host.assert_called_once_with(host_config, [mol_a, mol_b], forcefield, seed=md_params.seed)
+    estimate.assert_called_once_with(
+        mol_a,
+        mol_b,
+        core,
+        forcefield,
+        optimized_host_config,
+        prefix="complex",
+        md_params=md_params,
+        n_windows=12,
+        min_overlap=0.1,
+        min_cutoff=0.5,
+    )
 
 
 def run_triple(mol_a, mol_b, core, forcefield, md_params: MDParams, protein_path, estimate_relative_free_energy_fn):
