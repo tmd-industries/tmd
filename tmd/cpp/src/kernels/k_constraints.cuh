@@ -210,8 +210,6 @@ __global__ void k_copy_constraint_deltas(
     RealType anchor_y = x_t[system_idx * N * D + anchor_atom * D + 1];
     RealType anchor_z = x_t[system_idx * N * D + anchor_atom * D + 2];
 
-    // Setup the reference distances using the initial coordinates
-    RealType ref_deltas[MAX_GROUP_SIZE][D];
     for (int j = 0; j < n_hydrogens; j++) {
       int atom_idx = group_indices[offset_start + j + 1];
       const RealType atom_x = x_t[system_idx * N * D + atom_idx * D + 0];
