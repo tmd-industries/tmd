@@ -210,15 +210,14 @@ class ConstraintSolver:
         np.ndarray
             The corrected position array (new array).
         """
+        x = x.copy()
         if len(self.constraint_groups) == 0:
-            return x.copy()
-        x_ref = x.copy()
+            return x
         for group, dists in zip(self.constraint_groups, self.constraint_distances):
             anchor = group[0]
             for i in range(self._max_iter):
                 converged = True
                 for atom, target_dist in zip(group[1:], dists):
-                    delta_ref = x_ref[anchor] - x_ref[atom]
                     target_dist_2 = target_dist**2
                     delta = x[anchor] - x[atom]
                     dist2 = np.dot(delta, delta)
@@ -228,12 +227,12 @@ class ConstraintSolver:
                     inv_mi = self._inv_masses[anchor]
                     inv_mj = self._inv_masses[atom]
                     converged = False
-                    denom = 2.0 * (inv_mi + inv_mj) * np.dot(delta, delta_ref)
+                    denom = 2.0 * (inv_mi + inv_mj) * dist2
                     if np.allclose(denom, 0.0):
                         continue
                     grad = diff / denom
-                    x[anchor] -= grad * inv_mi * delta_ref
-                    x[atom] += grad * inv_mj * delta_ref
+                    x[anchor] -= grad * inv_mi * delta
+                    x[atom] += grad * inv_mj * delta
                 if converged:
                     break
         return x
