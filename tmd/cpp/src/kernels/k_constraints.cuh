@@ -80,20 +80,24 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
 
     const RealType inv_anchor_mass = inv_masses[system_idx * N + anchor_atom];
 
-    // Copy the input (pre-SHAKE) coordinates so the velocities can be
-    // corrected downstream
+    // Setup the reference distances using the initial coordinates
+    RealType ref_deltas[MAX_GROUP_SIZE][D];
     for (int j = 0; j < n_hydrogens; j++) {
       int atom_idx = group_indices[offset_start + j + 1];
+      const RealType atom_x = x_t[system_idx * N * D + atom_idx * D + 0];
+      const RealType atom_y = x_t[system_idx * N * D + atom_idx * D + 1];
+      const RealType atom_z = x_t[system_idx * N * D + atom_idx * D + 2];
+      ref_deltas[j][0] = anchor_x - atom_x;
+      ref_deltas[j][1] = anchor_y - atom_y;
+      ref_deltas[j][2] = anchor_z - atom_z;
+
       if (atoms_in_constraints > 0) {
         x_t_copy[system_idx * atoms_in_constraints * D +
-                 (offset_start + j + 1) * D + 0] =
-            x_t[system_idx * N * D + atom_idx * D + 0];
+                 (offset_start + j + 1) * D + 0] = atom_x;
         x_t_copy[system_idx * atoms_in_constraints * D +
-                 (offset_start + j + 1) * D + 1] =
-            x_t[system_idx * N * D + atom_idx * D + 1];
+                 (offset_start + j + 1) * D + 1] = atom_y;
         x_t_copy[system_idx * atoms_in_constraints * D +
-                 (offset_start + j + 1) * D + 2] =
-            x_t[system_idx * N * D + atom_idx * D + 2];
+                 (offset_start + j + 1) * D + 2] = atom_z;
       }
     }
 
@@ -123,8 +127,11 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
           continue;
         }
 
+        RealType delta_dot_ref = (delta_x * ref_deltas[j][0]) +
+                                 (delta_y * ref_deltas[j][1]) +
+                                 (delta_z * ref_deltas[j][2]);
         RealType denom = static_cast<RealType>(2.0) *
-                         (inv_anchor_mass + inv_atom_mass) * dist2;
+                         (inv_anchor_mass + inv_atom_mass) * delta_dot_ref;
         // If the denominator is very small, skip
         if (fabs(denom) < static_cast<RealType>(1e-8)) {
           continue;
@@ -132,16 +139,16 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
         converged = false;
         RealType grad = diff / denom;
 
-        anchor_x -= inv_anchor_mass * grad * delta_x;
-        anchor_y -= inv_anchor_mass * grad * delta_y;
-        anchor_z -= inv_anchor_mass * grad * delta_z;
+        anchor_x -= inv_anchor_mass * grad * ref_deltas[j][0];
+        anchor_y -= inv_anchor_mass * grad * ref_deltas[j][1];
+        anchor_z -= inv_anchor_mass * grad * ref_deltas[j][2];
 
         x_t[system_idx * N * D + atom_idx * D + 0] +=
-            inv_atom_mass * grad * delta_x;
+            inv_atom_mass * grad * ref_deltas[j][0];
         x_t[system_idx * N * D + atom_idx * D + 1] +=
-            inv_atom_mass * grad * delta_y;
+            inv_atom_mass * grad * ref_deltas[j][1];
         x_t[system_idx * N * D + atom_idx * D + 2] +=
-            inv_atom_mass * grad * delta_z;
+            inv_atom_mass * grad * ref_deltas[j][2];
       }
       if (converged) {
         break;
