@@ -164,6 +164,19 @@ def summarize_protocol(lambdas, dist_fxn):
     return neighbor_distances
 
 
+def test_greedily_optimize_protocol_snaps_to_endpoint_within_bisection_tolerance():
+    bisection_xtol = 1e-4
+    target_distance = 0.99996
+
+    protocol = greedily_optimize_protocol(
+        lambda prev_lam, next_lam: next_lam - prev_lam,
+        target_distance,
+        bisection_xtol=bisection_xtol,
+    )
+
+    np.testing.assert_array_equal(protocol, [0.0, 1.0])
+
+
 @pytest.mark.nocuda
 def test_overlap_rebalancing_on_gaussian():
     # initial_lams = linspace(0,1), along a path where nonuniform lams are probably better

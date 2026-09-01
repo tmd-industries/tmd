@@ -396,6 +396,9 @@ def greedily_optimize_protocol(
             b=end_lamb,
             xtol=bisection_xtol,
         )
+        # Avoid a numerically redundant final state at the precision of the bisection search.
+        if abs(next_lam - end_lamb) <= bisection_xtol:
+            next_lam = end_lamb
         protocol.append(next_lam)
 
         if t == max_iterations - 1:
