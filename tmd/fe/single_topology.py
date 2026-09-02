@@ -1564,7 +1564,9 @@ class SingleTopology(AtomMapMixin):
         )
 
         # Find all atoms that are terminal, to flag the pairs of interactions
-        # between terminal atoms to scale them at a different rate to other pairwise interactions.
+        # that involve a terminal atom to scale them at a different rate to other pairwise interactions.
+        # Note that this will only impact the terminal interactions of dummy atoms. Core-core terminal interactions
+        # are not scaled differently, only Dummy-Dummy and Dummy-Core
         terminal_atom_idxs = set()
         for a in self.mol_a.GetAtoms():
             if len(a.GetNeighbors()) == 1:
@@ -1575,7 +1577,7 @@ class SingleTopology(AtomMapMixin):
                 terminal_atom_idxs.add(self.b_to_c[a.GetIdx()])
 
         idxs = idxs.reshape(-1, 2)
-        terminal_flags = jnp.array([len(set(pair).intersection(terminal_atom_idxs)) == 2 for pair in idxs])
+        terminal_flags = jnp.array([len(set(pair).intersection(terminal_atom_idxs)) >= 1 for pair in idxs])
         src_params = src_params.reshape(-1, 4)
         dst_params = dst_params.reshape(-1, 4)
         return AlignedNonbondedPairlist(
