@@ -131,47 +131,9 @@ void ConstraintGroups<RealType>::store_constraint_deltas(
   constexpr int D = 3;
   constexpr int tpb = DEFAULT_THREADS_PER_BLOCK;
   const dim3 constraint_dim(ceil_divide(max(1, n_groups_), tpb), num_systems);
-  switch (max_group_size_) {
-  case 2:
-    k_copy_constraint_deltas<RealType, D, 2>
-        <<<constraint_dim, tpb, 0, stream>>>(
-            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
-            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
-    break;
-  case 3:
-    k_copy_constraint_deltas<RealType, D, 3>
-        <<<constraint_dim, tpb, 0, stream>>>(
-            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
-            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
-    break;
-  case 4:
-    k_copy_constraint_deltas<RealType, D, 4>
-        <<<constraint_dim, tpb, 0, stream>>>(
-            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
-            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
-    break;
-  case 5:
-    k_copy_constraint_deltas<RealType, D, 5>
-        <<<constraint_dim, tpb, 0, stream>>>(
-            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
-            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
-    break;
-  case 6:
-    k_copy_constraint_deltas<RealType, D, 6>
-        <<<constraint_dim, tpb, 0, stream>>>(
-            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
-            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
-    break;
-  case 7:
-    k_copy_constraint_deltas<RealType, D, 7>
-        <<<constraint_dim, tpb, 0, stream>>>(
-            num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
-            d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
-    break;
-  default:
-    throw std::runtime_error("Unexpected group size " +
-                             std::to_string(max_group_size_));
-  }
+  k_copy_constraint_deltas<RealType, D><<<constraint_dim, tpb, 0, stream>>>(
+      num_systems, N, n_groups_, idxs, d_group_offsets_, d_group_indices_,
+      d_distance_offsets_, d_x_t, d_unadjusted_group_deltas_);
   gpuErrchk(cudaPeekAtLastError());
 }
 

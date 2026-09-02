@@ -176,7 +176,6 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
  *
  * @tparam RealType Floating-point type (e.g. float, double).
  * @tparam D Number of dimensions
- * @tparam MAX_GROUP_SIZE Max number of non-anchor atoms per group.
  * @param num_systems Number of independent systems processed in parallel.
  * @param N Number of atoms per system.
  * @param n_groups Total number of groups across all systems.
@@ -191,7 +190,7 @@ k_apply_shake(const int num_systems, const int N, const int iterations,
  * @param delta_output [num_systems x atoms_in_group x D] Stores the vectors
  * associated with each constraint.
  */
-template <typename RealType, int D, int MAX_GROUP_SIZE>
+template <typename RealType, int D>
 __global__ void k_copy_constraint_deltas(
     const int num_systems, const int N, const int n_groups,
     const unsigned int *__restrict__ idxs, // [num_systems, N]
