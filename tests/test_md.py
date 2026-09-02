@@ -1692,7 +1692,7 @@ def test_local_md_setting_params_on_bp_potentials(freeze_reference, dt, num_syst
 
     ctxt = Context(coords_batch, v0_batch, box_batch, intg.impl(), bound_impls)
 
-    xs, boxes = ctxt.multiple_steps(2000)
+    xs, boxes = ctxt.multiple_steps(4000)
 
     # The initial forces should be reasonable
     du_dx, _ = bps[nb_pot_idx].to_gpu(np.float32).bound_impl.execute(xs[-1], boxes[-1], compute_u=False)
