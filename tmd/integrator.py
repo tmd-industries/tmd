@@ -363,7 +363,7 @@ class ConstrainedLangevinIntegrator(LangevinIntegrator):
         v_mid = self._solver.apply_velocity_constraints(x, v_mid)
         new_v = (self.ca * v_mid) + (self.cc * noise)
         preconstrained = x + 0.5 * self.dt * (v_mid + new_v)
-        new_x = self._solver.apply_positional_constraints(preconstrained)
+        new_x = self._solver.apply_positional_constraints(preconstrained, x_init=x)
         # Adjust the velocities by the change in the positions
         # Ref: https://github.com/choderalab/integrator-benchmark/blob/bb307e6ebf476b652e62e41ae49730f530732da3/benchmark/integrators/langevin.py#L130-L133
         new_v += (new_x - preconstrained) / self.dt
