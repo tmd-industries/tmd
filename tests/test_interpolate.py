@@ -1086,8 +1086,7 @@ def test_core_centered_chiral_restraints_are_interpolated():
     def restrained_substituents(restraints):
         by_center: dict[int, set[int]] = {}
         for row, k in restraints.items():
-            # ignore the small nonzero interpolation floor
-            if k > 1.0:
+            if k > 0:
                 by_center.setdefault(row[0], set()).update(row[1:])
         return by_center
 
