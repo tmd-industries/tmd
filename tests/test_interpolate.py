@@ -995,6 +995,124 @@ def test_core_dummy_chiral_conversion():
         )
 
 
+def get_tert_butanol():
+    return Chem.MolFromMolBlock(
+        """tert-butanol
+     RDKit          3D
+
+ 15 14  0  0  0  0  0  0  0  0999 V2000
+   -1.0193    1.0223   -0.0137 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0656   -0.0248    0.2343 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.2713   -1.3367   -0.4731 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4280    0.4954   -0.2190 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.1452   -0.2730    1.6384 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.1105    1.2646   -1.0775 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.9928    0.6696    0.3456 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.8027    1.9453    0.5362 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4807   -2.1027   -0.2522 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3270   -1.2069   -1.5588 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2304   -1.7349   -0.1227 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.6952    1.4112    0.3208 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2166   -0.2335    0.0005 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4424    0.7091   -1.2927 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7198   -0.6049    1.9340 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  1  0
+  2  4  1  0
+  2  5  1  0
+  1  6  1  0
+  1  7  1  0
+  1  8  1  0
+  3  9  1  0
+  3 10  1  0
+  3 11  1  0
+  4 12  1  0
+  4 13  1  0
+  4 14  1  0
+  5 15  1  0
+M  END
+$$$$""",
+        removeHs=False,
+    )
+
+
+def get_ethanol():
+    return Chem.MolFromMolBlock(
+        """ethanol
+     RDKit          3D
+
+  9  8  0  0  0  0  0  0  0  0999 V2000
+   -0.8662   -0.1265    0.2269 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4828    0.4906   -0.0791 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2509   -0.3951   -0.8807 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.4031   -0.3575   -0.6989 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.4769    0.5508    0.8304 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7461   -1.0701    0.7693 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3590    1.4280   -0.6291 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0362    0.7008    0.8411 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.3634   -1.2209   -0.3798 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  1  0
+  1  4  1  0
+  1  5  1  0
+  1  6  1  0
+  2  7  1  0
+  2  8  1  0
+  3  9  1  0
+M  END
+$$$$""",
+        removeHs=False,
+    )
+
+
+def test_core_centered_chiral_restraints_are_interpolated():
+    """Test restraints at a core anchor whose substituents change between end states."""
+    mol_a = get_tert_butanol()
+    mol_b = get_ethanol()
+    core = np.array([[1, 1], [0, 0], [3, 2], [5, 3], [7, 4], [12, 8]], dtype=np.int32)
+
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    st = SingleTopology(mol_a, mol_b, core, ff)
+    core_atoms = st.get_core_atoms()
+
+    def chiral_restraints(lamb):
+        vs = st.setup_intermediate_state(lamb)
+        return {
+            tuple(int(i) for i in row): float(k)
+            for row, k in zip(np.asarray(vs.chiral_atom.potential.idxs), np.asarray(vs.chiral_atom.params))
+            if int(row[0]) in core_atoms
+        }
+
+    def restrained_substituents(restraints):
+        by_center: dict[int, set[int]] = {}
+        for row, k in restraints.items():
+            # ignore the small nonzero interpolation floor
+            if k > 1.0:
+                by_center.setdefault(row[0], set()).update(row[1:])
+        return by_center
+
+    src_restraints = chiral_restraints(0.0)
+    dst_restraints = chiral_restraints(1.0)
+    src = restrained_substituents(src_restraints)
+    dst = restrained_substituents(dst_restraints)
+
+    # each end state contains one tetrahedral substituent set
+    for end_state, name in ((src, "lambda=0"), (dst, "lambda=1")):
+        for center, subs in end_state.items():
+            assert len(subs) <= 4, (
+                f"atom {center} has active chiral restraints involving {len(subs)} substituents "
+                f"at {name}: {sorted(subs)}"
+            )
+
+    converting = [c for c in set(src) & set(dst) if src[c] != dst[c]]
+    assert converting, "expected at least one core center to change its restrained substituent set"
+
+    # converting restraints vary with lambda
+    assert src_restraints.keys() == dst_restraints.keys()
+    converting_restraints = [idxs for idxs in src_restraints if idxs[0] in converting]
+    assert any(abs(src_restraints[idxs] - dst_restraints[idxs]) > 1.0 for idxs in converting_restraints)
+
+
 def _assert_exception_raised_at_least_once_in_interval(lambda_schedule, min_max, fn, expected_exception):
     found = False
     for lam in lambda_schedule:

@@ -674,6 +674,14 @@ def setup_end_state(
     all_dummy_bond_idxs = b_to_c[all_dummy_bond_idxs]
     all_dummy_chiral_atom_idxs = b_to_c[all_dummy_chiral_atom_idxs]
 
+    # drop dummy restraints if the real molecule defines chiral restraints at the anchor
+    # keep them when they are the only chiral restraints at the anchor
+    if len(all_dummy_chiral_atom_idxs) > 0:
+        anchors_with_chiral_restraints = set(mol_a_chiral_atom_idxs[:, 0].tolist())
+        keep = np.array([c not in anchors_with_chiral_restraints for c in all_dummy_chiral_atom_idxs[:, 0]])
+        all_dummy_chiral_atom_idxs = all_dummy_chiral_atom_idxs[keep]
+        all_dummy_chiral_atom_params = all_dummy_chiral_atom_params[keep]
+
     # parameterize the combined molecule
     mol_c_bond_idxs = np.concatenate([mol_a_bond_idxs, all_dummy_bond_idxs])
     mol_c_bond_params = np.concatenate([mol_a_bond_params, all_dummy_bond_params])
