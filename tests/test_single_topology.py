@@ -1356,10 +1356,7 @@ $$$$""",
 
 @pytest.mark.nogpu
 def test_chiral_core_ring_opening():
-    # test that chiral restraints are maintained for dummy atoms when we open/close a ring,
-    # at lambda=0, all 7 chiral restraints are turned on, but at lambda=1
-    # only 4 chiral restraints are turned on.
-
+    """Test four active restraints at each end state and seven during ring opening."""
     mol_a = Chem.MolFromMolBlock(
         """
   Mrv2311 02222400433D
@@ -1409,19 +1406,23 @@ $$$$""",
     # map everything except a single hydrogen at the end
     core = np.array([[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5]])
 
-    # chiral force constants should be on for all 7 chiral
-    # terms at lambda=0
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
     st = SingleTopology(mol_a, mol_b, core, ff)
     vs_0 = st.setup_intermediate_state(0.0)
     chiral_idxs_0 = vs_0.chiral_atom.potential.idxs
     chiral_params_0 = vs_0.chiral_atom.params
     assert len(chiral_idxs_0) == 7
-    assert np.sum(chiral_params_0 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 7
+    # dummy hydrogen restraints are off at lambda=0
+    assert np.sum(chiral_params_0 == 0) == 3
+    assert np.sum(chiral_params_0 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 4
+
+    # both substituent sets are restrained during conversion
+    vs_mid = st.setup_intermediate_state(0.5)
+    assert np.sum(np.isclose(vs_mid.chiral_atom.params, DEFAULT_CHIRAL_ATOM_RESTRAINT_K)) == 7
+
     vs_1 = st.setup_intermediate_state(1.0)
 
-    # chiral force constants should be on for all 4 of the 7
-    # chiral terms at lambda=1
+    # departed atom restraints are off at lambda=1
     chiral_idxs_1 = vs_1.chiral_atom.potential.idxs
     chiral_params_1 = vs_1.chiral_atom.params
     assert len(chiral_idxs_0) == len(chiral_idxs_1)
