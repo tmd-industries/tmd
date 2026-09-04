@@ -451,16 +451,23 @@ def _augment_core_with_hydrogens(
     """
     sq_cutoff = chain_cutoff * chain_cutoff if chain_cutoff is not None else None
 
+    def num_hydrogen_neighbors(atom):
+        return len([x for x in atom.GetNeighbors() if x.GetAtomicNum() == 1])
+
     # --- Phase 1: Hungarian assignment per parent pair (cutoff-aware) ---
     h_pairs_by_parent = {}  # (a_i, b_j) -> list of [ha, hb] pairs
     for a_i, b_j in heavy_core:
         a_i, b_j = int(a_i), int(b_j)
+        hydrogen_neighbors = num_hydrogen_neighbors(mol_a.GetAtomWithIdx(a_i))
         # When preparing a core for hydrogen constraints, never map hydrogens onto
         # a heavy atom that is transmuted between end states (different atomic
         # number): the X-H bond length necessarily differs, so the hydrogen cannot
         # be rigidly constrained at a single length and must remain unmapped.
+        # Similarly if the number of hydrogens bonded to the mapped atoms differ,
+        # leave the hydrogens unmapped
         if constrain_hydrogens and (
             mol_a.GetAtomWithIdx(a_i).GetAtomicNum() != mol_b.GetAtomWithIdx(b_j).GetAtomicNum()
+            or hydrogen_neighbors != num_hydrogen_neighbors(mol_b.GetAtomWithIdx(b_j))
         ):
             continue
         h_a = _get_removable_h_neighbors(mol_a, a_i, removed_h_a)
@@ -471,6 +478,9 @@ def _augment_core_with_hydrogens(
             continue
         pairs = _assign_h_pairs_hungarian(h_a, h_b, conf_a, conf_b, sq_cutoff)
         if len(pairs) > 0:
+            # If the pairs being added don't match the total number of hydrogens of the heavy core atom, leave the hydrogens unmapped
+            if constrain_hydrogens and hydrogen_neighbors != len(pairs):
+                continue
             h_pairs_by_parent[(a_i, b_j)] = pairs
 
     # --- Phase 2: Repair chiral conflicts introduced by H assignments ---
