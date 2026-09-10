@@ -1324,6 +1324,47 @@ def run_solvent(
     return solvent_res, solvent_host_config
 
 
+def run_complex_with_host_config(
+    mol_a: Chem.rdchem.Mol,
+    mol_b: Chem.rdchem.Mol,
+    core: NDArray,
+    forcefield: Forcefield,
+    host_config: HostConfig,
+    md_params: MDParams = DEFAULT_HREX_PARAMS,
+    n_windows: Optional[int] = None,
+    min_overlap: Optional[float] = None,
+    min_cutoff: Optional[float] = 0.7,
+):
+    """Optimize a prebuilt host and run the complex RBFE leg.
+
+    Accepts a solvated host, such as one returned by
+    `builders.build_host_config_from_omm`, with the alchemical ligands excluded.
+    Host coordinates must be aligned with both ligand poses. Host optimization
+    still runs before RBFE; the input host is not assumed to be equilibrated.
+
+    Returns
+    -------
+    SimulationResult
+        Complex-leg simulation results.
+    HostConfig
+        Optimized host configuration used for the simulation.
+    """
+    complex_host_config = setup_optimized_host(host_config, [mol_a, mol_b], forcefield, seed=md_params.seed)
+    complex_res = estimate_relative_free_energy_bisection_or_hrex(
+        mol_a,
+        mol_b,
+        core,
+        forcefield,
+        complex_host_config,
+        prefix="complex",
+        md_params=md_params,
+        n_windows=n_windows,
+        min_overlap=min_overlap,
+        min_cutoff=min_cutoff,
+    )
+    return complex_res, complex_host_config
+
+
 def run_complex(
     mol_a: Chem.rdchem.Mol,
     mol_b: Chem.rdchem.Mol,
@@ -1344,17 +1385,14 @@ def run_complex(
         complex_host_config = builders.build_membrane_system(
             protein, forcefield.protein_ff, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1
         )
-    complex_host_config = setup_optimized_host(complex_host_config, [mol_a, mol_b], forcefield, seed=md_params.seed)
-    complex_res = estimate_relative_free_energy_bisection_or_hrex(
+    return run_complex_with_host_config(
         mol_a,
         mol_b,
         core,
         forcefield,
         complex_host_config,
-        prefix="complex",
         md_params=md_params,
         n_windows=n_windows,
         min_overlap=min_overlap,
         min_cutoff=min_cutoff,
     )
-    return complex_res, complex_host_config
