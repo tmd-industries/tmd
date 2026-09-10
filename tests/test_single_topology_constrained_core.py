@@ -40,6 +40,7 @@ def test_verify_core_is_compatible_with_constraints():
     mol_b = ligand_from_smiles("C1C(Cl)CCCC1")
 
     kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    kwargs["constrain_hydrogens"] = True
     kwargs["heavy_matches_heavy_only"] = False
     core = get_cores(mol_a, mol_b, **kwargs)[0]
 
