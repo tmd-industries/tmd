@@ -14,7 +14,7 @@
 
 # test that we can run relative free energy simulations in complex and in solvent
 # this doesn't test for accuracy, just that everything mechanically runs.
-from unittest.mock import Mock, patch, sentinel
+from unittest.mock import Mock, patch
 from warnings import catch_warnings
 
 import numpy as np
@@ -35,59 +35,15 @@ from tmd.fe.rbfe import (
     estimate_relative_free_energy_bisection,
     estimate_relative_free_energy_bisection_hrex,
     rebalance_lambda_schedule,
-    run_complex,
-    run_complex_with_host_config,
     run_solvent,
     run_vacuum,
+    run_with_host_config,
 )
 from tmd.ff import Forcefield
 from tmd.md import builders
 from tmd.md.barostat.utils import compute_box_center
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 from tmd.utils import path_to_internal_file
-
-
-@pytest.mark.parametrize(
-    "add_membrane,builder_name", [(False, "build_protein_system"), (True, "build_membrane_system")]
-)
-def test_run_complex_preserves_host_and_options(add_membrane, builder_name):
-    forcefield = Mock(protein_ff="protein", water_ff="water")
-    md_params = MDParams(n_frames=10, n_eq_steps=10, steps_per_frame=5, seed=2026)
-    with (
-        patch(f"tmd.fe.rbfe.builders.{builder_name}", return_value=sentinel.host) as builder,
-        patch("tmd.fe.rbfe.setup_optimized_host", return_value=sentinel.optimized_host) as optimize,
-        patch("tmd.fe.rbfe.estimate_relative_free_energy_bisection_or_hrex") as estimate,
-    ):
-        result, host = run_complex(
-            sentinel.mol_a,
-            sentinel.mol_b,
-            sentinel.core,
-            forcefield,
-            sentinel.protein,
-            md_params,
-            n_windows=3,
-            min_overlap=0.1,
-            min_cutoff=0.5,
-            add_membrane=add_membrane,
-        )
-    builder.assert_called_once_with(
-        sentinel.protein, "protein", "water", mols=[sentinel.mol_a, sentinel.mol_b], box_margin=0.1
-    )
-    optimize.assert_called_once_with(sentinel.host, [sentinel.mol_a, sentinel.mol_b], forcefield, seed=md_params.seed)
-    estimate.assert_called_once_with(
-        sentinel.mol_a,
-        sentinel.mol_b,
-        sentinel.core,
-        forcefield,
-        sentinel.optimized_host,
-        prefix="complex",
-        md_params=md_params,
-        n_windows=3,
-        min_overlap=0.1,
-        min_cutoff=0.5,
-    )
-    assert result is estimate.return_value
-    assert host is sentinel.optimized_host
 
 
 @pytest.mark.nightly(reason="Runs host equilibration and complex RBFE")
@@ -112,12 +68,13 @@ def test_run_complex_with_prebuilt_host_simulation(tmp_path, monkeypatch):
         seed=2026,
         hrex_params=HREXParams(n_frames_bisection=10),
     )
-    result, optimized_host = run_complex_with_host_config(
+    result, optimized_host = run_with_host_config(
         mol_a,
         mol_b,
         core,
         forcefield,
         host,
+        prefix="complex",
         md_params=md_params,
         n_windows=3,
     )
