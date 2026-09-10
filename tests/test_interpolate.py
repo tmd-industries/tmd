@@ -984,11 +984,19 @@ def test_core_dummy_chiral_conversion():
             rhs.chiral_atom.params,
         )
 
+        _assert_bonded_term(
+            lamb,
+            ChiralAtomTag.N0_H1_H3_D4,
+            None,
+            atol_k,
+            single_topology.CORE_CHIRAL_ATOM_CONVERTING_ON_MIN_MAX,
+            itm.chiral_atom.params,
+            lhs.chiral_atom.params,
+            rhs.chiral_atom.params,
+        )
+
         _assert_identical_end_states(
             ChiralAtomTag.N0_H1_D4_H2, itm.chiral_atom.params, lhs.chiral_atom.params, rhs.chiral_atom.params
-        )
-        _assert_identical_end_states(
-            ChiralAtomTag.N0_H1_H3_D4, itm.chiral_atom.params, lhs.chiral_atom.params, rhs.chiral_atom.params
         )
         _assert_identical_end_states(
             ChiralAtomTag.N0_H2_H3_D4, itm.chiral_atom.params, lhs.chiral_atom.params, rhs.chiral_atom.params
