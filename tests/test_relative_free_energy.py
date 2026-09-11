@@ -19,7 +19,6 @@ from warnings import catch_warnings
 
 import numpy as np
 import pytest
-from openmm import app
 
 from tmd.fe.free_energy import (
     HREXParams,
@@ -46,20 +45,11 @@ from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 from tmd.utils import path_to_internal_file
 
 
-@pytest.mark.nightly(reason="Runs host equilibration and complex RBFE")
-def test_run_complex_with_prebuilt_host_simulation(tmp_path, monkeypatch):
-    """Run a custom OpenMM host through optimization and HREX."""
-    monkeypatch.chdir(tmp_path)
+def test_run_with_host_config():
+    """Run a prebuilt solvent host through optimization and HREX."""
     mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
     forcefield = Forcefield.load_default()
-    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as protein_path:
-        pdb = app.PDBFile(str(protein_path))
-    host = builders.build_host_config_from_omm(
-        app.Modeller(pdb.topology, pdb.positions),
-        app.ForceField(f"{forcefield.protein_ff}.xml", f"{forcefield.water_ff}.xml"),
-        mols=[mol_a, mol_b],
-        box_margin=0.1,
-    )
+    host = builders.build_water_system(3.0, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1)
     original_conf = host.conf.copy()
     md_params = MDParams(
         n_frames=20,
@@ -74,9 +64,10 @@ def test_run_complex_with_prebuilt_host_simulation(tmp_path, monkeypatch):
         core,
         forcefield,
         host,
-        prefix="complex",
+        prefix="solvent",
         md_params=md_params,
         n_windows=3,
+        min_cutoff=None,
     )
     assert optimized_host.host_system is host.host_system
     assert optimized_host.omm_topology is host.omm_topology

@@ -1337,7 +1337,7 @@ def run_with_host_config(
     """Optimize a prebuilt host and run an RBFE leg.
 
     Accepts a solvated host, such as one returned by
-    `builders.build_host_config_from_omm`, with the alchemical ligands excluded.
+    `builders.build_water_system`, with the alchemical ligands excluded.
     Host coordinates must be aligned with both ligand poses. Host optimization
     still runs before RBFE; the input host is not assumed to be equilibrated.
 
