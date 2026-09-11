@@ -1877,6 +1877,36 @@ def test_chiral_h_augmentation_through_get_cores():
         assert len(conflicts) == 0, f"Core {i} has {len(conflicts)} chiral conflicts, expected 0"
 
 
+@pytest.mark.parametrize("enforce_chiral", [False, True])
+def test_constrained_hydrogen_groups_remain_complete_after_chiral_repair(enforce_chiral):
+    mol_a = ligand_from_smiles("C1CCCCC1", seed=42)
+    mol_b = ligand_from_smiles("C1CCCCC1", seed=814)
+    heavy_idxs = [atom.GetIdx() for atom in mol_a.GetAtoms() if atom.GetAtomicNum() != 1]
+    heavy_core = np.column_stack([heavy_idxs, heavy_idxs])
+    # Force a heavy-atom map and cutoff where the initial H assignment is complete,
+    # but chiral repair can retain only one H from a two-H group.
+    kwargs = DEFAULT_ATOM_MAPPING_KWARGS | dict(
+        constrain_hydrogens=True,
+        enforce_chiral=enforce_chiral,
+        chain_cutoff=0.21,
+        initial_mapping=heavy_core,
+    )
+
+    core = atom_mapping.get_cores(mol_a, mol_b, **kwargs)[0]
+
+    for mol, column in [(mol_a, 0), (mol_b, 1)]:
+        mapped_atoms = set(core[:, column])
+        for parent in mol.GetAtoms():
+            if parent.GetAtomicNum() == 1 or parent.GetIdx() not in mapped_atoms:
+                continue
+            hydrogens = {atom.GetIdx() for atom in parent.GetNeighbors() if atom.GetAtomicNum() == 1}
+            mapped_hydrogens = hydrogens.intersection(mapped_atoms)
+            assert len(mapped_hydrogens) in (0, len(hydrogens)), (
+                f"Parent {parent.GetIdx()} in molecule {column} has a partial hydrogen group: "
+                f"mapped {sorted(mapped_hydrogens)} out of {sorted(hydrogens)}"
+            )
+
+
 def test_chiral_h_augmentation_no_conflict_case():
     """Verify that when the Hungarian assignment does not introduce chiral
     conflicts, the augmented core is identical with and without enforcement.
