@@ -36,12 +36,51 @@ from tmd.fe.rbfe import (
     rebalance_lambda_schedule,
     run_solvent,
     run_vacuum,
+    run_with_host_config,
 )
 from tmd.ff import Forcefield
 from tmd.md import builders
 from tmd.md.barostat.utils import compute_box_center
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 from tmd.utils import path_to_internal_file
+
+
+def test_run_with_host_config():
+    """Run a prebuilt solvent host through optimization and HREX."""
+    mol_a, mol_b, core = get_hif2a_ligand_pair_single_topology()
+    forcefield = Forcefield.load_default()
+    host = builders.build_water_system(3.0, forcefield.water_ff, mols=[mol_a, mol_b], box_margin=0.1)
+    original_conf = host.conf.copy()
+    md_params = MDParams(
+        n_frames=20,
+        n_eq_steps=50,
+        steps_per_frame=5,
+        seed=2026,
+        hrex_params=HREXParams(n_frames_bisection=10),
+    )
+    result, optimized_host = run_with_host_config(
+        mol_a,
+        mol_b,
+        core,
+        forcefield,
+        host,
+        prefix="solvent",
+        md_params=md_params,
+        n_windows=3,
+        min_cutoff=None,
+    )
+    assert optimized_host.host_system is host.host_system
+    assert optimized_host.omm_topology is host.omm_topology
+    assert optimized_host.conf.shape == host.conf.shape
+    np.testing.assert_array_equal(host.conf, original_conf)
+    assert np.isfinite(optimized_host.conf).all()
+    states = result.final_result.initial_states
+    assert [state.lamb for state in states] == [0.0, 0.5, 1.0]
+    assert np.isfinite(result.final_result.dGs).all()
+    for state, frames in zip(states, result.frames):
+        assert len(state.x0) == len(host.conf) + len(state.ligand_idxs)
+        assert len(frames) == md_params.n_frames
+        assert np.isfinite(np.asarray(frames)).all()
 
 
 def run_triple(mol_a, mol_b, core, forcefield, md_params: MDParams, protein_path, estimate_relative_free_energy_fn):
