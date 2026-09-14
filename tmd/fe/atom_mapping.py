@@ -442,7 +442,6 @@ def _augment_core_with_hydrogens(
     chain_cutoff : float or None
         Maximum distance (in nm) for an H pair to be included.  Pairs
         whose Euclidean distance exceeds this value are never assigned.
-
     constrain_hydrogens : bool
         If True, do not map hydrogens whose parent heavy atoms have different
         atomic numbers between the two molecules (a transmutation), since the
