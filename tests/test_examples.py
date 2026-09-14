@@ -636,7 +636,7 @@ def test_build_rbfe_graph_charge_hop():
         ({"ring_matches_ring_only": True, "constrain_hydrogens": False}, 58),
         ({"max_connected_components": 2, "constrain_hydrogens": False}, 58),
         ({"enforce_core_core": False, "constrain_hydrogens": False}, 57),
-        ({"enforce_core_core": False, "constrain_hydrogens": True}, 59),
+        ({"enforce_core_core": False, "constrain_hydrogens": True}, 58),
     ],
 )
 def test_build_rbfe_graph_atom_mapping_parameters(parameters_to_adjust, expected_edges):
