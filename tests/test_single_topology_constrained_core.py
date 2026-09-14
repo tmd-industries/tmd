@@ -19,6 +19,7 @@ from common import ligand_from_smiles
 from tmd.constants import DEFAULT_ATOM_MAPPING_KWARGS
 from tmd.fe.atom_mapping import get_cores
 from tmd.fe.single_topology import (
+    AtomMapMixin,
     SingleTopology,
     filter_constraint_incompatible_hydrogens,
     verify_core_is_compatible_with_constraints,
@@ -39,6 +40,7 @@ def test_verify_core_is_compatible_with_constraints():
     mol_b = ligand_from_smiles("C1C(Cl)CCCC1")
 
     kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
+    kwargs["constrain_hydrogens"] = True
     kwargs["heavy_matches_heavy_only"] = False
     core = get_cores(mol_a, mol_b, **kwargs)[0]
 
@@ -75,7 +77,7 @@ def test_filter_drops_mismatched_hydrogen_lengths():
 
     c_idx = next(a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() == 6)
     o_idx = next(a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() == 8)
-    ch_h = _h_neighbors(mol, c_idx)[0]
+    ch_h, ch_h2 = _h_neighbors(mol, c_idx)[:2]
     oh_h = _h_neighbors(mol, o_idx)[0]
 
     # Pair methanol with itself; the cross C-H <-> O-H row must be dropped.
@@ -84,10 +86,13 @@ def test_filter_drops_mismatched_hydrogen_lengths():
             [c_idx, c_idx],
             [o_idx, o_idx],
             [ch_h, ch_h],  # C-H <-> C-H: identical length, keep
-            [oh_h, ch_h],  # O-H <-> C-H: mismatched length, drop
+            [oh_h, ch_h2],  # O-H <-> C-H: mismatched length, drop
         ],
         dtype=np.int32,
     )
+
+    # Verify the core is valid to begin with
+    AtomMapMixin(mol, mol, core)
 
     with pytest.raises(ValueError, match="Invalid Mappings:"):
         verify_core_is_compatible_with_constraints(mol, mol, core, ff)
@@ -96,12 +101,45 @@ def test_filter_drops_mismatched_hydrogen_lengths():
 
     verify_core_is_compatible_with_constraints(mol, mol, filtered, ff)
 
-    assert [tuple(d) for d in dropped] == [(oh_h, ch_h)]
+    assert [tuple(d) for d in dropped] == [(ch_h, ch_h), (oh_h, ch_h2)]
     filtered_rows = filtered.tolist()
     assert [oh_h, ch_h] not in filtered_rows
-    assert [ch_h, ch_h] in filtered_rows
+    assert [ch_h, ch_h2] not in filtered_rows
     assert [c_idx, c_idx] in filtered_rows
     assert [o_idx, o_idx] in filtered_rows
+
+
+def test_all_hydrogens_mapped_off_of_anchor():
+    """To ensure stability with constraints, hydrogens off of a heavy atom anchor have to either be completely mapped or
+    all unmapped. Without this check then hydrogens can be too floppy (since angles/torsions are turned off to be factorizable)
+    and blow up."""
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    mol = ligand_from_smiles("CO")  # methanol
+
+    c_idx = next(a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() == 6)
+    o_idx = next(a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() == 8)
+    ch_h = _h_neighbors(mol, c_idx)[0]
+
+    # Pair methanol with itself; the cross C-H <-> O-H row must be dropped.
+    core = np.array(
+        [
+            [c_idx, c_idx],
+            [o_idx, o_idx],
+            [ch_h, ch_h],  # C-H <-> C-H: identical length, but not all hydrogens are mapped
+        ],
+        dtype=np.int32,
+    )
+
+    # Verify the core is valid to begin with
+    AtomMapMixin(mol, mol, core)
+
+    with pytest.raises(ValueError, match=rf"Invalid Mappings: \[{ch_h}, {ch_h}\]"):
+        verify_core_is_compatible_with_constraints(mol, mol, core, ff)
+
+    # Reconstruct core with all of the hydrogens assigned
+    core = np.tile(np.array([c_idx, o_idx, *_h_neighbors(mol, c_idx)])[:, None], (1, 2))
+
+    verify_core_is_compatible_with_constraints(mol, mol, core, ff)
 
 
 def test_filter_is_noop_when_all_lengths_match():

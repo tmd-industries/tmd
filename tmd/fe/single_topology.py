@@ -1364,16 +1364,26 @@ def filter_constraint_incompatible_hydrogens(
     ff: Forcefield,
     length_atol: float = DEFAULT_CONSTRAINT_LENGTH_ATOL,
 ) -> tuple[NDArray, list[tuple[int, int]]]:
-    """Drop hydrogen pairs from ``core`` whose constrained bond length differs
-    between the two molecules.
+    """Drop hydrogen pairs from ``core`` that are incompatible with rigid
+    hydrogen constraints.
 
     Hydrogen-involving bonds are rigidly constrained at a single, lambda-
     independent length, so a mapped hydrogen can only be constrained if its bond
-    length is the same in both end states. This catches transmutations of the
-    parent heavy atom (e.g. C->O) as well as same-element retypings (e.g. an
-    sp3->sp2 carbon) that change the X-H equilibrium length. Such hydrogens are
-    unmapped here so that single topology demotes them to per-state dummy atoms,
-    each retaining its own native (and therefore constraint-compatible) bond.
+    length is the same in both end states. Additionally the hydrogens off of a heavy atom
+    have to either be fully mapped or unmapped. Two checks are applied:
+
+    1. Any H-H pair whose constrained bond length differs between the two
+       molecules by more than ``length_atol`` is dropped. This catches
+       transmutations of the parent heavy atom (e.g. C->O) as well as
+       same-element retypings (e.g. an sp3->sp2 carbon) that change the X-H
+       equilibrium length.
+
+    2. For every mapped heavy atom ("anchor") that has at least one
+       H-H pair, if the number of hydrogens on that anchor differs between the
+       two molecules, or if any of its hydrogens are not present in ``core``,
+       then *all* core pairs involving the anchor's hydrogens (in either
+       molecule) are dropped. This ensures a heavy atom's hydrogen set is
+       either fully mapped or fully unmapped.
 
     Returns
     -------
@@ -1382,21 +1392,63 @@ def filter_constraint_incompatible_hydrogens(
         ``dropped_pairs`` lists the ``(a_idx, b_idx)`` pairs that were removed.
     """
     core = np.asarray(core)
+
     lengths_a = _hydrogen_bond_lengths(mol_a, ff)
     lengths_b = _hydrogen_bond_lengths(mol_b, ff)
 
-    keep_rows: list[tuple[int, int]] = []
-    dropped_pairs: list[tuple[int, int]] = []
-    for a, b in core:
+    def neighbors_by_atomic_num(atm, atomic_num: int) -> list:
+        return [a for a in atm.GetNeighbors() if a.GetAtomicNum() == atomic_num]
+
+    kept_idxs: list[int] = []
+    # Keep track of the hydrogen pairs that are kept
+    hydrogen_pairs: list[int] = []
+    for i, (a, b) in enumerate(core):
         a, b = int(a), int(b)
         a_is_h = mol_a.GetAtomWithIdx(a).GetAtomicNum() == 1
         b_is_h = mol_b.GetAtomWithIdx(b).GetAtomicNum() == 1
         if a_is_h and b_is_h and abs(lengths_a[a] - lengths_b[b]) > length_atol:
-            dropped_pairs.append((a, b))
             continue
-        keep_rows.append((a, b))
+        if a_is_h and b_is_h:
+            hydrogen_pairs.append(i)
+        kept_idxs.append(i)
 
-    filtered_core = np.array(keep_rows, dtype=core.dtype).reshape(-1, 2)
+    if len(hydrogen_pairs) > 0:
+        mixin = AtomMapMixin(mol_a, mol_b, core)
+
+        hydrogen_anchors = set()
+        for idx in hydrogen_pairs:
+            a, b = [int(x) for x in core[idx]]
+            for atm in mol_a.GetAtomWithIdx(a).GetNeighbors():
+                hydrogen_anchors.add(mixin.a_to_c[atm.GetIdx()])
+            for atm in mol_b.GetAtomWithIdx(b).GetNeighbors():
+                hydrogen_anchors.add(mixin.b_to_c[atm.GetIdx()])
+        keep_a = set([int(x[0]) for x in core])
+        keep_b = set([int(x[1]) for x in core])
+        pairs_to_prune: set[int] = set()
+        for anchor_idx in hydrogen_anchors:
+            hydrogens_a = set(
+                [atm.GetIdx() for atm in neighbors_by_atomic_num(mol_a.GetAtomWithIdx(mixin.c_to_a[anchor_idx]), 1)]
+            )
+            hydrogens_b = set(
+                [atm.GetIdx() for atm in neighbors_by_atomic_num(mol_b.GetAtomWithIdx(mixin.c_to_b[anchor_idx]), 1)]
+            )
+            remove_anchor_hs = True
+            if (
+                len(hydrogens_a) == len(hydrogens_b)
+                and keep_a.issuperset(hydrogens_a)
+                and keep_b.issuperset(hydrogens_b)
+            ):
+                remove_anchor_hs = False
+            if remove_anchor_hs:
+                for h in hydrogens_a:
+                    pairs_to_prune.update(np.arange(len(core))[core[:, 0] == h].tolist())
+                for h in hydrogens_b:
+                    pairs_to_prune.update(np.arange(len(core))[core[:, 1] == h].tolist())
+
+        kept_idxs = list(set(kept_idxs).difference(pairs_to_prune))
+
+    filtered_core = core[kept_idxs]
+    dropped_pairs = np.delete(core, kept_idxs, axis=0).tolist()
     return filtered_core, dropped_pairs
 
 
