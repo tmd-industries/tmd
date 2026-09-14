@@ -1885,14 +1885,14 @@ def test_constrained_hydrogen_groups_remain_complete_after_chiral_repair(enforce
     heavy_core = np.column_stack([heavy_idxs, heavy_idxs])
     # Force a heavy-atom map and cutoff where the initial H assignment is complete,
     # but chiral repair can retain only one H from a two-H group.
-    kwargs = DEFAULT_ATOM_MAPPING_KWARGS | dict(
+    kwargs = dict(
         constrain_hydrogens=True,
         enforce_chiral=enforce_chiral,
         chain_cutoff=0.21,
         initial_mapping=heavy_core,
     )
 
-    core = atom_mapping.get_cores(mol_a, mol_b, **kwargs)[0]
+    core = get_core(mol_a, mol_b, **kwargs)
 
     for mol, column in [(mol_a, 0), (mol_b, 1)]:
         mapped_atoms = set(core[:, column])
