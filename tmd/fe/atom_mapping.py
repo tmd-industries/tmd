@@ -69,6 +69,10 @@ from tmd.fe.utils import get_romol_bonds, get_romol_conf
 # - refinement of marcs matrix is done on uint8 arrays
 
 
+def _num_hydrogen_neighbors(atom):
+    return len([x for x in atom.GetNeighbors() if x.GetAtomicNum() == 1])
+
+
 def get_cores_and_diagnostics(
     mol_a,
     mol_b,
@@ -451,14 +455,12 @@ def _augment_core_with_hydrogens(
     """
     sq_cutoff = chain_cutoff * chain_cutoff if chain_cutoff is not None else None
 
-    def num_hydrogen_neighbors(atom):
-        return len([x for x in atom.GetNeighbors() if x.GetAtomicNum() == 1])
-
     # --- Phase 1: Hungarian assignment per parent pair (cutoff-aware) ---
     h_pairs_by_parent = {}  # (a_i, b_j) -> list of [ha, hb] pairs
     for a_i, b_j in heavy_core:
         a_i, b_j = int(a_i), int(b_j)
-        hydrogen_neighbors = num_hydrogen_neighbors(mol_a.GetAtomWithIdx(a_i))
+
+        hydrogen_neighbors = _num_hydrogen_neighbors(mol_a.GetAtomWithIdx(a_i))
         # When preparing a core for hydrogen constraints, never map hydrogens onto
         # a heavy atom that is transmuted between end states (different atomic
         # number): the X-H bond length necessarily differs, so the hydrogen cannot
@@ -467,7 +469,7 @@ def _augment_core_with_hydrogens(
         # leave the hydrogens unmapped
         if constrain_hydrogens and (
             mol_a.GetAtomWithIdx(a_i).GetAtomicNum() != mol_b.GetAtomWithIdx(b_j).GetAtomicNum()
-            or hydrogen_neighbors != num_hydrogen_neighbors(mol_b.GetAtomWithIdx(b_j))
+            or hydrogen_neighbors != _num_hydrogen_neighbors(mol_b.GetAtomWithIdx(b_j))
         ):
             continue
         h_a = _get_removable_h_neighbors(mol_a, a_i, removed_h_a)
@@ -498,6 +500,7 @@ def _augment_core_with_hydrogens(
             chiral_set_a,
             chiral_set_b,
             sq_cutoff,
+            constrain_hydrogens,
         )
 
     # --- Build and return augmented core ---
@@ -519,6 +522,7 @@ def _repair_chiral_conflicts(
     chiral_set_a,
     chiral_set_b,
     sq_cutoff,
+    constrain_hydrogens,
 ):
     """Detect and repair chiral conflicts caused by H assignments, in-place.
 
@@ -571,6 +575,12 @@ def _repair_chiral_conflicts(
         )
 
         if best is not None:
+            # Don't add new hydrogens if they won't map all hydrogens attached to the anchors
+            if constrain_hydrogens:
+                if len(best) != _num_hydrogen_neighbors(mol_a.GetAtomWithIdx(a_i)) or len(
+                    best
+                ) != _num_hydrogen_neighbors(mol_b.GetAtomWithIdx(b_j)):
+                    continue
             h_pairs_by_parent[(a_i, b_j)] = best
             for ha, hb in best:
                 mapping[ha] = hb
