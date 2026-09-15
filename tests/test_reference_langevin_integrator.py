@@ -35,6 +35,7 @@ from tmd.ff.handlers.openmm_deserializer import deserialize_constraints, deseria
 from tmd.integrator import ConstrainedLangevinIntegrator, ConstraintSolver, LangevinIntegrator
 from tmd.md.builders import strip_units
 from tmd.md.thermostat.utils import sample_velocities
+from tmd.potentials import FlatBottomRestraint
 from tmd.testsystems.relative import get_hif2a_ligand_pair_single_topology
 
 
@@ -239,6 +240,7 @@ def test_constrained_langevin_multiple_water_molecules():
         proper=proper,
         improper=improper,
         nonbonded_all_pairs=nonbonded,
+        positional_restraint=FlatBottomRestraint.empty_bound(len(masses)),
     )
     u_fn = host_system.get_U_fn()
     du_dx = jax.grad(u_fn, argnums=0)

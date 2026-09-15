@@ -30,6 +30,7 @@ from tmd.fe.utils import get_romol_conf
 from tmd.ff import Forcefield, get_water_ff_model
 from tmd.ff.handlers import openmm_deserializer
 from tmd.lib import ConstraintGroups
+from tmd.potentials import FlatBottomRestraint
 from tmd.potentials.jax_utils import idxs_within_cutoff, pairwise_distances
 from tmd.utils import path_to_internal_file
 
@@ -485,6 +486,7 @@ def load_pdb_system(
         proper=proper,
         improper=improper,
         nonbonded_all_pairs=nonbonded,
+        positional_restraint=FlatBottomRestraint.empty_bound(len(masses)),
     )
 
     # Note that getPeriodicBoxVectors() can produce a significantly different box
@@ -663,6 +665,7 @@ def build_host_config_from_omm(
         proper=proper,
         improper=improper,
         nonbonded_all_pairs=nonbonded,
+        positional_restraint=FlatBottomRestraint.empty_bound(len(masses)),
     )
 
     # Determine box from the system's coordinates
@@ -909,6 +912,7 @@ def build_water_system(
         proper=proper,
         improper=improper,
         nonbonded_all_pairs=nonbonded,
+        positional_restraint=FlatBottomRestraint.empty_bound(len(masses)),
     )
 
     # Determine box from the system's coordinates

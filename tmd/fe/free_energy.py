@@ -548,6 +548,7 @@ class BaseFreeEnergy:
                 ff_params.lj_params_intra,
                 lamb,
             ),
+            topology.parameterize_positional_restraint(),
         ]
 
         params, potentials = zip(*params_potential_pairs)

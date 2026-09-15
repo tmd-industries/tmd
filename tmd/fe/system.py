@@ -25,6 +25,7 @@ from tmd.potentials import (
     BoundPotential,
     ChiralAtomRestraint,
     ChiralBondRestraint,
+    FlatBottomRestraint,
     HarmonicAngle,
     HarmonicBond,
     Nonbonded,
@@ -131,6 +132,7 @@ class HostSystem(AbstractSystem):
     proper: BoundPotential[PeriodicTorsion]
     improper: BoundPotential[PeriodicTorsion]
     nonbonded_all_pairs: BoundPotential[Nonbonded]
+    positional_restraint: BoundPotential[FlatBottomRestraint]
 
     # def __post_init__(self):
     #     self.bond.params = self.bond.params.astype(np.float32)
@@ -172,6 +174,7 @@ class HostGuestSystem(AbstractSystem):
     chiral_bond: BoundPotential[ChiralBondRestraint]
     nonbonded_pair_list: BoundPotential[NonbondedPairListPrecomputed]
     nonbonded_all_pairs: BoundPotential[Nonbonded]
+    positional_restraint: BoundPotential[FlatBottomRestraint]
 
     # def __post_init__(self):
     #     self.bond.params = self.bond.params.astype(np.float32)

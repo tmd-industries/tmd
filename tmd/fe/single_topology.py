@@ -2397,4 +2397,8 @@ class SingleTopology(AtomMapMixin):
                 potential=replace(guest_system.nonbonded_pair_list.potential, num_atoms=N),
             ),
             nonbonded_all_pairs=host_nonbonded_all_pairs,
+            positional_restraint=replace(
+                host_system.positional_restraint,
+                potential=replace(host_system.positional_restraint.potential, num_atoms=N),
+            ),
         )

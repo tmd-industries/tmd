@@ -136,6 +136,7 @@ def parameterize_system(topo, ff: Forcefield, lamb: float) -> tuple[list[Potenti
             ff_params.lj_params_intra,
             lamb,
         ),
+        topo.parameterize_positional_restraint(),
     ]
     return [pot for (_, pot) in params_potential_pairs], [params for (params, _) in params_potential_pairs]
 
