@@ -59,7 +59,7 @@ class HostGuestTopology:
     ):
         """
         Utility tool for combining host with a guest, in that order. host_potentials must be comprised
-        exclusively of supported potentials (currently: bonds, angles, torsions, nonbonded).
+        of bonds, angles, torsions, nonbonded, and a FlatBottomRestraint.
 
         Parameters
         ----------
@@ -80,18 +80,20 @@ class HostGuestTopology:
         self.ff = ff
         self.omm_topology = omm_topology
 
-        assert len(host_potentials) == 5
+        assert len(host_potentials) == 6
         assert isinstance(host_potentials[0].potential, potentials.HarmonicBond)
         assert isinstance(host_potentials[1].potential, potentials.HarmonicAngle)
         assert isinstance(host_potentials[2].potential, potentials.PeriodicTorsion)  # proper
         assert isinstance(host_potentials[3].potential, potentials.PeriodicTorsion)  # improper
         assert isinstance(host_potentials[4].potential, potentials.Nonbonded)
+        assert isinstance(host_potentials[5].potential, potentials.FlatBottomRestraint)
 
         self.host_harmonic_bond = host_potentials[0]
         self.host_harmonic_angle = host_potentials[1]
         self.host_proper_torsion = host_potentials[2]
         self.host_improper_torsion = host_potentials[3]
         self.host_nonbonded = host_potentials[4]
+        self.host_positional_restraint = host_potentials[5]
 
         assert self.host_nonbonded is not None
         self.num_host_atoms = self.host_nonbonded.potential.num_atoms
@@ -182,6 +184,10 @@ class HostGuestTopology:
     def parameterize_improper_torsion(self, improper_params):
         guest_params, guest_potential = self.guest_topology.parameterize_improper_torsion(improper_params)
         return self._parameterize_bonded_term(guest_params, guest_potential, self.host_improper_torsion)
+
+    def parameterize_positional_restraint(self):
+        bound = self.host_positional_restraint
+        return bound.params, replace(bound.potential, num_atoms=self.get_num_atoms())
 
     def parameterize_nonbonded(
         self,
@@ -377,6 +383,10 @@ class BaseTopology:
     def parameterize_improper_torsion(self, ff_params):
         params, idxs = self.ff.it_handle.partial_parameterize(ff_params, self.mol)
         return params, potentials.PeriodicTorsion(self.get_num_atoms(), idxs)
+
+    def parameterize_positional_restraint(self):
+        bound = potentials.FlatBottomRestraint.empty_bound(self.get_num_atoms())
+        return bound.params, bound.potential
 
     def setup_chiral_restraints(self, chiral_atom_restraint_k: float, chiral_bond_restraint_k: float):
         """

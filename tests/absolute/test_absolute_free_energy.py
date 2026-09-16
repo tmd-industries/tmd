@@ -15,6 +15,7 @@ from tmd.fe.topology import BaseTopology
 from tmd.ff import Forcefield
 from tmd.md import builders
 from tmd.potentials import (
+    FlatBottomRestraint,
     HarmonicAngle,
     HarmonicBond,
     Nonbonded,
@@ -51,7 +52,7 @@ def test_absolute_binding_free_energy():
 
     afe = AbsoluteFreeEnergy(mol, bt)
     unbound_potentials, params, masses = afe.prepare_host_edge(ff, host_config, 0.0)
-    assert len(unbound_potentials) == 6
+    assert len(unbound_potentials) == 7
 
     initial_state = get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, 0.0)
     minimized_state = optimize_abfe_initial_state(initial_state)
@@ -67,6 +68,7 @@ def test_absolute_binding_free_energy():
     np.testing.assert_array_equal(masses, np.concatenate([host_config.masses, utils.get_mol_masses(mol)]))
 
     assert set(type(pot) for pot in unbound_potentials) == {
+        FlatBottomRestraint,
         HarmonicBond,
         HarmonicAngle,
         PeriodicTorsion,
@@ -74,5 +76,5 @@ def test_absolute_binding_free_energy():
         Nonbonded,
     }
 
-    # 6 potentials typically, add 3 for the boresch restraints
-    assert len(unbound_potentials) == 6 + 3
+    # 7 potentials typically, add 3 for the boresch restraints
+    assert len(unbound_potentials) == 7 + 3
