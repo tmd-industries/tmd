@@ -28,7 +28,7 @@ from tmd.lib import LangevinIntegrator, MonteCarloBarostat
 from tmd.md.barostat.utils import get_bond_list, get_group_indices
 from tmd.md.builders import strip_units
 from tmd.md.exchange.exchange_mover import delta_r_np
-from tmd.potentials import HarmonicBond, Nonbonded
+from tmd.potentials import FlatBottomRestraint, HarmonicBond, Nonbonded
 from tmd.potentials.potential import get_bound_potential_by_type
 
 DEFAULT_BB_RADIUS = 0.46
@@ -70,6 +70,7 @@ def build_host_config(host_pdbfile: str, water_ff: str, padding: float):
         proper=proper,
         improper=improper,
         nonbonded_all_pairs=nonbonded,
+        positional_restraint=FlatBottomRestraint.empty_bound(len(masses)),
     )
 
     return HostConfig(solvated_host_system, masses, solvated_host_coords, box, num_water_atoms, solvated_topology)
