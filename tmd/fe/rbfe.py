@@ -517,7 +517,49 @@ def optimize_coords_state(
     k: float,
     restrained_idxs: Optional[NDArray] = None,
     minimization_configs: Optional[Sequence[minimizer.MinimizationConfig]] = None,
+    force_threshold: float = 10_000.0,
 ) -> NDArray:
+    """
+    Minimize the coordinates of a single alchemical state.
+
+    Only the particles specified by free_idxs are allowed to move; all other particles are
+    held fixed. If provided, the atoms in restrained_idxs are subject to positional restraints
+    with force constant k.
+
+    Parameters
+    ----------
+    potentials: sequence of BoundPotential
+        Bound potentials defining the energy and gradient used for minimization
+
+    x0: array (N, 3)
+        Initial coordinates
+
+    box: array (3, 3)
+        Box vectors
+
+    free_idxs: list of int
+        Indices of the particles that are allowed to move during minimization
+
+    assert_energy_decreased: bool
+        Whether to assert that the energy decreases after minimization
+
+    k: float
+        Force constant of the positional restraints applied to restrained_idxs
+
+    restrained_idxs: array of int, optional
+        Indices of the atoms subject to positional restraints
+
+    minimization_configs: sequence of minimizer.MinimizationConfig, optional
+        Minimization protocols to run, in order. If not provided, default configs are used
+
+    force_threshold: float
+        The maximum force norm that will be tolerated for the final minimized coords
+
+    Returns
+    -------
+    array (N, 3)
+        Minimized coordinates
+    """
     val_and_grad_fn = minimizer.get_val_and_grad_fn(potentials, box)
     assert np.all(np.isfinite(x0)), "Initial coordinates contain nan or inf"
 
@@ -533,6 +575,7 @@ def optimize_coords_state(
         assert_energy_decreased=assert_energy_decreased,
         restrained_idxs=restrained_idxs,
         restraint_k=k,
+        force_threshold=force_threshold,
     )
     assert np.all(np.isfinite(x_opt)), "Minimization resulted in a nan"
     return x_opt
