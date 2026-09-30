@@ -56,6 +56,7 @@ from tmd.fe.stored_arrays import StoredArrays
 from tmd.ff import Forcefield
 from tmd.md import builders
 from tmd.potentials import (
+    FlatBottomRestraint,
     HarmonicAngle,
     HarmonicBond,
     Nonbonded,
@@ -134,6 +135,7 @@ def test_septop_prepare_host_edge_no_restraints(hif2a_pair_in_water):
 
         kinds = {type(p) for p in ubps}
         assert kinds == {
+            FlatBottomRestraint,
             HarmonicBond,
             HarmonicAngle,
             PeriodicTorsion,
@@ -433,6 +435,7 @@ def test_septop_full_prepare_host_edge_with_real_complex(hif2a_complex):
         assert len(masses) == len(host_config.conf) + mol_a.GetNumAtoms() + mol_b.GetNumAtoms()
         kinds = {type(p) for p in ubps}
         assert kinds == {
+            FlatBottomRestraint,
             HarmonicBond,
             HarmonicAngle,
             PeriodicTorsion,

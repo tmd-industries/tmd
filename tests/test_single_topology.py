@@ -940,6 +940,7 @@ def test_combine_achiral_ligand_with_host():
     assert (
         set(type(bp.potential) for bp in combined_system.get_U_fns())
         == {
+            potentials.FlatBottomRestraint,
             potentials.HarmonicBond,
             potentials.HarmonicAngle,
             potentials.PeriodicTorsion,
@@ -967,6 +968,7 @@ def test_combine_chiral_ligand_with_host():
         host_config.host_system, 0.5, host_config.conf.shape[0], host_config.omm_topology
     )
     assert set(type(bp.potential) for bp in combined_system.get_U_fns()) == {
+        potentials.FlatBottomRestraint,
         potentials.HarmonicBond,
         potentials.HarmonicAngle,
         potentials.PeriodicTorsion,

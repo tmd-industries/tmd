@@ -560,6 +560,39 @@ def test_run_abfe(
             verify_endstate_hashes(leg_dir, leg_results_hashes[leg])
 
 
+def test_run_abfe_restraints(tmp_path):
+    with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
+        mols = read_sdf(hif2a_dir / "ligands.sdf")
+        mol = np.random.default_rng(2025).choice(mols, replace=False, size=1)[0]
+        sdf_path = tmp_path / "mol.sdf"
+        with Chem.SDWriter(sdf_path) as writer:
+            writer.write(mol)
+        output_dir = tmp_path / "output"
+        config = dict(
+            sdf_path=sdf_path,
+            pdb_path=hif2a_dir / "5tbm_prepared.pdb",
+            output_dir=output_dir,
+            legs="complex",
+            restraint_selection="protein and name CA",
+            seed=2025,
+            n_eq_steps=0,
+            n_frames=50,
+            n_windows=4,
+            steps_per_frame=100,
+            local_md_steps=100,
+            forcefield=DEFAULT_FF,
+            mps_workers=2,
+            target_overlap=0.1,
+            min_overlap=0.1,
+        )
+        proc = run_example(
+            "run_abfe.py",
+            get_cli_args(config),
+        )
+        assert proc.returncode == 0
+        assert (output_dir / get_mol_name(mol) / "complex" / "results.npz").is_file()
+
+
 @pytest.mark.nocuda
 @pytest.mark.parametrize("scoring_method, expected_edges", [("best", 58), ("jaccard", 59), ("dummy_atoms", 58)])
 def test_build_rbfe_graph(scoring_method, expected_edges):

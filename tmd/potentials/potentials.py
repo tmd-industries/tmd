@@ -14,7 +14,7 @@
 # limitations under the License.
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, cast, overload
 
 import jax.numpy as jnp
@@ -107,8 +107,28 @@ class FlatBottomBond(_BondBase):
 class FlatBottomRestraint(_BondBase):
     restraint_coords: NDArray
 
+    @classmethod
+    def empty_bound(cls, num_atoms: int) -> BoundPotential["FlatBottomRestraint"]:
+        idxs = np.empty(0, dtype=np.int32)
+        restraint_coords = np.empty((0, 3))
+        params = np.empty((0, 3))
+        return cls(num_atoms, idxs, restraint_coords).bind(params)
+
     def __call__(self, conf: Conf, params: Params, box: Optional[Box]) -> float | Array:
         return bonded.flat_bottom_restraint(conf, params, box, self.idxs, self.restraint_coords)
+
+    @overload
+    def to_gpu(self, precision: type[np.float32]) -> "GpuImplWrapper_f32": ...
+
+    @overload
+    def to_gpu(self, precision: type[np.float64]) -> "GpuImplWrapper_f64": ...
+
+    def to_gpu(self, precision: Precision) -> GpuImplWrapper_f32 | GpuImplWrapper_f64:
+        if isinstance(self.restraint_coords, list):
+            coords = [np.asarray(c, dtype=precision) for c in self.restraint_coords]
+        else:
+            coords = np.asarray(self.restraint_coords, dtype=precision)
+        return Potential.to_gpu(replace(self, restraint_coords=coords), precision)
 
     def combine(self, other_pot):
         if not isinstance(other_pot, self.__class__):

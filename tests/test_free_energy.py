@@ -70,6 +70,7 @@ from tmd.md.builders import _iterate_water_residues
 from tmd.md.hrex import HREX, HREXDiagnostics, ReplicaIdx
 from tmd.md.states import CoordsVelBox
 from tmd.potentials import (
+    FlatBottomRestraint,
     HarmonicAngle,
     HarmonicBond,
     Nonbonded,
@@ -272,6 +273,7 @@ def test_absolute_vacuum():
     assert np.all(masses == utils.get_mol_masses(mol))
     np.testing.assert_array_equal(afe.prepare_combined_coords(), utils.get_romol_conf(mol))
     assert set(type(pot) for pot in unbound_potentials) == {
+        FlatBottomRestraint,
         HarmonicBond,
         HarmonicAngle,
         PeriodicTorsion,
@@ -300,6 +302,7 @@ def test_absolute_solvent():
         np.testing.assert_array_equal(afe.prepare_combined_coords(), utils.get_romol_conf(mol))
 
         assert set(type(pot) for pot in unbound_potentials) == {
+            FlatBottomRestraint,
             HarmonicBond,
             HarmonicAngle,
             PeriodicTorsion,
