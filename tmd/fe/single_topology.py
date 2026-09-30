@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import warnings
+from collections import defaultdict
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
 from enum import IntEnum
@@ -699,18 +700,19 @@ def setup_end_state(
     all_proper_dummy_chiral_atom_idxs_ = []
     all_proper_dummy_chiral_atom_params_ = []
 
+    chiral_center_missing_bonds = defaultdict(set)
     for (c, i, j, k), p in zip(all_dummy_chiral_atom_idxs, all_dummy_chiral_atom_params):
-        missing_bonds = []
         for x in [i, j, k]:
             if (c, x) not in mol_c_bond_idxs_set and (x, c) not in mol_c_bond_idxs_set:
-                missing_bonds.append((int(c), int(x)))
+                chiral_center_missing_bonds[c].add((int(c), int(x)))
 
-        if len(missing_bonds) == 0:
+    for (c, i, j, k), p in zip(all_dummy_chiral_atom_idxs, all_dummy_chiral_atom_params):
+        if c not in chiral_center_missing_bonds:
             all_proper_dummy_chiral_atom_idxs_.append((c, i, j, k))
             all_proper_dummy_chiral_atom_params_.append(p)
         else:
             warnings.warn(
-                f"Chiral Volume {int(c), int(i), int(j), int(k)} has disabled bonds {missing_bonds}, turning off.",
+                f"Chiral Volume {int(c), int(i), int(j), int(k)} has disabled bonds {list(chiral_center_missing_bonds[c])}, turning off.",
                 ChiralVolumeDisabledWarning,
             )
 

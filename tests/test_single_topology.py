@@ -15,6 +15,7 @@
 
 import functools
 import time
+import warnings
 
 import hypothesis.strategies as st
 import jax
@@ -48,6 +49,7 @@ from tmd.fe.single_topology import (
     AtomMapFlags,
     AtomMapMixin,
     ChargePertubationError,
+    ChiralVolumeDisabledWarning,
     CoreBondChangeWarning,
     SingleTopology,
     assert_default_system_constraints,
@@ -345,6 +347,32 @@ def test_find_dummy_groups_and_anchors():
     with pytest.warns(CoreBondChangeWarning):
         dgs = single_topology.find_dummy_groups_and_anchors(mol_a, mol_b, core_pairs[:, 0], core_pairs[:, 1])
         assert dgs == {2: (None, {3})}
+
+
+@pytest.mark.nogpu
+def test_chiral_volumes_disabled_on_broken_bond():
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as path_to_ligand:
+        mols_by_name = read_sdf_mols_by_name(path_to_ligand)
+
+    mol_a = mols_by_name["338"]
+    mol_b = mols_by_name["43"]
+
+    core = _get_core_by_mcs(mol_a, mol_b)
+
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+    with warnings.catch_warnings(record=True, category=ChiralVolumeDisabledWarning) as captured_warnings:
+        st = SingleTopology(mol_a, mol_b, core, ff)
+
+    chiral_warnings = [w for w in captured_warnings if w.category is ChiralVolumeDisabledWarning]
+    # All four chiral volumes should be turned off
+    assert len(chiral_warnings) == 4
+    core_atom = int(str(chiral_warnings[0].message).split("(")[1].split(",")[0])
+    assert 0 <= core_atom <= st.get_num_atoms()
+
+    # Chiral atom restraint enabled in the source state
+    assert core_atom in st.src_system.chiral_atom.potential.idxs[:, 0]
+    # No chiral atom restraints in the destination state with the core atom
+    assert core_atom not in st.dst_system.chiral_atom.potential.idxs[:, 0]
 
 
 @pytest.mark.nogpu
