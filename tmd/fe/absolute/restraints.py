@@ -52,7 +52,6 @@ import tempfile
 from collections.abc import Sequence
 
 import mdtraj
-import networkx as nx
 import numpy as np
 import numpy.typing as npt
 
@@ -60,8 +59,6 @@ import numpy.typing as npt
 import openmm
 import scipy
 from rdkit.Chem import Mol, PDBWriter
-
-from tmd.potentials.bonded import kahan_angle, signed_torsion_angle
 
 _COLLINEAR_THRESHOLD = 0.9  # roughly 25 degrees
 
@@ -79,6 +76,7 @@ _DIHEDRAL_CHECK_CUTOFF = 150.0  # units of degrees
 _DIHEDRAL_CHECK_MAX_VAR = 300.0  # units of degrees^2
 
 _RMSF_CUTOFF = 0.1  # nm
+_LIGAND_DISTANCE_SD_CUTOFF = 0.03  # nm
 
 
 def _is_angle_linear(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
@@ -93,14 +91,14 @@ def _is_angle_linear(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
     Returns:
         True if the angle is linear, False otherwise.
     """
-    angles = []
-    for frame in coords:
-        # TBD: Handle PBCs correctly
-        angle = kahan_angle(*frame[idxs, :], 0.0, np.eye(3) * 100.0)  # type: ignore
-        angles.append(np.rad2deg(angle))
+    # TBD: Handle PBCs correctly
+    a, b, c = (coords[:, i, :] for i in idxs)
+    u, v = a - b, c - b
+    angles = np.rad2deg(np.arctan2(np.linalg.norm(np.cross(u, v), axis=-1), (u * v).sum(axis=-1)))
 
     angle_avg_rad = np.deg2rad(scipy.stats.circmean(angles, low=-180.0, high=180.0))
-    angle_var_deg = scipy.stats.circvar(angles, low=-180.0, high=180.0)
+    # circvar is dimensionless in scipy >= 1.9; the limits are in degrees^2
+    angle_var_deg = scipy.stats.circstd(angles, low=-180.0, high=180.0) ** 2
 
     check_1 = _ANGLE_CHECK_FACTOR * angle_avg_rad**2
     check_2 = _ANGLE_CHECK_FACTOR * (angle_avg_rad - np.pi) ** 2
@@ -118,14 +116,15 @@ def _is_dihedral_trans(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
     Returns:
         True if the dihedral is planar.
     """
-    dihedrals = []
-    for frame in coords:
-        # TBD: Handle PBCs correctly
-        dihedral = signed_torsion_angle(*frame[idxs, :], np.eye(3) * 100.0)  # type: ignore
-        dihedrals.append(np.rad2deg(dihedral))
+    # TBD: Handle PBCs correctly
+    a, b, c, d = (coords[:, i, :] for i in idxs)
+    b0, b1, b2 = b - a, c - b, d - c
+    n1, n2 = np.cross(b0, b1), np.cross(b1, b2)
+    y = (np.cross(n2, n1) * b1).sum(axis=-1) / np.linalg.norm(b1, axis=-1)
+    dihedrals = np.rad2deg(np.arctan2(y, (n1 * n2).sum(axis=-1)))
 
     dihedral_avg = scipy.stats.circmean(dihedrals, low=-180.0, high=180.0)
-    dihedral_var = scipy.stats.circvar(dihedrals, low=-180.0, high=180.0)
+    dihedral_var = scipy.stats.circstd(dihedrals, low=-180.0, high=180.0) ** 2
 
     return np.abs(dihedral_avg) > _DIHEDRAL_CHECK_CUTOFF or dihedral_var > _DIHEDRAL_CHECK_MAX_VAR
 
@@ -158,143 +157,84 @@ def _are_collinear(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
     return False
 
 
-def select_ligand_atoms_baumann(mol: Mol, rmsf: list[float]) -> list[int]:
+def select_ligand_atoms(mol: Mol, xyz: npt.NDArray, rmsf: npt.NDArray) -> list[int]:
     """Select ligand atoms for Boresch restraints.
 
+    L1, the atom bonded to the receptor, is the rigid heavy atom nearest the
+    ligand's center, which minimizes how far restrained rotations move the rest
+    of the ligand. L2 and L3 span the largest triangle with L1 among rigid heavy
+    atoms whose mutual distances stay fixed, so the restrained frame tracks the
+    whole ligand rather than a single ring.
+
     Args:
-        ligand: input ligand
-        rmsf: rmsf on ligand atoms
+        mol: input ligand
+        xyz: ligand coordinates with ``shape=(n_frames, n_atoms, 3)`` (nm), in a
+            receptor-aligned frame
+        rmsf: per-atom RMSF (nm) of the ligand in the same frame
 
     Returns:
-        atom indices
-
-    The selection is probably not invariant to changes in input atom order.
-
-    References:
-        [1] Baumann, Hannah M., et al. "Broadening the scope of binding free energy
-            calculations using a Separated Topologies approach." (2023).
+        atom indices [L1, L2, L3]
     """
-    graph = nx.from_edgelist(
-        (b.GetBeginAtomIdx(), b.GetEndAtomIdx())
-        for b in mol.GetBonds()
-        if b.GetBeginAtom().GetAtomicNum() > 1 and b.GetEndAtom().GetAtomicNum() > 1
-    )
+    heavy = np.array([a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() > 1])
+    rigid = heavy[rmsf[heavy] < _RMSF_CUTOFF]
+    if len(rigid) < 3:
+        rigid = heavy
 
-    all_paths = [path for _, node_path in nx.all_pairs_shortest_path(graph) for path in node_path.values()]
-    path_lengths = {(path[0], path[-1]): len(path) for path in all_paths}
-    longest_path = max(all_paths, key=len)
+    ref = xyz.mean(axis=0)
+    center = ref[heavy].mean(axis=0)
+    l1 = int(rigid[np.argmin(np.linalg.norm(ref[rigid] - center, axis=-1))])
+    others = [int(i) for i in rigid if i != l1]
 
-    center_idx = longest_path[len(longest_path) // 2]
-    cycles = nx.cycle_basis(graph)
-    if len(cycles) >= 1:
-        cycles = [cycle for cycle in cycles if rmsf[cycle].max() < _RMSF_CUTOFF]
+    dist_sd = np.linalg.norm(xyz[:, :, None, :] - xyz[:, None, :, :], axis=-1).std(axis=0)
 
-    if len(cycles) >= 1:
-        open_list = [atom_idx for cycle in cycles for atom_idx in cycle]
-    else:
-        open_list = list(graph.nodes)
+    def area(l2: int, l3: int) -> float:
+        return float(np.linalg.norm(np.cross(ref[l2] - ref[l1], ref[l3] - ref[l1])))
 
-    distances = [path_lengths[(center_idx, atom_idx)] for atom_idx in open_list]
-    closest_idx = open_list[np.argmin(distances)]
-
-    if len(cycles) >= 1:
-        # restrict the list of reference atoms to select from to those that are in the
-        # same cycle as the closest atom.
-        cycle_idx = next(iter(i for i, cycle in enumerate(cycles) if closest_idx in cycle))
-        open_list = cycles[cycle_idx]
-
-        distances = [path_lengths[(closest_idx, atom_idx)] for atom_idx in open_list]
-
-    open_list = [idx for _, idx in sorted(zip(distances, open_list, strict=True)) if idx != closest_idx]
-    return [open_list[0], closest_idx, open_list[1]]
+    pairs = sorted(itertools.combinations(others, 2), key=lambda p: area(*p), reverse=True)
+    stiff = [p for p in pairs if max(dist_sd[l1, p[0]], dist_sd[l1, p[1]], dist_sd[p]) < _LIGAND_DISTANCE_SD_CUTOFF]
+    for l2, l3 in stiff or pairs:
+        if not _is_angle_linear(xyz, (l1, l2, l3)):
+            return [l1, l2, l3]
+    raise ValueError("no suitable ligand atoms could be found")
 
 
 def _filter_receptor_atoms(
     trj: mdtraj.Trajectory,
     ligand_ref_idx: int,
     rmsf: npt.NDArray,
-    min_helix_size: int = 8,
-    min_sheet_size: int = 8,
-    skip_residues_start: int = 20,
-    skip_residues_end: int = 10,
-    minimum_distance_nm=1.0,
-    maximum_distance_nm=3.0,
+    minimum_distance_nm: float = 0.4,
+    maximum_distance_nm: float = 3.0,
 ) -> list[int]:
     """Select possible protein atoms for Boresch-style restraints.
 
-    Based on the criteria outlined by Baumann et al.
+    Candidates are rigid (low RMSF) backbone and CB atoms, ordered by distance
+    to the first restrained ligand atom. Preferring nearby atoms keeps the lever
+    arm of the angle and dihedral restraints short, so the decoupled ligand is
+    held close to its bound pose.
 
     Args:
         trj: The system trajectory.
         ligand_ref_idx: first restrained ligand atom
         rmsf: per-atom RMSF (nm) computed against the caller's chosen reference
             frame, indexed by full-system atom index.
-        min_helix_size: The minimum number of residues that have to be in an alpha-helix
-            for it to be considered stable.
-        min_sheet_size: The minimum number of residues that have to be in a beta-sheet
-            for it to be considered stable.
-        skip_residues_start: The number of residues to skip at the start of the protein
-            as these tend to be more flexible.
-        skip_residues_end: The number of residues to skip at the end of the protein
-            as these tend to be more flexible
         minimum_distance_nm: Discard protein atoms that are closer than this distance
             to the ligand.
         maximum_distance_nm: Discard protein atoms that are further than this distance
             from the ligand.
 
     Returns:
-        The indices of protein atoms that should be considered for use in Boresch-style
-        restraints.
+        Indices of candidate protein atoms, nearest first.
 
     Raises:
         ValueError: if no suitable receptor atoms could be found
     """
-    assert min_helix_size >= 7, "helices must be at least 7 residues long"
-    assert min_sheet_size >= 7, "sheets must be at least 7 residues long"
-
-    backbone_idxs = trj.top.select("protein and (backbone or name CB)")
-    backbone: mdtraj.Trajectory = trj.atom_slice(backbone_idxs)
-
-    structure = mdtraj.compute_dssp(backbone, simplified=True).tolist()[0]
-
-    # following the SepTop reference implementation we prefer to select from alpha
-    # helices if they are dominant in the protein, but otherwise select from sheets
-    # as well.
-    n_helix_residues = structure.count("H")
-    n_sheet_residues = structure.count("E")
-
-    allowed_motifs = ["H"] if n_helix_residues >= n_sheet_residues else ["H", "E"]
-    min_motif_size = {"H": min_helix_size, "E": min_sheet_size}
-
-    residues_to_keep: list[str] = []
-
-    structure = structure[skip_residues_start : -(skip_residues_end + 1)]
-
-    for motif, _idxs in itertools.groupby(enumerate(structure), lambda x: x[1]):
-        idxs = [(idx + skip_residues_start, motif) for idx, motif in _idxs]
-
-        if motif not in allowed_motifs or len(idxs) < min_motif_size[motif]:
-            continue
-
-        # discard the first and last 3 residues of the helix / sheet
-        start_idx, end_idx = idxs[0][0] + 3, idxs[-1][0] - 3
-
-        residues_to_keep.extend(f"resid {idx}" for idx in range(start_idx, end_idx + 1))
-
-    rigid_backbone_idxs = backbone.top.select(" ".join(residues_to_keep))
-
-    if len(rigid_backbone_idxs) == 0:
+    candidates = trj.top.select("protein and (backbone or name CB)")
+    candidates = candidates[rmsf[candidates] < _RMSF_CUTOFF]
+    distances = np.linalg.norm(trj.xyz[-1, candidates] - trj.xyz[-1, ligand_ref_idx], axis=-1)
+    mask = (distances > minimum_distance_nm) & (distances <= maximum_distance_nm)
+    if not mask.any():
         raise ValueError("no suitable receptor atoms could be found")
-
-    trj_backbone_idxs = backbone_idxs[rigid_backbone_idxs]
-    rigid_backbone_idxs = rigid_backbone_idxs[rmsf[trj_backbone_idxs] < _RMSF_CUTOFF]
-
-    distances = scipy.spatial.distance.cdist(backbone.xyz[0, rigid_backbone_idxs, :], trj.xyz[-1, [ligand_ref_idx], :])
-
-    distance_mask = (distances > minimum_distance_nm).all(axis=1)
-    distance_mask &= (distances <= maximum_distance_nm).any(axis=1)
-
-    return backbone_idxs[rigid_backbone_idxs[distance_mask]].tolist()
+    return candidates[mask][np.argsort(distances[mask])].tolist()
 
 
 def _is_valid_r1(trj: mdtraj.Trajectory, r1: int, l1: int, l2: int, l3: int) -> bool:
@@ -394,14 +334,15 @@ def rdmol_to_mdtraj(mol: Mol) -> mdtraj.Trajectory:
         return mdtraj.load(tmp.name)
 
 
-def select_receptor_atoms_baumann(
+def select_receptor_atoms(
     trj: mdtraj.Trajectory,
     ligand_ref_idxs: list[int],
     rmsf: npt.NDArray,
 ) -> list[int]:
-    """Select possible protein atoms for Boresch-style restraints.
+    """Select protein atoms for Boresch-style restraints.
 
-    Uses the method outlined by Baumann et al [1].
+    Follows the validity checks of Baumann et al [1], but takes the nearest valid
+    R1 rather than the first in atom order.
 
     References:
         [1] Baumann, Hannah M., et al. "Broadening the scope of binding free energy
@@ -432,7 +373,7 @@ def select_receptor_atoms_baumann(
         valid_r3_idxs = [r3 for r3 in receptor_idxs if _is_valid_r3(trj, found_r1, found_r2, r3, l1)]
 
         if len(valid_r3_idxs) == 0:
-            raise ValueError("could not find a valid R3 atom")
+            continue
 
         # TBD: Determine if it matters that this is different from Fig 3 of https://chemrxiv.org/engage/chemrxiv/article-details/6408d4f9cc600523a3df8c87
         # This checks that all protein atoms are within max distance from L1, P1, P2, but paper only says has to be from P1/P2
