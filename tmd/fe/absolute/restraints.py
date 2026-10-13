@@ -58,6 +58,7 @@ import numpy.typing as npt
 # TBD: replace these OpenMM derived objects with values from tmd.constants
 import openmm
 import scipy
+from rdkit import Chem
 from rdkit.Chem import Mol, PDBWriter
 
 _COLLINEAR_THRESHOLD = 0.9  # roughly 25 degrees
@@ -157,14 +158,41 @@ def _are_collinear(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
     return False
 
 
+def _largest_ring_system(mol: Mol, coords: npt.NDArray, center: npt.NDArray) -> list[int]:
+    """Heavy atoms of the largest set of rings joined by shared atoms.
+
+    Ties go to the ring system whose centroid is nearest ``center``, so the choice
+    does not depend on atom order.
+    """
+    systems: list[set[int]] = []
+    for ring in Chem.GetSymmSSSR(mol):
+        ring_atoms = {i for i in ring if mol.GetAtomWithIdx(i).GetAtomicNum() > 1}
+        for system in [s for s in systems if s & ring_atoms]:
+            ring_atoms |= system
+            systems.remove(system)
+        systems.append(ring_atoms)
+    if not systems:
+        return []
+
+    def rank(system: set[int]) -> tuple[int, float]:
+        return len(system), -float(np.linalg.norm(coords[sorted(system)].mean(axis=0) - center))
+
+    return sorted(max(systems, key=rank))
+
+
 def select_ligand_atoms(mol: Mol, xyz: npt.NDArray, rmsf: npt.NDArray) -> list[int]:
     """Select ligand atoms for Boresch restraints.
 
-    L1, the atom bonded to the receptor, is the rigid heavy atom nearest the
-    ligand's center, which minimizes how far restrained rotations move the rest
-    of the ligand. L2 and L3 span the largest triangle with L1 among rigid heavy
-    atoms whose mutual distances stay fixed, so the restrained frame tracks the
-    whole ligand rather than a single ring.
+    Candidates are rigid atoms of the largest ring system, with ties going to the
+    one nearest the ligand's center. Substituents joined by
+    rotatable bonds can look rigid in a short equilibration, but restraining them
+    does little to hold the rest of the ligand.
+
+    L1, the atom bonded to the receptor, is the candidate nearest the ligand's
+    center, which minimizes how far restrained rotations move the rest of the
+    ligand. L2 and L3 span the largest triangle with L1 among candidates whose
+    mutual distances stay fixed, so the restrained frame tracks the whole ring
+    system rather than a single ring.
 
     Args:
         mol: input ligand
@@ -176,12 +204,15 @@ def select_ligand_atoms(mol: Mol, xyz: npt.NDArray, rmsf: npt.NDArray) -> list[i
         atom indices [L1, L2, L3]
     """
     heavy = np.array([a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() > 1])
-    rigid = heavy[rmsf[heavy] < _RMSF_CUTOFF]
-    if len(rigid) < 3:
-        rigid = heavy
-
     ref = xyz.mean(axis=0)
     center = ref[heavy].mean(axis=0)
+    core = np.array(_largest_ring_system(mol, ref, center), dtype=int)
+    if len(core) < 3:
+        core = heavy
+    rigid = core[rmsf[core] < _RMSF_CUTOFF]
+    if len(rigid) < 3:
+        rigid = core
+
     l1 = int(rigid[np.argmin(np.linalg.norm(ref[rigid] - center, axis=-1))])
     others = [int(i) for i in rigid if i != l1]
 
@@ -190,11 +221,17 @@ def select_ligand_atoms(mol: Mol, xyz: npt.NDArray, rmsf: npt.NDArray) -> list[i
     def area(l2: int, l3: int) -> float:
         return float(np.linalg.norm(np.cross(ref[l2] - ref[l1], ref[l3] - ref[l1])))
 
+    def l2_angle_offset(l2: int, l3: int) -> float:
+        u, v = ref[l1] - ref[l2], ref[l3] - ref[l2]
+        return abs(float(np.arctan2(np.linalg.norm(np.cross(u, v)), u @ v)) - np.pi / 2)
+
     pairs = sorted(itertools.combinations(others, 2), key=lambda p: area(*p), reverse=True)
     stiff = [p for p in pairs if max(dist_sd[l1, p[0]], dist_sd[l1, p[1]], dist_sd[p]) < _LIGAND_DISTANCE_SD_CUTOFF]
-    for l2, l3 in stiff or pairs:
-        if not _is_angle_linear(xyz, (l1, l2, l3)):
-            return [l1, l2, l3]
+    for a, b in stiff or pairs:
+        # order L2/L3 by geometry, not atom index, keeping the L1-L2-L3 angle near 90 degrees
+        for l2, l3 in sorted([(a, b), (b, a)], key=lambda p: l2_angle_offset(*p)):
+            if not _is_angle_linear(xyz, (l1, l2, l3)):
+                return [l1, l2, l3]
     raise ValueError("no suitable ligand atoms could be found")
 
 
