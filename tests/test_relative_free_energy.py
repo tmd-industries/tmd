@@ -30,6 +30,7 @@ from tmd.fe.free_energy import (
     image_frames,
 )
 from tmd.fe.rbfe import (
+    _refine_lambda_schedule_backwards,
     estimate_relative_free_energy,
     estimate_relative_free_energy_bisection,
     estimate_relative_free_energy_bisection_hrex,
@@ -498,9 +499,41 @@ def test_rebalance_lambda_schedule(mock_compute_u_kn):
     assert np.max(np.diff(final_lambdas)) < 0.05
 
 
-if __name__ == "__main__":
-    # convenience: so we can run this directly from python tests/test_relative_free_energy.py without
-    # toggling the pytest marker
-    test_run_hif2a_test_system(estimate_relative_free_energy)
-    test_run_hif2a_test_system(estimate_relative_free_energy_bisection)
-    test_run_hif2a_test_system(estimate_relative_free_energy_bisection_hrex)
+def test_refine_lambda_schedule_backwards():
+    """Test that _refine_lambda_schedule_backwards increases overlap across the schedule."""
+
+    # Use a Gaussian-like overlap function that is monotonically decreasing with distance
+    def mock_overlap_fn(lam_a: float, lam_b: float) -> float:
+        """Overlap function that decreases with distance (Gaussian-like)."""
+        dist = abs(lam_b - lam_a)
+        return float(np.exp(-50.0 * dist**2))
+
+    # Create a schedule where the final two windows have high overlap
+    # and intermediate windows have moderate overlap
+    lambdas = np.array([0.0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 1.0])
+    target_overlap = 0.5
+
+    # Check overlaps before refinement
+    initial_overlaps = [mock_overlap_fn(lambdas[i], lambdas[i + 1]) for i in range(len(lambdas) - 1)]
+
+    # The final window overlap should be higher than target (0.90 to 0.95 is distance 0.05)
+    # exp(-50 * 0.05^2) = exp(-0.125) = 0.88 > 0.5
+    assert initial_overlaps[-1] > target_overlap, (
+        f"Test setup: final overlap {initial_overlaps[-1]} should exceed target {target_overlap}"
+    )
+
+    # Apply refinement (the refine function expects a distance (1 - overlap) function)
+    target_dist = 1.0 - target_overlap
+    refined = _refine_lambda_schedule_backwards(lambdas.copy(), lambda a, b: 1.0 - mock_overlap_fn(a, b), target_dist)
+
+    assert len(refined) == len(lambdas), "Should keep the same number of windows"
+
+    # Check overlaps after refinement
+    refined_overlaps = [mock_overlap_fn(refined[i], refined[i + 1]) for i in range(len(refined) - 1)]
+
+    # All overlaps should now be >= target_overlap
+    for i, overlap in enumerate(refined_overlaps):
+        assert overlap >= target_overlap - 0.02, f"Overlap at index {i}: {overlap:.4f} below target {target_overlap}"
+
+    # The final overlap should have decreased (pushed backward)
+    assert refined_overlaps[-1] <= initial_overlaps[-1] + 0.01

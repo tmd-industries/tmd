@@ -24,6 +24,7 @@ import numpy as np
 from numpy.typing import NDArray
 from openmm import app
 from rdkit import Chem
+from scipy.optimize import bisect
 
 from tmd._vendored.pymbar.mbar import MBAR
 from tmd.constants import DEFAULT_POSITIONAL_RESTRAINT_K, DEFAULT_PRESSURE, DEFAULT_TEMP
@@ -454,7 +455,75 @@ def rebalance_lambda_schedule(
                 f"Optimized schedule has {len(new_schedule)} windows compared to {len(initial_lambs)} windows initially, target overlap {target_overlap}"
             )
 
+            final_dist = overlap_dist(new_schedule[-2], new_schedule[-1])
+            if final_dist < target_dist:
+                new_schedule = _refine_lambda_schedule_backwards(new_schedule, overlap_dist, target_dist, xtol=xtol)
+                print(f"Refined schedule with {len(new_schedule)} windows, target overlap {target_overlap}")
+
     return [setup_initial_state_fn(lamb) for lamb in new_schedule]
+
+
+def _refine_lambda_schedule_backwards(
+    lambdas: NDArray,
+    distance: Callable[[float, float], float],
+    target_dist: float,
+    iterations: int = 5,
+    threshold: float = 2.5e-2,
+    xtol: float = 1e-4,
+) -> NDArray:
+    """Balance distances between neighboring windows by adjusting interior lambda values.
+
+    For each interior window k (sweeping right to left), if the left and right
+    distances are imbalanced by more than threshold, or either exceeds target_dist,
+    reposition window k via bisection so that distance(k-1, k) == distance(k, k+1).
+    Warn if the balanced position still violates target_dist.
+
+    Parameters
+    ----------
+    lambdas : NDArray
+        Sorted lambda values (ascending)
+    distance : Callable[[float, float], float]
+        Function that returns distance (1 - overlap) between two lambda values
+    target_dist : float
+        Maximum allowed distance between adjacent windows (1 - target_overlap)
+    iterations : int
+        Number of passes over the schedule (from right to left)
+    threshold : float
+        If the difference between left and right distances is below this threshold,
+        no adjustment is made.
+    xtol : float
+        Bisection tolerance used when repositioning windows
+
+    Returns
+    -------
+    NDArray
+        Refined lambda values
+    """
+    # Create a copy to avoid mutating the inputs
+    lambdas = np.array(lambdas, dtype=float)
+
+    for _ in range(iterations):
+        made_change = False
+        for k in range(len(lambdas) - 2, 0, -1):
+            lo, hi = lambdas[k - 1], lambdas[k + 1]
+            dist_l = distance(lo, lambdas[k])
+            dist_r = distance(lambdas[k], hi)
+
+            if abs(dist_l - dist_r) <= threshold and max(dist_l, dist_r) <= target_dist:
+                continue
+
+            proposed_lamb = bisect(lambda m: distance(lo, m) - distance(m, hi), lo, hi, maxiter=25, xtol=xtol)
+
+            if max(distance(lo, proposed_lamb), distance(proposed_lamb, hi)) <= target_dist:
+                lambdas[k] = proposed_lamb
+                made_change = True
+            else:
+                break
+
+        if not made_change:
+            break
+
+    return lambdas
 
 
 def get_nearest_state_idx(lamb: float, initial_states: Sequence[InitialState]) -> int:
