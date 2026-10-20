@@ -177,7 +177,8 @@ def _largest_ring_system(mol: Mol, coords: npt.NDArray, center: npt.NDArray) -> 
     def rank(system: set[int]) -> tuple[int, float]:
         return len(system), -float(np.linalg.norm(coords[sorted(system)].mean(axis=0) - center))
 
-    return sorted(max(systems, key=rank))
+    largest: set[int] = max(systems, key=rank)
+    return sorted(largest)
 
 
 def select_ligand_atoms(mol: Mol, xyz: npt.NDArray, rmsf: npt.NDArray) -> list[int]:
