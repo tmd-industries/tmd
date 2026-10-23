@@ -61,6 +61,8 @@ import scipy
 from rdkit import Chem
 from rdkit.Chem import Mol, PDBWriter
 
+from tmd.potentials.bonded import kahan_angle, signed_torsion_angle
+
 _COLLINEAR_THRESHOLD = 0.9  # roughly 25 degrees
 
 # values taken from the SepTop reference implementation at commit 7af0b4d
@@ -93,9 +95,8 @@ def _is_angle_linear(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
         True if the angle is linear, False otherwise.
     """
     # TBD: Handle PBCs correctly
-    a, b, c = (coords[:, i, :] for i in idxs)
-    u, v = a - b, c - b
-    angles = np.rad2deg(np.arctan2(np.linalg.norm(np.cross(u, v), axis=-1), (u * v).sum(axis=-1)))
+    ci, cj, ck = (coords[:, i, :] for i in idxs)
+    angles = np.rad2deg(np.asarray(kahan_angle(ci, cj, ck, np.zeros(len(coords)), np.eye(3) * 100.0)))
 
     angle_avg_rad = np.deg2rad(scipy.stats.circmean(angles, low=-180.0, high=180.0))
     # circvar is dimensionless in scipy >= 1.9; the limits are in degrees^2
@@ -118,11 +119,8 @@ def _is_dihedral_trans(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
         True if the dihedral is planar.
     """
     # TBD: Handle PBCs correctly
-    a, b, c, d = (coords[:, i, :] for i in idxs)
-    b0, b1, b2 = b - a, c - b, d - c
-    n1, n2 = np.cross(b0, b1), np.cross(b1, b2)
-    y = (np.cross(n2, n1) * b1).sum(axis=-1) / np.linalg.norm(b1, axis=-1)
-    dihedrals = np.rad2deg(np.arctan2(y, (n1 * n2).sum(axis=-1)))
+    ci, cj, ck, cl = (coords[:, i, :] for i in idxs)
+    dihedrals = np.rad2deg(np.asarray(signed_torsion_angle(ci, cj, ck, cl, np.eye(3) * 100.0)))
 
     dihedral_avg = scipy.stats.circmean(dihedrals, low=-180.0, high=180.0)
     dihedral_var = scipy.stats.circstd(dihedrals, low=-180.0, high=180.0) ** 2
