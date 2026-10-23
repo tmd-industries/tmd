@@ -19,7 +19,7 @@ from rdkit.Chem import AllChem
 
 from tmd.fe.absolute.restraints import _is_angle_linear, select_ligand_atoms
 
-pytestmark = [pytest.mark.nocuda]
+pytestmark = [pytest.mark.nogpu]
 
 
 def _ligand_with_trajectory(seed: int = 2024, n_frames: int = 20):
