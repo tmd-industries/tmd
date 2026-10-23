@@ -58,7 +58,6 @@ import numpy.typing as npt
 # TBD: replace these OpenMM derived objects with values from tmd.constants
 import openmm
 import scipy
-from rdkit import Chem
 from rdkit.Chem import Mol, PDBWriter
 
 from tmd.potentials.bonded import kahan_angle, signed_torsion_angle
@@ -163,7 +162,7 @@ def _largest_ring_system(mol: Mol, coords: npt.NDArray, center: npt.NDArray) -> 
     does not depend on atom order.
     """
     systems: list[set[int]] = []
-    for ring in Chem.GetSymmSSSR(mol):
+    for ring in mol.GetRingInfo().AtomRings():
         ring_atoms = {i for i in ring if mol.GetAtomWithIdx(i).GetAtomicNum() > 1}
         for system in [s for s in systems if s & ring_atoms]:
             ring_atoms |= system
