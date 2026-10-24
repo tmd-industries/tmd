@@ -69,8 +69,8 @@ from tmd.fe.absolute.abfe import (
 )
 from tmd.fe.absolute.free_energy import RestraintParams
 from tmd.fe.absolute.restraints import (
-    select_ligand_atoms_baumann,
-    select_receptor_atoms_baumann,
+    select_ligand_atoms,
+    select_receptor_atoms,
 )
 from tmd.fe.cif_writer import build_openmm_topology
 from tmd.fe.free_energy import (
@@ -169,8 +169,8 @@ def select_septop_anchors(
     Both ligands' anchors and the shared receptor anchors are picked from a
     single joint ``[host, mol_a, mol_b]`` equilibration trajectory in which both
     ligands are fully coupled (but do not interact with each other). Each
-    ligand's three anchor atoms come from the Baumann RMSF-based selector
-    applied to its own atom slice; the three receptor anchors are picked once
+    ligand's three anchor atoms come from :func:`select_ligand_atoms` applied
+    to its own atom slice; the three receptor anchors are picked once
     using ligand A's atoms (both ligands bind the same pocket, so the chosen
     receptor atoms are usable for either).
 
@@ -208,12 +208,14 @@ def select_septop_anchors(
     full.superpose(ref, atom_indices=full.topology.select("backbone"))
     rmsf = mdtraj.rmsf(full, ref)
 
-    lig_ids_a_local = select_ligand_atoms_baumann(mol_a, rmsf[n_host : n_host + n_a])
-    lig_ids_b_local = select_ligand_atoms_baumann(mol_b, rmsf[n_host + n_a : n_host + n_a + n_b])
+    lig_ids_a_local = select_ligand_atoms(mol_a, full.xyz[:, n_host : n_host + n_a], rmsf[n_host : n_host + n_a])
+    lig_ids_b_local = select_ligand_atoms(
+        mol_b, full.xyz[:, n_host + n_a : n_host + n_a + n_b], rmsf[n_host + n_a : n_host + n_a + n_b]
+    )
 
     # Receptor selection: use ligand A's atom indices in the joint frame; the
     # chosen receptor atoms apply to both ligands since they share the pocket.
-    rec_ids = select_receptor_atoms_baumann(full, [i + n_host for i in lig_ids_a_local], rmsf)
+    rec_ids = select_receptor_atoms(full, [i + n_host for i in lig_ids_a_local], rmsf)
 
     return SepTopAnchors(
         rec_atoms=list(rec_ids),

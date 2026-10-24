@@ -23,8 +23,8 @@ from numpy.typing import NDArray
 
 from tmd.constants import BOLTZ
 from tmd.fe.absolute.restraints import (
-    select_ligand_atoms_baumann,
-    select_receptor_atoms_baumann,
+    select_ligand_atoms,
+    select_receptor_atoms,
 )
 from tmd.fe.cif_writer import build_openmm_topology
 from tmd.fe.free_energy import (
@@ -150,7 +150,7 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
     def create(cls, bt, host_config: HostConfig, tmtrj, restraint_params: RestraintParams) -> Self:
         """Construct an AbsoluteBindingFreeEnergy instance from a trajectory.
 
-        Selects restraint atoms using RMSF filtering (Baumann method) and
+        Selects restraint atoms using RMSF filtering and
         builds the restraint geometry from the final frame of the trajectory.
 
         Parameters
@@ -191,11 +191,11 @@ class AbsoluteBindingFreeEnergy(AbsoluteFreeEnergy):
 
         # select ligand atoms
         ligand_offset = trj.n_atoms - mol.GetNumAtoms()
-        lig_ids = select_ligand_atoms_baumann(mol, rmsf[ligand_offset:])
+        lig_ids = select_ligand_atoms(mol, trj.xyz[:, ligand_offset:], rmsf[ligand_offset:])
         lig_ids = [i + ligand_offset for i in lig_ids]
 
         # select receptor atoms
-        rec_ids = select_receptor_atoms_baumann(trj, lig_ids, rmsf)
+        rec_ids = select_receptor_atoms(trj, lig_ids, rmsf)
 
         pos = tmtrj.frames[-1]
         box = tmtrj.boxes[-1]
