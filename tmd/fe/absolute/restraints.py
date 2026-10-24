@@ -209,6 +209,7 @@ def select_ligand_atoms(mol: Mol, xyz: npt.NDArray, rmsf: npt.NDArray) -> list[i
         core = heavy
     rigid = core[rmsf[core] < _RMSF_CUTOFF]
     if len(rigid) < 3:
+        print("Warning: could not find candidates for ligand restraints which satisfy RMSF stability criterion")
         rigid = core
 
     l1 = int(rigid[np.argmin(np.linalg.norm(ref[rigid] - center, axis=-1))])
