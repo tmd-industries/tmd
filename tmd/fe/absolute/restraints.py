@@ -61,6 +61,7 @@ import scipy
 from rdkit.Chem import Mol, PDBWriter
 
 from tmd.potentials.bonded import kahan_angle, signed_torsion_angle
+from tmd.potentials.jax_utils import delta_r
 
 _COLLINEAR_THRESHOLD = 0.9  # roughly 25 degrees
 
@@ -370,6 +371,15 @@ def rdmol_to_mdtraj(mol: Mol) -> mdtraj.Trajectory:
         return mdtraj.load(tmp.name)
 
 
+def _unwrap_around(trj: mdtraj.Trajectory, idx: int) -> mdtraj.Trajectory:
+    """Copy of ``trj`` with each atom moved to its periodic image nearest atom ``idx``."""
+    unwrapped = trj[:]
+    unwrapped.xyz = np.stack(
+        [x[idx] + np.asarray(delta_r(x, x[idx], box)) for x, box in zip(trj.xyz, trj.unitcell_vectors)]
+    )
+    return unwrapped
+
+
 def select_receptor_atoms(
     trj: mdtraj.Trajectory,
     ligand_ref_idxs: list[int],
@@ -396,6 +406,8 @@ def select_receptor_atoms(
     Raises:
         ValueError: if no suitable receptor atoms could be found
     """
+    # the ligand may be imaged out of the pocket, so measure everything from L1's image
+    trj = _unwrap_around(trj, ligand_ref_idxs[0])
     receptor_idxs = _filter_receptor_atoms(trj, ligand_ref_idxs[0], rmsf)
 
     l1, l2, l3 = ligand_ref_idxs

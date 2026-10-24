@@ -12,12 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import mdtraj
 import numpy as np
 import pytest
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from tmd.fe.absolute.restraints import _is_angle_linear, select_ligand_atoms
+from tmd.fe.absolute.restraints import (
+    _is_angle_linear,
+    rdmol_to_mdtraj,
+    select_ligand_atoms,
+    select_receptor_atoms,
+)
+from tmd.fe.utils import read_sdf
+from tmd.utils import path_to_internal_file
 
 pytestmark = [pytest.mark.nogpu]
 
@@ -57,3 +65,21 @@ def test_select_ligand_atoms_invariant_to_atom_order(perm_seed):
     selected = select_ligand_atoms(renumbered, xyz[:, perm], rmsf[perm])
 
     assert [int(perm[i]) for i in selected] == expected
+
+
+def test_select_receptor_atoms_invariant_to_ligand_image():
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as pdb_path:
+        protein = mdtraj.load(str(pdb_path))
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf") as ligand_path:
+        mol = read_sdf(ligand_path)[0]
+    trj = protein.stack(rdmol_to_mdtraj(mol))
+    box_length = np.ptp(trj.xyz[0], axis=0).max() + 2.0
+    trj.unitcell_vectors = box_length * np.eye(3)[None]
+    rmsf = np.zeros(trj.n_atoms)
+    lig = slice(protein.n_atoms, None)
+    lig_ids = [protein.n_atoms + i for i in select_ligand_atoms(mol, trj.xyz[:, lig], rmsf[lig])]
+    expected = select_receptor_atoms(trj, lig_ids, rmsf)
+
+    # image the ligand into the neighboring cell, as mdtraj's image_molecules can
+    trj.xyz[:, lig, 0] += box_length
+    assert select_receptor_atoms(trj, lig_ids, rmsf) == expected
