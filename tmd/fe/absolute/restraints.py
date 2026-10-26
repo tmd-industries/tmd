@@ -100,7 +100,8 @@ def _is_angle_linear(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
         angles.append(np.rad2deg(angle))
 
     angle_avg_rad = np.deg2rad(scipy.stats.circmean(angles, low=-180.0, high=180.0))
-    angle_var_deg = scipy.stats.circvar(angles, low=-180.0, high=180.0)
+    # circvar is dimensionless in scipy >= 1.9; the limits are in degrees^2
+    angle_var_deg = scipy.stats.circstd(angles, low=-180.0, high=180.0) ** 2
 
     check_1 = _ANGLE_CHECK_FACTOR * angle_avg_rad**2
     check_2 = _ANGLE_CHECK_FACTOR * (angle_avg_rad - np.pi) ** 2
@@ -125,7 +126,7 @@ def _is_dihedral_trans(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
         dihedrals.append(np.rad2deg(dihedral))
 
     dihedral_avg = scipy.stats.circmean(dihedrals, low=-180.0, high=180.0)
-    dihedral_var = scipy.stats.circvar(dihedrals, low=-180.0, high=180.0)
+    dihedral_var = scipy.stats.circstd(dihedrals, low=-180.0, high=180.0) ** 2
 
     return np.abs(dihedral_avg) > _DIHEDRAL_CHECK_CUTOFF or dihedral_var > _DIHEDRAL_CHECK_MAX_VAR
 
@@ -398,6 +399,7 @@ def select_receptor_atoms_baumann(
     trj: mdtraj.Trajectory,
     ligand_ref_idxs: list[int],
     rmsf: npt.NDArray,
+    other_ligand_ref_idxs: list[int] | None = None,
 ) -> list[int]:
     """Select possible protein atoms for Boresch-style restraints.
 
@@ -412,6 +414,8 @@ def select_receptor_atoms_baumann(
         ligand_ref_idxs: The indices of the three ligands atoms that will be restrained.
         rmsf: per-atom RMSF (nm) computed against the caller's chosen reference
             frame, indexed by full-system atom index.
+        other_ligand_ref_idxs: restrained atoms of a second ligand that shares
+            the receptor atoms; its restraint geometry must also be valid.
 
     Returns:
         The indices of the three atoms to use for the restraint
@@ -421,18 +425,27 @@ def select_receptor_atoms_baumann(
     """
     receptor_idxs = _filter_receptor_atoms(trj, ligand_ref_idxs[0], rmsf)
 
-    l1, l2, l3 = ligand_ref_idxs
+    triplets = [ligand_ref_idxs]
+    if other_ligand_ref_idxs is not None:
+        triplets.append(other_ligand_ref_idxs)
 
-    valid_r1_idxs = (r1 for r1 in receptor_idxs if _is_valid_r1(trj, r1, l1, l2, l3))
+    valid_r1_idxs = (r1 for r1 in receptor_idxs if all(_is_valid_r1(trj, r1, l1, l2, l3) for l1, l2, l3 in triplets))
 
-    valid_r2_pairs = ((r1, r2) for r1 in valid_r1_idxs for r2 in receptor_idxs if _is_valid_r2(trj, r1, r2, l1, l2))
+    valid_r2_pairs = (
+        (r1, r2)
+        for r1 in valid_r1_idxs
+        for r2 in receptor_idxs
+        if all(_is_valid_r2(trj, r1, r2, l1, l2) for l1, l2, _ in triplets)
+    )
     # chosen to match the SepTop reference implementation at commit 3705ba5
     max_distance = 0.8 * (trj.unitcell_lengths.mean(axis=0).min(axis=-1) / 2)
     for found_r1, found_r2 in valid_r2_pairs:
-        valid_r3_idxs = [r3 for r3 in receptor_idxs if _is_valid_r3(trj, found_r1, found_r2, r3, l1)]
+        valid_r3_idxs = [
+            r3 for r3 in receptor_idxs if all(_is_valid_r3(trj, found_r1, found_r2, r3, l1) for l1, _, _ in triplets)
+        ]
 
         if len(valid_r3_idxs) == 0:
-            raise ValueError("could not find a valid R3 atom")
+            continue
 
         # TBD: Determine if it matters that this is different from Fig 3 of https://chemrxiv.org/engage/chemrxiv/article-details/6408d4f9cc600523a3df8c87
         # This checks that all protein atoms are within max distance from L1, P1, P2, but paper only says has to be from P1/P2
@@ -457,4 +470,4 @@ def select_receptor_atoms_baumann(
 
         return [found_r1, found_r2, found_r3]
 
-    raise ValueError("could not find a valid R3 atom within max distance")
+    raise ValueError("could not find valid R1, R2, R3 receptor atoms")
