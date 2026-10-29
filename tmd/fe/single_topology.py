@@ -105,6 +105,13 @@ DUMMY_B_ANGLE_MIN_MAX = [0.0, 0.7]
 DUMMY_A_BOND_MIN_MAX = _flip_min_max(DUMMY_B_BOND_MIN_MAX)
 DUMMY_A_ANGLE_MIN_MAX = _flip_min_max(DUMMY_B_ANGLE_MIN_MAX)
 
+# When running with constraints angles that involve a hydrogen could lead to instabilities
+# when the angles would conflict with the endstate parameters (e.g. a nitrile carbon becoming a
+# methyl carbon). The angle's force constant is softened by this factor, in setup_end_state, in the
+# endstate where the hydrogen is a dummy. The constant is turned back up to full force using the
+# standard parameter interpolation.
+DUMMY_H_ANGLE_K_SCALE = 0.5
+
 # chiral and converting dummy B groups are turning on
 DUMMY_B_CHIRAL_BOND_CONVERTING_ON_MIN_MAX = [0.0, 0.7]
 DUMMY_B_CHIRAL_ATOM_CONVERTING_ON_MIN_MAX = [0.3, 0.5]
@@ -565,6 +572,15 @@ def setup_end_state(
 
     all_dummy_improper_idxs = np.array(all_dummy_improper_idxs_, np.int32).reshape(-1, 4)
     all_dummy_improper_params = np.array(all_dummy_improper_params_, np.float64).reshape(-1, 3)
+
+    # Soften angles involving hydrogens that are dummy atoms at this end-state, see DUMMY_H_ANGLE_K_SCALE.
+    core_atoms_b = set(core[:, 1].tolist())
+    dummy_hydrogen_atoms_b = {
+        atom.GetIdx() for atom in mol_b.GetAtoms() if atom.GetAtomicNum() == 1 and atom.GetIdx() not in core_atoms_b
+    }
+    for i, angle_idxs in enumerate(all_dummy_angle_idxs):
+        if any(int(x) in dummy_hydrogen_atoms_b for x in angle_idxs):
+            all_dummy_angle_params[i, 0] *= DUMMY_H_ANGLE_K_SCALE
 
     # generate parameters for mol_a
     mol_a_top = topology.BaseTopology(mol_a, ff)
