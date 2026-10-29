@@ -16,8 +16,10 @@
 
 When running with constraints, angles that involve a hydrogen which is a dummy atom at one of the
 end-states can lead to instabilities (e.g. when a nitrile carbon is mapped onto a methyl carbon).
-The force constant of such angles is scaled by ``DUMMY_H_ANGLE_K_SCALE`` in the end-state where the
-hydrogen is a dummy, while:
+The force constant of such angles is scaled by ``DUMMY_H_ANGLE_K_SCALE`` during end-state
+construction (``setup_end_state``), i.e. in the end-state where the hydrogen is a dummy, so that
+the intermediate states at lambda=0 and lambda=1 exactly match the (softened) end-state systems,
+while:
 
 - the fully-interacting end-state of the same angle keeps its full force-field force constant,
 - core angles and angles involving dummy (but non-hydrogen) atoms are left untouched,
@@ -127,7 +129,11 @@ def angle_key(idxs, idx_map=None):
 
 
 def params_by_angle(params, idxs_arr):
-    """Maps each aligned angle idx tuple to its parameter row."""
+    """Maps each aligned angle idx tuple to its parameter row.
+
+    ``params`` and ``idxs_arr`` must come from the same potential: the alignment returns a set, so
+    the row order depends on the (scaled) parameter values and differs across constructions.
+    """
     return {tuple(int(x) for x in row): np.asarray(params)[i] for i, row in enumerate(idxs_arr)}
 
 
@@ -182,20 +188,37 @@ def test_dummy_h_angles_scaled_in_opposite_endstate(smi_a, smi_b, core_rows):
     st_ref = build_single_topology(mol_a, mol_b, core, dummy_h_angle_k_scale=1.0)
 
     idxs = np.array(st.aligned_angle.idxs)
-    np.testing.assert_array_equal(idxs, np.array(st_ref.aligned_angle.idxs))
-    np.testing.assert_allclose(np.array(st.aligned_angle.mins), np.array(st_ref.aligned_angle.mins))
-    np.testing.assert_allclose(np.array(st.aligned_angle.maxes), np.array(st_ref.aligned_angle.maxes))
+    ref_idxs = np.array(st_ref.aligned_angle.idxs)
+    # NOTE: the alignment returns a set, whose iteration order depends on the (scaled) params,
+    # so compare terms keyed by their idxs rather than by row position
+    assert {tuple(int(x) for x in row) for row in idxs} == {tuple(int(x) for x in row) for row in ref_idxs}
+    mins_by_angle = {
+        tuple(int(x) for x in row): float(np.asarray(st.aligned_angle.mins)[i]) for i, row in enumerate(idxs)
+    }
+    maxes_by_angle = {
+        tuple(int(x) for x in row): float(np.asarray(st.aligned_angle.maxes)[i]) for i, row in enumerate(idxs)
+    }
+    mins_ref_by_angle = {
+        tuple(int(x) for x in row): float(np.asarray(st_ref.aligned_angle.mins)[i]) for i, row in enumerate(ref_idxs)
+    }
+    maxes_ref_by_angle = {
+        tuple(int(x) for x in row): float(np.asarray(st_ref.aligned_angle.maxes)[i]) for i, row in enumerate(ref_idxs)
+    }
 
     src_by_angle = params_by_angle(st.aligned_angle.src_params, idxs)
     dst_by_angle = params_by_angle(st.aligned_angle.dst_params, idxs)
-    src_ref_by_angle = params_by_angle(st_ref.aligned_angle.src_params, idxs)
-    dst_ref_by_angle = params_by_angle(st_ref.aligned_angle.dst_params, idxs)
+    src_ref_by_angle = params_by_angle(st_ref.aligned_angle.src_params, ref_idxs)
+    dst_ref_by_angle = params_by_angle(st_ref.aligned_angle.dst_params, ref_idxs)
 
     num_src_scaled = 0
     num_dst_scaled = 0
     for row in idxs:
         key = tuple(int(x) for x in row)
         side = expected_dummy_h_side(st, row)
+
+        # the interpolation schedules are unaffected by the softening
+        assert mins_by_angle[key] == mins_ref_by_angle[key]
+        assert maxes_by_angle[key] == maxes_ref_by_angle[key]
 
         expected_src, expected_dst = src_ref_by_angle[key].copy(), dst_ref_by_angle[key].copy()
         if side == AtomMapFlags.MOL_B:
@@ -218,13 +241,20 @@ def test_dummy_h_angles_scaled_in_opposite_endstate(smi_a, smi_b, core_rows):
 
 
 @pytest.mark.parametrize("smi_a,smi_b,core_rows", MOL_PAIRS)
-def test_end_state_systems_are_not_modified(smi_a, smi_b, core_rows):
-    """The softening is only applied to the interpolated (aligned) parameters, never to the end-state systems."""
+def test_end_state_systems_are_softened_and_match_aligned_params(smi_a, smi_b, core_rows):
+    """The softening is applied during end-state construction (setup_end_state), so that the aligned
+    parameters used for interpolation exactly reproduce the (softened) end-state systems."""
     mol_a, mol_b, core = make_mols(smi_a, smi_b, core_rows)
 
     st = build_single_topology(mol_a, mol_b, core)
     st_ref = build_single_topology(mol_a, mol_b, core, dummy_h_angle_k_scale=1.0)
 
+    idxs = np.array(st.aligned_angle.idxs)
+    aligned_src_by_angle = params_by_angle(st.aligned_angle.src_params, idxs)
+    aligned_dst_by_angle = params_by_angle(st.aligned_angle.dst_params, idxs)
+
+    dummy_side = {"src_system": AtomMapFlags.MOL_B, "dst_system": AtomMapFlags.MOL_A}
+    num_softened = {"src_system": 0, "dst_system": 0}
     for name in ["src_system", "dst_system"]:
         system = getattr(st, name)
         system_ref = getattr(st_ref, name)
@@ -233,11 +263,23 @@ def test_end_state_systems_are_not_modified(smi_a, smi_b, core_rows):
             system_ref.angle.potential.idxs,
             err_msg=f"{name} angle idxs changed",
         )
-        np.testing.assert_allclose(
-            np.array(system.angle.params),
-            np.array(system_ref.angle.params),
-            err_msg=f"{name} angle params should be unaffected by the dummy hydrogen softening",
-        )
+        params_by_key = params_by_angle(system.angle.params, system.angle.potential.idxs)
+        params_ref_by_key = params_by_angle(system_ref.angle.params, system_ref.angle.potential.idxs)
+        for key, params in params_by_key.items():
+            expected = params_ref_by_key[key].copy()
+            if expected[0] > 0.0 and expected_dummy_h_side(st, key) == dummy_side[name]:
+                # hydrogen is a dummy at this endstate: its angle k is softened here ...
+                expected[0] *= DUMMY_H_ANGLE_K_SCALE
+                num_softened[name] += 1
+            err_msg = f"{name} angle {key} params: {params} != expected {expected}"
+            np.testing.assert_allclose(params, expected, err_msg=err_msg)
+            # ... and the aligned params used for interpolation reproduce the end-state system exactly
+            aligned_params = aligned_src_by_angle[key] if name == "src_system" else aligned_dst_by_angle[key]
+            err_msg = f"{name} angle {key} not reproduced by the aligned params"
+            np.testing.assert_allclose(aligned_params, params, err_msg=err_msg)
+
+    assert num_softened["src_system"] > 0, "expected softened angles with dummy (MOL_B) hydrogens in src_system"
+    assert num_softened["dst_system"] > 0, "expected softened angles with dummy (MOL_A) hydrogens in dst_system"
 
 
 def test_lambda_endstates_match_forcefield_params():
@@ -335,8 +377,9 @@ def test_softened_angles_reach_full_strength_within_schedule(smi_a, smi_b, core_
     st_ref = build_single_topology(mol_a, mol_b, core, dummy_h_angle_k_scale=1.0)
 
     idxs = np.array(st.aligned_angle.idxs)
-    src_ref_by_angle = params_by_angle(st_ref.aligned_angle.src_params, idxs)
-    dst_ref_by_angle = params_by_angle(st_ref.aligned_angle.dst_params, idxs)
+    ref_idxs = np.array(st_ref.aligned_angle.idxs)
+    src_ref_by_angle = params_by_angle(st_ref.aligned_angle.src_params, ref_idxs)
+    dst_ref_by_angle = params_by_angle(st_ref.aligned_angle.dst_params, ref_idxs)
 
     lamb_b = DUMMY_B_ANGLE_MIN_MAX[1]  # lamb at which dummy B angles are pinned to the dst params
     lamb_a = DUMMY_A_ANGLE_MIN_MAX[0]  # lamb at which dummy A angles are pinned to the src params
@@ -388,8 +431,9 @@ def test_angles_in_chiral_volumes_turning_on_are_softened_and_interpolated(monke
     st = build_single_topology(mol_a, mol_b, core)
     st_ref = build_single_topology(mol_a, mol_b, core, dummy_h_angle_k_scale=1.0)
     idxs = np.array(st.aligned_angle.idxs)
+    ref_idxs = np.array(st_ref.aligned_angle.idxs)
     src_by_angle = params_by_angle(st.aligned_angle.src_params, idxs)
-    src_ref_by_angle = params_by_angle(st_ref.aligned_angle.src_params, idxs)
+    src_ref_by_angle = params_by_angle(st_ref.aligned_angle.src_params, ref_idxs)
 
     # pick angles with a dummy (MOL_B) hydrogen that are actually scaled (i.e. non-zero src k)
     mol_b_h_angles = [
@@ -406,8 +450,9 @@ def test_angles_in_chiral_volumes_turning_on_are_softened_and_interpolated(monke
     )
 
     st_chiral = build_single_topology(mol_a, mol_b, core)
-    chiral_src_by_angle = params_by_angle(st_chiral.aligned_angle.src_params, idxs)
-    chiral_dst_by_angle = params_by_angle(st_chiral.aligned_angle.dst_params, idxs)
+    chiral_idxs = np.array(st_chiral.aligned_angle.idxs)
+    chiral_src_by_angle = params_by_angle(st_chiral.aligned_angle.src_params, chiral_idxs)
+    chiral_dst_by_angle = params_by_angle(st_chiral.aligned_angle.dst_params, chiral_idxs)
 
     # the angle of the chiral volume being turned on is softened just like any other dummy hydrogen angle
     np.testing.assert_allclose(
@@ -416,7 +461,7 @@ def test_angles_in_chiral_volumes_turning_on_are_softened_and_interpolated(monke
         err_msg="angle belonging to a chiral volume being turned on should still be softened",
     )
     # and it is interpolated on the chiral-conversion schedule ...
-    target_row = find_angle_row(idxs, target)
+    target_row = find_angle_row(chiral_idxs, target)
     np.testing.assert_allclose(
         st_chiral.aligned_angle.mins[target_row],
         DUMMY_B_CHIRAL_ANGLE_CONVERTING_ON_MIN_MAX[0],
@@ -428,7 +473,7 @@ def test_angles_in_chiral_volumes_turning_on_are_softened_and_interpolated(monke
         err_msg="chiral volume angle should follow the converting-on schedule (max)",
     )
     # ... while the other dummy hydrogen angles keep the standard schedule (the schedule is per-angle)
-    other_row = find_angle_row(idxs, other)
+    other_row = find_angle_row(chiral_idxs, other)
     np.testing.assert_allclose(st_chiral.aligned_angle.mins[other_row], DUMMY_B_ANGLE_MIN_MAX[0])
     np.testing.assert_allclose(st_chiral.aligned_angle.maxes[other_row], DUMMY_B_ANGLE_MIN_MAX[1])
 
@@ -440,7 +485,7 @@ def test_angles_in_chiral_volumes_turning_on_are_softened_and_interpolated(monke
     lamb_min, lamb_max = DUMMY_B_CHIRAL_ANGLE_CONVERTING_ON_MIN_MAX
     assert src_k < dst_k
     for lamb in [0.0, 0.4, 0.5, 0.6, 0.65, lamb_max, 1.0]:
-        p_by_angle = params_by_angle(st_chiral.setup_intermediate_state(lamb).angle.params, idxs)
+        p_by_angle = params_by_angle(st_chiral.setup_intermediate_state(lamb).angle.params, chiral_idxs)
         err_msg = f"angle {target} k not interpolated correctly at lamb={lamb}"
         np.testing.assert_allclose(
             p_by_angle[target][0],
@@ -451,9 +496,9 @@ def test_angles_in_chiral_volumes_turning_on_are_softened_and_interpolated(monke
         )
     # in particular: pinned at the softened value in the middle of the pinned region, and back at
     # full (unsoftened) strength at the end of the activation schedule
-    p_pin = params_by_angle(st_chiral.setup_intermediate_state(0.4).angle.params, idxs)
+    p_pin = params_by_angle(st_chiral.setup_intermediate_state(0.4).angle.params, chiral_idxs)
     assert p_pin[target][0] == pytest.approx(DUMMY_H_ANGLE_K_SCALE * src_ref_by_angle[target][0])
-    p_full = params_by_angle(st_chiral.setup_intermediate_state(lamb_max).angle.params, idxs)
+    p_full = params_by_angle(st_chiral.setup_intermediate_state(lamb_max).angle.params, chiral_idxs)
     np.testing.assert_allclose(
         p_full[target][0], src_ref_by_angle[target][0], err_msg="angle not restored to full strength"
     )
@@ -474,8 +519,9 @@ def test_angles_in_chiral_volumes_turning_off_are_softened_and_interpolated(monk
     st = build_single_topology(mol_a, mol_b, core)
     st_ref = build_single_topology(mol_a, mol_b, core, dummy_h_angle_k_scale=1.0)
     idxs = np.array(st.aligned_angle.idxs)
+    ref_idxs = np.array(st_ref.aligned_angle.idxs)
     dst_by_angle = params_by_angle(st.aligned_angle.dst_params, idxs)
-    dst_ref_by_angle = params_by_angle(st_ref.aligned_angle.dst_params, idxs)
+    dst_ref_by_angle = params_by_angle(st_ref.aligned_angle.dst_params, ref_idxs)
 
     # pick angles with dummy (MOL_A) hydrogens that are actually scaled (i.e. non-zero dst k)
     mol_a_h_angles = [
@@ -492,8 +538,9 @@ def test_angles_in_chiral_volumes_turning_off_are_softened_and_interpolated(monk
     )
 
     st_chiral = build_single_topology(mol_a, mol_b, core)
-    chiral_src_by_angle = params_by_angle(st_chiral.aligned_angle.src_params, idxs)
-    chiral_dst_by_angle = params_by_angle(st_chiral.aligned_angle.dst_params, idxs)
+    chiral_idxs = np.array(st_chiral.aligned_angle.idxs)
+    chiral_src_by_angle = params_by_angle(st_chiral.aligned_angle.src_params, chiral_idxs)
+    chiral_dst_by_angle = params_by_angle(st_chiral.aligned_angle.dst_params, chiral_idxs)
 
     # the angle of the chiral volume being turned off is softened just like any other dummy hydrogen angle
     np.testing.assert_allclose(
@@ -502,7 +549,7 @@ def test_angles_in_chiral_volumes_turning_off_are_softened_and_interpolated(monk
         err_msg="angle belonging to a chiral volume being turned off should still be softened",
     )
     # and it is interpolated on the chiral-conversion schedule ...
-    target_row = find_angle_row(idxs, target)
+    target_row = find_angle_row(chiral_idxs, target)
     np.testing.assert_allclose(
         st_chiral.aligned_angle.mins[target_row],
         DUMMY_A_CHIRAL_ANGLE_CONVERTING_OFF_MIN_MAX[0],
@@ -514,7 +561,7 @@ def test_angles_in_chiral_volumes_turning_off_are_softened_and_interpolated(monk
         err_msg="chiral volume angle should follow the converting-off schedule (max)",
     )
     # ... while the other dummy hydrogen angles keep the standard schedule (the schedule is per-angle)
-    other_row = find_angle_row(idxs, other)
+    other_row = find_angle_row(chiral_idxs, other)
     np.testing.assert_allclose(st_chiral.aligned_angle.mins[other_row], DUMMY_A_ANGLE_MIN_MAX[0])
     np.testing.assert_allclose(st_chiral.aligned_angle.maxes[other_row], DUMMY_A_ANGLE_MIN_MAX[1])
 
@@ -526,7 +573,7 @@ def test_angles_in_chiral_volumes_turning_off_are_softened_and_interpolated(monk
     lamb_min, lamb_max = DUMMY_A_CHIRAL_ANGLE_CONVERTING_OFF_MIN_MAX
     assert src_k > dst_k
     for lamb in [0.0, lamb_min, 0.4, 0.55, 0.7, lamb_max, 1.0]:
-        p_by_angle = params_by_angle(st_chiral.setup_intermediate_state(lamb).angle.params, idxs)
+        p_by_angle = params_by_angle(st_chiral.setup_intermediate_state(lamb).angle.params, chiral_idxs)
         err_msg = f"angle {target} k not interpolated correctly at lamb={lamb}"
         np.testing.assert_allclose(
             p_by_angle[target][0],
@@ -537,9 +584,9 @@ def test_angles_in_chiral_volumes_turning_off_are_softened_and_interpolated(monk
         )
     # in particular: still at full (unsoftened) strength in the middle of the pinned region, and
     # fully softened at the end of the deactivation schedule
-    p_full = params_by_angle(st_chiral.setup_intermediate_state(0.2).angle.params, idxs)
+    p_full = params_by_angle(st_chiral.setup_intermediate_state(0.2).angle.params, chiral_idxs)
     assert p_full[target][0] == pytest.approx(dst_ref_by_angle[target][0])
-    p_soft = params_by_angle(st_chiral.setup_intermediate_state(lamb_max).angle.params, idxs)
+    p_soft = params_by_angle(st_chiral.setup_intermediate_state(lamb_max).angle.params, chiral_idxs)
     np.testing.assert_allclose(
         p_soft[target][0], DUMMY_H_ANGLE_K_SCALE * dst_ref_by_angle[target][0], err_msg="angle not softened at lamb_max"
     )

@@ -107,8 +107,9 @@ DUMMY_A_ANGLE_MIN_MAX = _flip_min_max(DUMMY_B_ANGLE_MIN_MAX)
 
 # When running with constraints angles that involve a hydrogen could lead to instabilities
 # when the angles would conflict with the endstate parameters (e.g. a nitrile carbon becoming a
-# methyl carbon). The angle's force constant is soften by this factor in the endstate where the hydrogen is a dummy.
-# The constant is turned back up to full force using the standard parameter interpolation.
+# methyl carbon). The angle's force constant is softened by this factor, in setup_end_state, in the
+# endstate where the hydrogen is a dummy. The constant is turned back up to full force using the
+# standard parameter interpolation.
 DUMMY_H_ANGLE_K_SCALE = 0.5
 
 # chiral and converting dummy B groups are turning on
@@ -571,6 +572,15 @@ def setup_end_state(
 
     all_dummy_improper_idxs = np.array(all_dummy_improper_idxs_, np.int32).reshape(-1, 4)
     all_dummy_improper_params = np.array(all_dummy_improper_params_, np.float64).reshape(-1, 3)
+
+    # Soften angles involving hydrogens that are dummy atoms at this end-state, see DUMMY_H_ANGLE_K_SCALE.
+    core_atoms_b = set(core[:, 1].tolist())
+    dummy_hydrogen_atoms_b = {
+        atom.GetIdx() for atom in mol_b.GetAtoms() if atom.GetAtomicNum() == 1 and atom.GetIdx() not in core_atoms_b
+    }
+    for i, angle_idxs in enumerate(all_dummy_angle_idxs):
+        if any(int(x) in dummy_hydrogen_atoms_b for x in angle_idxs):
+            all_dummy_angle_params[i, 0] *= DUMMY_H_ANGLE_K_SCALE
 
     # generate parameters for mol_a
     mol_a_top = topology.BaseTopology(mol_a, ff)
@@ -1575,23 +1585,7 @@ class SingleTopology(AtomMapMixin):
         idxs = idxs.reshape(-1, 3)
         src_params = src_params.reshape(-1, 3)
         dst_params = dst_params.reshape(-1, 3)
-        src_params, dst_params = self._soften_dummy_hydrogen_angles(idxs, src_params, dst_params)
         return AlignedAngle(self.get_num_atoms(), idxs, src_params, dst_params, mins, maxes)
-
-    def _soften_dummy_hydrogen_angles(self, idxs, src_params, dst_params):
-        """Soften angles that involve a hydrogen which is a dummy atom.
-
-        Scale down the force constant angles where hydrogens involved in the angle are a dummy. When running
-        with constraints the full force constant applied to dummy hydrogens can result in instabilities such as with a Nitrile
-        mapped to a methyl.
-        """
-        for i, angle_idxs in enumerate(idxs):
-            side = self._angle_dummy_hydrogen_side(angle_idxs)
-            if side == AtomMapFlags.MOL_B:
-                src_params = src_params.at[i, 0].mul(DUMMY_H_ANGLE_K_SCALE)
-            elif side == AtomMapFlags.MOL_A:
-                dst_params = dst_params.at[i, 0].mul(DUMMY_H_ANGLE_K_SCALE)
-        return src_params, dst_params
 
     def _align_propers(self):
         idxs, src_params, dst_params, mins, maxes = self._align_bonded_term(
@@ -1899,34 +1893,6 @@ class SingleTopology(AtomMapMixin):
     def any_idxs_belong_to_dummy_b(self, idxs):
         dummy_atoms = self.get_dummy_atoms_b()
         return any([x in dummy_atoms for x in idxs])
-
-    def _combined_atom_is_hydrogen(self, c_idx: int) -> bool:
-        """Whether a combined-topology atom is a hydrogen."""
-        if c_idx in self.c_to_a:
-            return self.mol_a.GetAtomWithIdx(self.c_to_a[c_idx]).GetAtomicNum() == 1
-        return self.mol_b.GetAtomWithIdx(self.c_to_b[c_idx]).GetAtomicNum() == 1
-
-    def _angle_dummy_hydrogen_side(self, idxs) -> int | None:
-        """Return which endstate an angle's hydrogen comes from.
-
-        Returns ``AtomMapFlags.MOL_B`` when the angle involves a hydrogen that is a
-        dummy at the source (lambda=0) end, ``AtomMapFlags.MOL_A`` when it is a dummy
-        at the destination (lambda=1) end, and ``None`` when the angle involves no
-        dummy hydrogen or is part of the core.
-        """
-        # Only look at angles that included dummy atoms
-        if all([self.c_flags[x] == AtomMapFlags.CORE for x in idxs]):
-            return None
-        hydrogen_dummies = [self._combined_atom_is_hydrogen(int(x)) for x in idxs]
-        if not any(hydrogen_dummies):
-            return None
-        has_dummy_b_h = any([self.c_flags[x] == AtomMapFlags.MOL_B and hydrogen_dummies[i] for i, x in enumerate(idxs)])
-        has_dummy_a_h = any([self.c_flags[x] == AtomMapFlags.MOL_A and hydrogen_dummies[i] for i, x in enumerate(idxs)])
-        if has_dummy_b_h and not has_dummy_a_h:
-            return AtomMapFlags.MOL_B
-        elif has_dummy_a_h and not has_dummy_b_h:
-            return AtomMapFlags.MOL_A
-        return None
 
     def _chiral_volume_is_turning_on(self, idxs):
         return tuple(idxs) in self.dst_chiral_idxs and tuple(idxs) not in self.src_chiral_idxs
