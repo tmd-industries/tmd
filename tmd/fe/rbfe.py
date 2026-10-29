@@ -650,7 +650,7 @@ def optimize_coords_state(
     return x_opt
 
 
-def get_free_idxs(initial_state: InitialState, cutoff: float = 0.5) -> list[int]:
+def get_free_idxs(initial_state: InitialState, cutoff: float = 1.2) -> list[int]:
     """Select particles within cutoff of ligand"""
     x = initial_state.x0
     x_lig = x[initial_state.ligand_idxs]
