@@ -89,17 +89,8 @@ def optimize_abfe_initial_state(state: InitialState) -> InitialState:
 
 def sample_for_restraints(initial_state: InitialState, md_params, replicas: int = 1) -> Trajectory:
     if replicas > 1:
-        # Sample new velocities and use new seeds to reduce correlation
-        states = [
-            replace(
-                initial_state,
-                v0=sample_velocities(
-                    initial_state.integrator.masses, initial_state.integrator.temperature, md_params.seed + i
-                ),
-                integrator=replace(initial_state.integrator, seed=initial_state.integrator.seed + i),
-            )
-            for i in range(replicas)
-        ]
+        # Get Initial states with different seeds
+        states = [initial_state.seeded_replica(md_params.seed + i) for i in range(replicas)]
         ctxt = get_batched_context(states, md_params)
     else:
         ctxt = get_context(initial_state, md_params)
