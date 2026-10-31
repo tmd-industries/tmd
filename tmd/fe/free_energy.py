@@ -17,7 +17,7 @@ import time
 from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from functools import cache
-from typing import Callable, Optional
+from typing import Callable, Optional, Self
 from warnings import warn
 
 import jax
@@ -244,6 +244,19 @@ class InitialState:
 
     def to_bound_impl(self):
         return make_summed_potential(self.potentials).to_gpu(np.float32).bound_impl
+
+    def seeded_replica(self, seed: int) -> Self:
+        """Generate a new replica of the InitialState with a different seed.
+
+        This is useful when wanting to sample the same state in batches.
+        """
+        intg = replace(self.integrator, seed=seed)
+        # Match the convention in tmd.fe.rbfe:setup_in_env by incrementing the barostat by 1
+        baro = self.barostat
+        if baro is not None:
+            baro = replace(baro, seed=seed + 1)
+        v0 = sample_velocities(intg.masses, intg.temperature, seed)
+        return replace(self, v0=v0, barostat=baro, integrator=intg)
 
 
 @dataclass

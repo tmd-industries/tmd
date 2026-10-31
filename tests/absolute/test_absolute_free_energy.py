@@ -78,3 +78,45 @@ def test_absolute_binding_free_energy():
 
     # 7 potentials typically, add 3 for the boresch restraints
     assert len(unbound_potentials) == 7 + 3
+
+
+def test_sample_for_restraints_replicas_not_identical():
+    mol, _, _ = get_hif2a_ligand_pair_single_topology()
+    # Use the simple charges because it is faster
+    ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
+
+    with path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb") as protein_path:
+        host_config = builders.build_protein_system(
+            str(protein_path), ff.protein_ff, ff.water_ff, mols=[mol], box_margin=0.1
+        )
+
+    md_params = MDParams(
+        n_frames=5,
+        n_eq_steps=1000,
+        steps_per_frame=10,
+        seed=2026,
+    )
+
+    host_config = setup_optimized_host(host_config, [mol], ff)
+    host_conf = host_config.conf
+    bt = BaseTopology(mol, ff)
+    temperature = DEFAULT_TEMP
+
+    afe = AbsoluteFreeEnergy(mol, bt)
+    initial_state = get_initial_state(afe, ff, host_config, host_conf, temperature, md_params.seed, 0.0)
+    minimized_state = optimize_abfe_initial_state(initial_state)
+
+    n_replicas = 2
+    sample_md_params = replace(md_params, n_eq_steps=10_000)
+    trj = sample_for_restraints(minimized_state, sample_md_params, replicas=n_replicas)
+
+    # Each replica contributes n_frames frames, concatenated in replica order.
+    frames = np.array(trj.frames)
+    assert frames.shape[0] == md_params.n_frames * n_replicas
+    frames_per_replica = frames.shape[0] // n_replicas
+    replica_frames = [frames[i * frames_per_replica : (i + 1) * frames_per_replica] for i in range(n_replicas)]
+
+    # Replicas use distinct seeds/velocities, so they must not produce identical trajectories.
+    for i in range(n_replicas):
+        for j in range(i + 1, n_replicas):
+            assert not np.array_equal(replica_frames[i], replica_frames[j])
