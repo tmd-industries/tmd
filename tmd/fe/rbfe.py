@@ -92,9 +92,14 @@ def _get_default_state_minimization_configs() -> Sequence[minimizer.Minimization
 
     Initially attempts to minimize with L-BFGS-B, and falls back to BFGS if it fails.
     L-BFGS-B is twice as fast, but in some edge cases it fails to minimize successfully"""
+    gtol: float = 10
+    # Primarily limiting the max line search as BFGS can take an hour to perform the line search
+    max_line_search_iters: int = 30
     return [
-        minimizer.ScipyMinimizationConfig(method="L-BFGS-B"),
-        minimizer.ScipyMinimizationConfig(method="BFGS", options={"disp": True}),
+        minimizer.ScipyMinimizationConfig(method="L-BFGS-B", options={"gtol": gtol, "maxiter": max_line_search_iters}),
+        minimizer.ScipyMinimizationConfig(
+            method="BFGS", options={"disp": True, "gtol": gtol, "maxiter": max_line_search_iters}
+        ),
     ]
 
 
