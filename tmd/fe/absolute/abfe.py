@@ -89,7 +89,9 @@ def optimize_abfe_initial_state(state: InitialState) -> InitialState:
 
 def sample_for_restraints(initial_state: InitialState, md_params, replicas: int = 1) -> Trajectory:
     if replicas > 1:
-        ctxt = get_batched_context([initial_state] * replicas, md_params)
+        # Get Initial states with different seeds
+        states = [initial_state.seeded_replica(md_params.seed + i) for i in range(replicas)]
+        ctxt = get_batched_context(states, md_params)
     else:
         ctxt = get_context(initial_state, md_params)
     traj = Trajectory.empty()

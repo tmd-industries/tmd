@@ -39,7 +39,9 @@ from rdkit import Chem
 import tmd.testsystems.fep_benchmark as fep_benchmark
 from tmd.constants import DEFAULT_PROTEIN_FF, DEFAULT_TEMP, DEFAULT_WATER_FF, NBParamIdx
 from tmd.fe import utils
+from tmd.fe.absolute import restraints
 from tmd.fe.absolute.abfe import optimize_abfe_initial_state
+from tmd.fe.absolute.restraints import _is_valid_r1, _is_valid_r2, _is_valid_r3
 from tmd.fe.free_energy import MDParams, Trajectory
 from tmd.fe.rbfe import setup_optimized_host
 from tmd.fe.septop import (
@@ -53,8 +55,10 @@ from tmd.fe.septop import (
     select_septop_anchors,
 )
 from tmd.fe.stored_arrays import StoredArrays
+from tmd.fe.topology import MultiTopology
 from tmd.ff import Forcefield
 from tmd.md import builders
+from tmd.md.trajectory import frames_to_mdtraj_trajectory
 from tmd.potentials import (
     FlatBottomRestraint,
     HarmonicAngle,
@@ -408,6 +412,38 @@ def test_select_septop_anchors_real_complex(hif2a_complex):
     # ligand B atoms in [n_host + n_a, n_host + n_a + n_b)
     for lb in anchors.lig_atoms_b:
         assert n_host + n_a <= lb < n_host + n_a + n_b
+
+    # the shared receptor anchors must form a valid restraint with both ligands
+    topology = MultiTopology([mol_a, mol_b], Forcefield.load_default())
+    coords = frames_to_mdtraj_trajectory(trj.frames, trj.boxes, topology, host_config, None)
+    r1, r2, r3 = anchors.rec_atoms
+    for l1, l2, l3 in (anchors.lig_atoms_a, anchors.lig_atoms_b):
+        assert _is_valid_r1(coords, r1, l1, l2, l3)
+        assert _is_valid_r2(coords, r1, r2, l1, l2)
+        assert _is_valid_r3(coords, r1, r2, r3, l1)
+
+
+@pytest.mark.nogpu
+def test_select_septop_anchors_checks_ligand_b(hif2a_complex, monkeypatch):
+    """Receptor anchors must be valid for ligand B, not just ligand A.
+
+    Make every receptor atom an invalid R1 for ligand B while leaving ligand A
+    unaffected; anchor selection should then fail.
+    """
+    mol_a, mol_b, _, host_config = hif2a_complex
+    trj = _make_synthetic_trajectory(host_config, mol_a, mol_b)
+    first_ligand_b_atom = len(host_config.conf) + mol_a.GetNumAtoms()
+    real_is_valid_r1 = restraints._is_valid_r1
+
+    def is_valid_r1_only_for_ligand_a(trj, r1, l1, l2, l3):
+        if l1 >= first_ligand_b_atom:
+            return False
+        return real_is_valid_r1(trj, r1, l1, l2, l3)
+
+    monkeypatch.setattr(restraints, "_is_valid_r1", is_valid_r1_only_for_ligand_a)
+
+    with pytest.raises(ValueError, match="could not find valid R1, R2, R3"):
+        select_septop_anchors(host_config, mol_a, mol_b, trj)
 
 
 @pytest.mark.nogpu

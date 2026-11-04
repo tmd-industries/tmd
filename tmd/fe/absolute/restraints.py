@@ -384,6 +384,7 @@ def select_receptor_atoms(
     trj: mdtraj.Trajectory,
     ligand_ref_idxs: list[int],
     rmsf: npt.NDArray,
+    other_ligand_ref_idxs: list[int] | None = None,
 ) -> list[int]:
     """Select protein atoms for Boresch-style restraints.
 
@@ -399,6 +400,8 @@ def select_receptor_atoms(
         ligand_ref_idxs: The indices of the three ligands atoms that will be restrained.
         rmsf: per-atom RMSF (nm) computed against the caller's chosen reference
             frame, indexed by full-system atom index.
+        other_ligand_ref_idxs: restrained atoms of a second ligand that shares
+            the receptor atoms; its restraint geometry must also be valid.
 
     Returns:
         The indices of the three atoms to use for the restraint
@@ -410,15 +413,24 @@ def select_receptor_atoms(
     trj = _unwrap_around(trj, ligand_ref_idxs[0])
     receptor_idxs = _filter_receptor_atoms(trj, ligand_ref_idxs[0], rmsf)
 
-    l1, l2, l3 = ligand_ref_idxs
+    triplets = [ligand_ref_idxs]
+    if other_ligand_ref_idxs is not None:
+        triplets.append(other_ligand_ref_idxs)
 
-    valid_r1_idxs = (r1 for r1 in receptor_idxs if _is_valid_r1(trj, r1, l1, l2, l3))
+    valid_r1_idxs = (r1 for r1 in receptor_idxs if all(_is_valid_r1(trj, r1, l1, l2, l3) for l1, l2, l3 in triplets))
 
-    valid_r2_pairs = ((r1, r2) for r1 in valid_r1_idxs for r2 in receptor_idxs if _is_valid_r2(trj, r1, r2, l1, l2))
+    valid_r2_pairs = (
+        (r1, r2)
+        for r1 in valid_r1_idxs
+        for r2 in receptor_idxs
+        if all(_is_valid_r2(trj, r1, r2, l1, l2) for l1, l2, _ in triplets)
+    )
     # chosen to match the SepTop reference implementation at commit 3705ba5
     max_distance = 0.8 * (trj.unitcell_lengths.mean(axis=0).min(axis=-1) / 2)
     for found_r1, found_r2 in valid_r2_pairs:
-        valid_r3_idxs = [r3 for r3 in receptor_idxs if _is_valid_r3(trj, found_r1, found_r2, r3, l1)]
+        valid_r3_idxs = [
+            r3 for r3 in receptor_idxs if all(_is_valid_r3(trj, found_r1, found_r2, r3, l1) for l1, _, _ in triplets)
+        ]
 
         if len(valid_r3_idxs) == 0:
             continue
@@ -446,4 +458,4 @@ def select_receptor_atoms(
 
         return [found_r1, found_r2, found_r3]
 
-    raise ValueError("could not find a valid R3 atom within max distance")
+    raise ValueError("could not find valid R1, R2, R3 receptor atoms")

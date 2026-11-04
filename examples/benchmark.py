@@ -247,10 +247,7 @@ def main():
         assert 0, f"Unknown system {args.system}"
 
     # Resample the velocities to ensure they aren't all zero
-    initial_states = [
-        replace(state, v0=sample_velocities(state.integrator.masses, temperature, seed=seed + i))
-        for i, state in enumerate(initial_states)
-    ]
+    initial_states = [state.seeded_replica(seed + i) for i, state in enumerate(initial_states)]
 
     md_params = MDParams(
         n_eq_steps=0,
