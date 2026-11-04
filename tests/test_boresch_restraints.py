@@ -19,6 +19,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from tmd.fe.absolute.restraints import (
+    _RMSF_CUTOFF,
     _is_angle_linear,
     rdmol_to_mdtraj,
     select_ligand_atoms,
@@ -52,6 +53,40 @@ def test_select_ligand_atoms_uses_largest_ring_system():
     assert len({l1, l2, l3}) == 3
     assert {l1, l2, l3} <= naphthalene
     assert not _is_angle_linear(xyz, (l1, l2, l3))
+
+
+def test_select_ligand_atoms_prefers_stable_ring_system():
+    mol, xyz, rmsf = _ligand_with_trajectory()
+    naphthalene = list(mol.GetSubstructMatch(Chem.MolFromSmarts("c1ccc2ccccc2c1")))
+    rmsf[naphthalene] = 2 * _RMSF_CUTOFF
+
+    selected = select_ligand_atoms(mol, xyz, rmsf)
+
+    phenyl = mol.GetSubstructMatches(Chem.MolFromSmarts("c1ccccc1"))
+    assert any(set(selected) <= set(ring) - set(naphthalene) for ring in phenyl)
+
+
+def test_select_ligand_atoms_skips_floppy_central_atom():
+    mol, xyz, rmsf = _ligand_with_trajectory()
+    naphthalene = list(mol.GetSubstructMatch(Chem.MolFromSmarts("c1ccc2ccccc2c1")))
+    heavy = [a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() > 1]
+    ref = xyz.mean(axis=0)
+    central = naphthalene[np.argmin(np.linalg.norm(ref[naphthalene] - ref[heavy].mean(axis=0), axis=-1))]
+    xyz[:, central] += np.random.default_rng(0).normal(scale=0.05, size=(len(xyz), 3))
+
+    selected = select_ligand_atoms(mol, xyz, rmsf)
+
+    assert set(selected) <= set(naphthalene)
+    assert central not in selected
+
+
+def test_select_ligand_atoms_rejects_flexible_ligand():
+    mol, xyz, rmsf = _ligand_with_trajectory()
+    # independent atom motion leaves no triangle with fixed mutual distances
+    xyz += np.random.default_rng(0).normal(scale=0.05, size=xyz.shape)
+
+    with pytest.raises(ValueError, match="fixed mutual distances"):
+        select_ligand_atoms(mol, xyz, rmsf)
 
 
 @pytest.mark.parametrize("perm_seed", [0, 1, 2])

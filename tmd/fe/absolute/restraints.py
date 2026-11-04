@@ -49,7 +49,7 @@ SOFTWARE.
 
 import itertools
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 import mdtraj
 import numpy as np
@@ -156,12 +156,8 @@ def _are_collinear(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
     return False
 
 
-def _largest_ring_system(mol: Mol, coords: npt.NDArray, center: npt.NDArray) -> list[int]:
-    """Heavy atoms of the largest set of rings joined by shared atoms.
-
-    Ties go to the ring system whose centroid is nearest ``center``, so the choice
-    does not depend on atom order.
-    """
+def _ring_systems(mol: Mol) -> list[set[int]]:
+    """Heavy atoms of each set of rings joined by shared atoms."""
     systems: list[set[int]] = []
     for ring in mol.GetRingInfo().AtomRings():
         ring_atoms = {i for i in ring if mol.GetAtomWithIdx(i).GetAtomicNum() > 1}
@@ -169,29 +165,24 @@ def _largest_ring_system(mol: Mol, coords: npt.NDArray, center: npt.NDArray) -> 
             ring_atoms |= system
             systems.remove(system)
         systems.append(ring_atoms)
-    if not systems:
-        return []
-
-    def rank(system: set[int]) -> tuple[int, float]:
-        return len(system), -float(np.linalg.norm(coords[sorted(system)].mean(axis=0) - center))
-
-    largest: set[int] = max(systems, key=rank)
-    return sorted(largest)
+    return systems
 
 
 def select_ligand_atoms(mol: Mol, xyz: npt.NDArray, rmsf: npt.NDArray) -> list[int]:
     """Select ligand atoms for Boresch restraints.
 
-    Candidates are rigid atoms of the largest ring system, with ties going to the
-    one nearest the ligand's center. Substituents joined by
-    rotatable bonds can look rigid in a short equilibration, but restraining them
-    does little to hold the rest of the ligand.
+    All three atoms come from one ring system, since substituents joined by
+    rotatable bonds can look rigid in a short equilibration. Ring systems are
+    ranked by their number of stable (low RMSF) atoms, then by size, with ties
+    going to the one nearest the ligand's center. The stable atoms of each ring
+    system are searched first, then all of its atoms. Ligands without rings use
+    all heavy atoms.
 
     L1, the atom bonded to the receptor, is the candidate nearest the ligand's
-    center, which minimizes how far restrained rotations move the rest of the
-    ligand. L2 and L3 span the largest triangle with L1 among candidates whose
-    mutual distances stay fixed, so the restrained frame tracks the whole ring
-    system rather than a single ring.
+    center that forms a non-linear triangle with fixed mutual distances, which
+    minimizes how far restrained rotations move the rest of the ligand. L2 and
+    L3 span the largest such triangle, so the restrained frame tracks the whole
+    ring system rather than a single ring.
 
     Args:
         mol: input ligand
@@ -201,38 +192,60 @@ def select_ligand_atoms(mol: Mol, xyz: npt.NDArray, rmsf: npt.NDArray) -> list[i
 
     Returns:
         atom indices [L1, L2, L3]
+
+    Raises:
+        ValueError: if no candidate triangle keeps fixed mutual distances
     """
     heavy = np.array([a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() > 1])
     ref = xyz.mean(axis=0)
     center = ref[heavy].mean(axis=0)
-    core = np.array(_largest_ring_system(mol, ref, center), dtype=int)
-    if len(core) < 3:
-        core = heavy
-    rigid = core[rmsf[core] < _RMSF_CUTOFF]
-    if len(rigid) < 3:
-        print("Warning: could not find candidates for ligand restraints which satisfy RMSF stability criterion")
-        rigid = core
+    stable = {int(i) for i in heavy[rmsf[heavy] < _RMSF_CUTOFF]}
 
-    l1 = int(rigid[np.argmin(np.linalg.norm(ref[rigid] - center, axis=-1))])
-    others = [int(i) for i in rigid if i != l1]
+    def rank(system: set[int]) -> tuple[int, int, float]:
+        return -len(system & stable), -len(system), float(np.linalg.norm(ref[sorted(system)].mean(axis=0) - center))
 
+    systems = sorted(_ring_systems(mol) or [set(heavy.tolist())], key=rank)
+    candidate_sets = [sorted(s & stable) for s in systems] + [sorted(s) for s in systems]
+
+    # standard deviation over frames of each pairwise atom distance (nm)
     dist_sd = np.linalg.norm(xyz[:, :, None, :] - xyz[:, None, :, :], axis=-1).std(axis=0)
 
-    def area(l2: int, l3: int) -> float:
+    def area(t: tuple[int, int, int]) -> float:
+        """Twice the area of the triangle spanned by the triplet."""
+        l1, l2, l3 = t
         return float(np.linalg.norm(np.cross(ref[l2] - ref[l1], ref[l3] - ref[l1])))
 
-    def l2_angle_offset(l2: int, l3: int) -> float:
+    def l2_angle_offset(t: tuple[int, int, int]) -> float:
+        """Deviation (radians) of the L1-L2-L3 angle from 90 degrees."""
+        l1, l2, l3 = t
         u, v = ref[l1] - ref[l2], ref[l3] - ref[l2]
         return abs(float(np.arctan2(np.linalg.norm(np.cross(u, v)), u @ v)) - np.pi / 2)
 
-    pairs = sorted(itertools.combinations(others, 2), key=lambda p: area(*p), reverse=True)
-    stiff = [p for p in pairs if max(dist_sd[l1, p[0]], dist_sd[l1, p[1]], dist_sd[p]) < _LIGAND_DISTANCE_SD_CUTOFF]
-    for a, b in stiff or pairs:
-        # order L2/L3 by geometry, not atom index, keeping the L1-L2-L3 angle near 90 degrees
-        for l2, l3 in sorted([(a, b), (b, a)], key=lambda p: l2_angle_offset(*p)):
-            if not _is_angle_linear(xyz, (l1, l2, l3)):
-                return [l1, l2, l3]
-    raise ValueError("no suitable ligand atoms could be found")
+    def is_stiff(t: tuple[int, int, int]) -> bool:
+        """Whether all pairwise distances in the triplet stay fixed."""
+        l1, l2, l3 = t
+        return max(dist_sd[l1, l2], dist_sd[l1, l3], dist_sd[l2, l3]) < _LIGAND_DISTANCE_SD_CUTOFF
+
+    def triplets(l1: int, candidates: list[int]) -> Iterator[tuple[int, int, int]]:
+        """Candidate (L1, L2, L3) triplets for ``l1``, largest triangle first."""
+        pairs = itertools.combinations([i for i in candidates if i != l1], 2)
+        for a, b in sorted(pairs, key=lambda p: area((l1, *p)), reverse=True):
+            # order L2/L3 by geometry, not atom index, keeping the L1-L2-L3 angle near 90 degrees
+            yield from sorted([(l1, a, b), (l1, b, a)], key=l2_angle_offset)
+
+    def search(atoms: list[int]) -> tuple[int, int, int] | None:
+        """First stiff, non-linear triplet among ``atoms``, trying L1 nearest the center first."""
+        by_distance = sorted(atoms, key=lambda i: float(np.linalg.norm(ref[i] - center)))
+        stiff = (t for l1 in by_distance for t in triplets(l1, by_distance) if is_stiff(t))
+        return next((t for t in stiff if not _is_angle_linear(xyz, t)), None)
+
+    found = next((t for atoms in candidate_sets if len(atoms) >= 3 and (t := search(atoms)) is not None), None)
+    if found is None:
+        raise ValueError("no non-linear ligand atom triplet keeps fixed mutual distances")
+    selected = list(found)
+    if (rmsf[selected] >= _RMSF_CUTOFF).any():
+        print(f"Warning: Boresch ligand atoms {selected} do not all satisfy the RMSF stability criterion")
+    return selected
 
 
 def _filter_receptor_atoms(
