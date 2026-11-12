@@ -49,10 +49,9 @@ SOFTWARE.
 
 import itertools
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 import mdtraj
-import networkx as nx
 import numpy as np
 import numpy.typing as npt
 
@@ -62,6 +61,7 @@ import scipy
 from rdkit.Chem import Mol, PDBWriter
 
 from tmd.potentials.bonded import kahan_angle, signed_torsion_angle
+from tmd.potentials.jax_utils import delta_r
 
 _COLLINEAR_THRESHOLD = 0.9  # roughly 25 degrees
 
@@ -79,6 +79,7 @@ _DIHEDRAL_CHECK_CUTOFF = 150.0  # units of degrees
 _DIHEDRAL_CHECK_MAX_VAR = 300.0  # units of degrees^2
 
 _RMSF_CUTOFF = 0.1  # nm
+_LIGAND_DISTANCE_SD_CUTOFF = 0.03  # nm
 
 
 def _is_angle_linear(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
@@ -93,11 +94,9 @@ def _is_angle_linear(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
     Returns:
         True if the angle is linear, False otherwise.
     """
-    angles = []
-    for frame in coords:
-        # TBD: Handle PBCs correctly
-        angle = kahan_angle(*frame[idxs, :], 0.0, np.eye(3) * 100.0)  # type: ignore
-        angles.append(np.rad2deg(angle))
+    # TBD: Handle PBCs correctly
+    ci, cj, ck = (coords[:, i, :] for i in idxs)
+    angles = np.rad2deg(np.asarray(kahan_angle(ci, cj, ck, np.zeros(len(coords)), np.eye(3) * 100.0)))
 
     angle_avg_rad = np.deg2rad(scipy.stats.circmean(angles, low=-180.0, high=180.0))
     # circvar is dimensionless in scipy >= 1.9; the limits are in degrees^2
@@ -119,11 +118,9 @@ def _is_dihedral_trans(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
     Returns:
         True if the dihedral is planar.
     """
-    dihedrals = []
-    for frame in coords:
-        # TBD: Handle PBCs correctly
-        dihedral = signed_torsion_angle(*frame[idxs, :], np.eye(3) * 100.0)  # type: ignore
-        dihedrals.append(np.rad2deg(dihedral))
+    # TBD: Handle PBCs correctly
+    ci, cj, ck, cl = (coords[:, i, :] for i in idxs)
+    dihedrals = np.rad2deg(np.asarray(signed_torsion_angle(ci, cj, ck, cl, np.eye(3) * 100.0)))
 
     dihedral_avg = scipy.stats.circmean(dihedrals, low=-180.0, high=180.0)
     dihedral_var = scipy.stats.circstd(dihedrals, low=-180.0, high=180.0) ** 2
@@ -159,143 +156,135 @@ def _are_collinear(coords: npt.NDArray, idxs: Sequence[int]) -> bool:
     return False
 
 
-def select_ligand_atoms_baumann(mol: Mol, rmsf: list[float]) -> list[int]:
+def _ring_systems(mol: Mol) -> list[set[int]]:
+    """Heavy atoms of each set of rings joined by shared atoms."""
+    systems: list[set[int]] = []
+    for ring in mol.GetRingInfo().AtomRings():
+        ring_atoms = {i for i in ring if mol.GetAtomWithIdx(i).GetAtomicNum() > 1}
+        for system in [s for s in systems if s & ring_atoms]:
+            ring_atoms |= system
+            systems.remove(system)
+        systems.append(ring_atoms)
+    return systems
+
+
+def select_ligand_atoms(mol: Mol, xyz: npt.NDArray, rmsf: npt.NDArray) -> list[int]:
     """Select ligand atoms for Boresch restraints.
 
+    All three atoms come from one ring system, since substituents joined by
+    rotatable bonds can look rigid in a short equilibration. Ring systems are
+    ranked by their number of stable (low RMSF) atoms, then by size, with ties
+    going to the one nearest the ligand's center. The stable atoms of each ring
+    system are searched first, then all of its atoms. Ligands without rings use
+    all heavy atoms.
+
+    L1, the atom bonded to the receptor, is the candidate nearest the ligand's
+    center that forms a non-linear triangle with fixed mutual distances, which
+    minimizes how far restrained rotations move the rest of the ligand. L2 and
+    L3 span the largest such triangle, so the restrained frame tracks the whole
+    ring system rather than a single ring.
+
     Args:
-        ligand: input ligand
-        rmsf: rmsf on ligand atoms
+        mol: input ligand
+        xyz: ligand coordinates with ``shape=(n_frames, n_atoms, 3)`` (nm), in a
+            receptor-aligned frame
+        rmsf: per-atom RMSF (nm) of the ligand in the same frame
 
     Returns:
-        atom indices
+        atom indices [L1, L2, L3]
 
-    The selection is probably not invariant to changes in input atom order.
-
-    References:
-        [1] Baumann, Hannah M., et al. "Broadening the scope of binding free energy
-            calculations using a Separated Topologies approach." (2023).
+    Raises:
+        ValueError: if no candidate triangle keeps fixed mutual distances
     """
-    graph = nx.from_edgelist(
-        (b.GetBeginAtomIdx(), b.GetEndAtomIdx())
-        for b in mol.GetBonds()
-        if b.GetBeginAtom().GetAtomicNum() > 1 and b.GetEndAtom().GetAtomicNum() > 1
-    )
+    heavy = np.array([a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() > 1])
+    ref = xyz.mean(axis=0)
+    center = ref[heavy].mean(axis=0)
+    stable = {int(i) for i in heavy[rmsf[heavy] < _RMSF_CUTOFF]}
 
-    all_paths = [path for _, node_path in nx.all_pairs_shortest_path(graph) for path in node_path.values()]
-    path_lengths = {(path[0], path[-1]): len(path) for path in all_paths}
-    longest_path = max(all_paths, key=len)
+    def rank(system: set[int]) -> tuple[int, int, float]:
+        return -len(system & stable), -len(system), float(np.linalg.norm(ref[sorted(system)].mean(axis=0) - center))
 
-    center_idx = longest_path[len(longest_path) // 2]
-    cycles = nx.cycle_basis(graph)
-    if len(cycles) >= 1:
-        cycles = [cycle for cycle in cycles if rmsf[cycle].max() < _RMSF_CUTOFF]
+    systems = sorted(_ring_systems(mol) or [set(heavy.tolist())], key=rank)
+    candidate_sets = [sorted(s & stable) for s in systems] + [sorted(s) for s in systems]
 
-    if len(cycles) >= 1:
-        open_list = [atom_idx for cycle in cycles for atom_idx in cycle]
-    else:
-        open_list = list(graph.nodes)
+    # standard deviation over frames of each pairwise atom distance (nm)
+    dist_sd = np.linalg.norm(xyz[:, :, None, :] - xyz[:, None, :, :], axis=-1).std(axis=0)
 
-    distances = [path_lengths[(center_idx, atom_idx)] for atom_idx in open_list]
-    closest_idx = open_list[np.argmin(distances)]
+    def area(t: tuple[int, int, int]) -> float:
+        """Twice the area of the triangle spanned by the triplet."""
+        l1, l2, l3 = t
+        return float(np.linalg.norm(np.cross(ref[l2] - ref[l1], ref[l3] - ref[l1])))
 
-    if len(cycles) >= 1:
-        # restrict the list of reference atoms to select from to those that are in the
-        # same cycle as the closest atom.
-        cycle_idx = next(iter(i for i, cycle in enumerate(cycles) if closest_idx in cycle))
-        open_list = cycles[cycle_idx]
+    def l2_angle_offset(t: tuple[int, int, int]) -> float:
+        """Deviation (radians) of the L1-L2-L3 angle from 90 degrees."""
+        l1, l2, l3 = t
+        u, v = ref[l1] - ref[l2], ref[l3] - ref[l2]
+        return abs(float(np.arctan2(np.linalg.norm(np.cross(u, v)), u @ v)) - np.pi / 2)
 
-        distances = [path_lengths[(closest_idx, atom_idx)] for atom_idx in open_list]
+    def is_stiff(t: tuple[int, int, int]) -> bool:
+        """Whether all pairwise distances in the triplet stay fixed."""
+        l1, l2, l3 = t
+        return max(dist_sd[l1, l2], dist_sd[l1, l3], dist_sd[l2, l3]) < _LIGAND_DISTANCE_SD_CUTOFF
 
-    open_list = [idx for _, idx in sorted(zip(distances, open_list, strict=True)) if idx != closest_idx]
-    return [open_list[0], closest_idx, open_list[1]]
+    def triplets(l1: int, candidates: list[int]) -> Iterator[tuple[int, int, int]]:
+        """Candidate (L1, L2, L3) triplets for ``l1``, largest triangle first."""
+        pairs = itertools.combinations([i for i in candidates if i != l1], 2)
+        for a, b in sorted(pairs, key=lambda p: area((l1, *p)), reverse=True):
+            # order L2/L3 by geometry, not atom index, keeping the L1-L2-L3 angle near 90 degrees
+            yield from sorted([(l1, a, b), (l1, b, a)], key=l2_angle_offset)
+
+    def search(atoms: list[int]) -> tuple[int, int, int] | None:
+        """First stiff, non-linear triplet among ``atoms``, trying L1 nearest the center first."""
+        by_distance = sorted(atoms, key=lambda i: float(np.linalg.norm(ref[i] - center)))
+        stiff = (t for l1 in by_distance for t in triplets(l1, by_distance) if is_stiff(t))
+        return next((t for t in stiff if not _is_angle_linear(xyz, t)), None)
+
+    found = next((t for atoms in candidate_sets if len(atoms) >= 3 and (t := search(atoms)) is not None), None)
+    if found is None:
+        raise ValueError("no non-linear ligand atom triplet keeps fixed mutual distances")
+    selected = list(found)
+    if (rmsf[selected] >= _RMSF_CUTOFF).any():
+        print(f"Warning: Boresch ligand atoms {selected} do not all satisfy the RMSF stability criterion")
+    return selected
 
 
 def _filter_receptor_atoms(
     trj: mdtraj.Trajectory,
     ligand_ref_idx: int,
     rmsf: npt.NDArray,
-    min_helix_size: int = 8,
-    min_sheet_size: int = 8,
-    skip_residues_start: int = 20,
-    skip_residues_end: int = 10,
-    minimum_distance_nm=1.0,
-    maximum_distance_nm=3.0,
+    minimum_distance_nm: float = 0.4,
+    maximum_distance_nm: float = 3.0,
 ) -> list[int]:
     """Select possible protein atoms for Boresch-style restraints.
 
-    Based on the criteria outlined by Baumann et al.
+    Candidates are rigid (low RMSF) backbone and CB atoms, ordered by distance
+    to the first restrained ligand atom. Preferring nearby atoms keeps the lever
+    arm of the angle and dihedral restraints short, so the decoupled ligand is
+    held close to its bound pose.
 
     Args:
         trj: The system trajectory.
         ligand_ref_idx: first restrained ligand atom
         rmsf: per-atom RMSF (nm) computed against the caller's chosen reference
             frame, indexed by full-system atom index.
-        min_helix_size: The minimum number of residues that have to be in an alpha-helix
-            for it to be considered stable.
-        min_sheet_size: The minimum number of residues that have to be in a beta-sheet
-            for it to be considered stable.
-        skip_residues_start: The number of residues to skip at the start of the protein
-            as these tend to be more flexible.
-        skip_residues_end: The number of residues to skip at the end of the protein
-            as these tend to be more flexible
         minimum_distance_nm: Discard protein atoms that are closer than this distance
             to the ligand.
         maximum_distance_nm: Discard protein atoms that are further than this distance
             from the ligand.
 
     Returns:
-        The indices of protein atoms that should be considered for use in Boresch-style
-        restraints.
+        Indices of candidate protein atoms, nearest first.
 
     Raises:
         ValueError: if no suitable receptor atoms could be found
     """
-    assert min_helix_size >= 7, "helices must be at least 7 residues long"
-    assert min_sheet_size >= 7, "sheets must be at least 7 residues long"
-
-    backbone_idxs = trj.top.select("protein and (backbone or name CB)")
-    backbone: mdtraj.Trajectory = trj.atom_slice(backbone_idxs)
-
-    structure = mdtraj.compute_dssp(backbone, simplified=True).tolist()[0]
-
-    # following the SepTop reference implementation we prefer to select from alpha
-    # helices if they are dominant in the protein, but otherwise select from sheets
-    # as well.
-    n_helix_residues = structure.count("H")
-    n_sheet_residues = structure.count("E")
-
-    allowed_motifs = ["H"] if n_helix_residues >= n_sheet_residues else ["H", "E"]
-    min_motif_size = {"H": min_helix_size, "E": min_sheet_size}
-
-    residues_to_keep: list[str] = []
-
-    structure = structure[skip_residues_start : -(skip_residues_end + 1)]
-
-    for motif, _idxs in itertools.groupby(enumerate(structure), lambda x: x[1]):
-        idxs = [(idx + skip_residues_start, motif) for idx, motif in _idxs]
-
-        if motif not in allowed_motifs or len(idxs) < min_motif_size[motif]:
-            continue
-
-        # discard the first and last 3 residues of the helix / sheet
-        start_idx, end_idx = idxs[0][0] + 3, idxs[-1][0] - 3
-
-        residues_to_keep.extend(f"resid {idx}" for idx in range(start_idx, end_idx + 1))
-
-    rigid_backbone_idxs = backbone.top.select(" ".join(residues_to_keep))
-
-    if len(rigid_backbone_idxs) == 0:
+    candidates = trj.top.select("protein and (backbone or name CB)")
+    candidates = candidates[rmsf[candidates] < _RMSF_CUTOFF]
+    distances = np.linalg.norm(trj.xyz[-1, candidates] - trj.xyz[-1, ligand_ref_idx], axis=-1)
+    mask = (distances > minimum_distance_nm) & (distances <= maximum_distance_nm)
+    if not mask.any():
         raise ValueError("no suitable receptor atoms could be found")
-
-    trj_backbone_idxs = backbone_idxs[rigid_backbone_idxs]
-    rigid_backbone_idxs = rigid_backbone_idxs[rmsf[trj_backbone_idxs] < _RMSF_CUTOFF]
-
-    distances = scipy.spatial.distance.cdist(backbone.xyz[0, rigid_backbone_idxs, :], trj.xyz[-1, [ligand_ref_idx], :])
-
-    distance_mask = (distances > minimum_distance_nm).all(axis=1)
-    distance_mask &= (distances <= maximum_distance_nm).any(axis=1)
-
-    return backbone_idxs[rigid_backbone_idxs[distance_mask]].tolist()
+    return candidates[mask][np.argsort(distances[mask])].tolist()
 
 
 def _is_valid_r1(trj: mdtraj.Trajectory, r1: int, l1: int, l2: int, l3: int) -> bool:
@@ -395,15 +384,25 @@ def rdmol_to_mdtraj(mol: Mol) -> mdtraj.Trajectory:
         return mdtraj.load(tmp.name)
 
 
-def select_receptor_atoms_baumann(
+def _unwrap_around(trj: mdtraj.Trajectory, idx: int) -> mdtraj.Trajectory:
+    """Copy of ``trj`` with each atom moved to its periodic image nearest atom ``idx``."""
+    unwrapped = trj[:]
+    unwrapped.xyz = np.stack(
+        [x[idx] + np.asarray(delta_r(x, x[idx], box)) for x, box in zip(trj.xyz, trj.unitcell_vectors)]
+    )
+    return unwrapped
+
+
+def select_receptor_atoms(
     trj: mdtraj.Trajectory,
     ligand_ref_idxs: list[int],
     rmsf: npt.NDArray,
     other_ligand_ref_idxs: list[int] | None = None,
 ) -> list[int]:
-    """Select possible protein atoms for Boresch-style restraints.
+    """Select protein atoms for Boresch-style restraints.
 
-    Uses the method outlined by Baumann et al [1].
+    Follows the validity checks of Baumann et al [1], but takes the nearest valid
+    R1 rather than the first in atom order.
 
     References:
         [1] Baumann, Hannah M., et al. "Broadening the scope of binding free energy
@@ -423,6 +422,8 @@ def select_receptor_atoms_baumann(
     Raises:
         ValueError: if no suitable receptor atoms could be found
     """
+    # the ligand may be imaged out of the pocket, so measure everything from L1's image
+    trj = _unwrap_around(trj, ligand_ref_idxs[0])
     receptor_idxs = _filter_receptor_atoms(trj, ligand_ref_idxs[0], rmsf)
 
     triplets = [ligand_ref_idxs]
