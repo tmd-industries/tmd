@@ -97,6 +97,7 @@ def _get_default_state_minimization_configs() -> Sequence[minimizer.Minimization
     max_line_search_iters: int = 30
     return [
         minimizer.ScipyMinimizationConfig(method="L-BFGS-B", options={"gtol": gtol, "maxiter": max_line_search_iters}),
+        minimizer.FireMinimizationConfig(1000),
         minimizer.ScipyMinimizationConfig(
             method="BFGS", options={"disp": True, "gtol": gtol, "maxiter": max_line_search_iters}
         ),
