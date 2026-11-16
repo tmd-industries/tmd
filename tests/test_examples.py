@@ -451,12 +451,12 @@ def test_run_abfe(
 ):
     leg_results_hashes = {
         "solvent": (
-            "734a7773bb8703a51263c3cc5fab1dd6783a972a254baa51f9413cb0438ef73e",
-            "354013024c296ba4dd240a108524e1b188c3087044ea753c003f24549045aa14",
+            "d4323cd6e5feb321df226b995336139979569fa93ed5720f2b9d333d01f468d8",
+            "65ec4c9d247e262578945c1271cab540ea132ee5b9d0c9355aa4d521987950b0",
         ),
         "complex": (
-            "943a4877778f86a98e4c94f3cf5e9570e1a7a2cc1d434d2d9a4e820fc727a1ab",
-            "5719b09abc53e1c66d398733e5c35cf01d85311e849b9b82ad65d1d12c9ad0ea",
+            "3207c7ab0ebf80187066fb1d94131f2260b0fe7c13c03db97817fc0c61594433",
+            "78a90d401467b25e57722bf1f09fc751f71f9ce2fd884621bb27d43d25baab3f",
         ),
     }
 
@@ -825,64 +825,64 @@ def test_run_rbfe_legs(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         (2.5, False, "vacuum"): (
-            "344546b5520f99954f85330a147eaf2f936a12b04fd143c2a5f46cd712f8a61c",
-            "5927bc43193c193c3d0f69e6e065ff26473aae70665f487a4d0e4eb0d80d5da8",
-            "d773340569ab8a5e68d6b16b76f50c326b1919ccd6cfc8fb126dc8425c4d899a",
+            "7cd070d4248552b911fe36258669e206247810a2c2e39d2c2d0f0ab46cf5bb5f",
+            "1a9490f7fa94ca974cb519b438fb23d10ef6ed91103b7faf78e2bfbe03b8dc7c",
+            "57fe3b97cec712994bf2fbcb42f68b1b4775ebf2da1ef601e284c8024e8a28fd",
         ),
         (2.5, False, "solvent"): (
-            "5e8df13d5a79efca8aecb566743786e97efd5901c166d80c14745e48da4bca2f",
-            "a3e041be3cd4a1b68e297155a17f5eed5648d40d687517b94d878b86d603e488",
-            "71ee4b3aa05e3f71638dd69417932ce6b9f6d503f9a6729e43d4d8d4bf22bbc8",
+            "e1d6ac98043d7eb1f2bc249205221d4d7e5b7430f3602e804624da3cde6938f4",
+            "fe512b66ccf36f36447fa93d00eb47db79562c9e311addd15f894978c13aa448",
+            "55e40a905fe58cd698cbab64e3054b3923ce661e4f0dc01b3ec30809514de568",
         ),
         (2.5, False, "complex"): (
-            "205cf34e0696aac83bbca37f1b86e21c485f13f50cf2c1ff03858544ee19febb",
-            "26526bf7a3cf72d5643ec09c7c2b706f6586617b16fdf242cfab687bd02adc1d",
-            "bb36a23cd03e5c330b2ff15d19f9b099c19441e814ff7919f4efe5f84f673a91",
+            "4cac4e51f7a4d86dad839d1648081e7b209d35a830a29e668547ca97a3f92d83",
+            "ecfc0d5ef658d79704dcba0197cc6376a4e16459bacbc752ad9f38a9dde1d9e5",
+            "9791ab7f9cbdd603a539095b9349d2625954fddeef422fe08f94fc1d2ca25654",
         ),
         (2.5, True, "vacuum"): (
-            "260dc9293ea6a36fc80bd9b9381ba2cdf461969add761c1ed97fdedf04e9739f",
-            "a9c95d509c2d16ce0d2a339fe47f061326be8dd6fee2efc8653c248993ccaa18",
-            "610bc1ce427824105101b96b10195bb7c95e9788eaf8769b1a06b0f86c6cf937",
+            "7d582c077052fa5dad43049fef13b010c2ba813aa12e413f6ef2d2762c4d6894",
+            "a2e3e9c4c48afc7175a6a6936591853ef70b4ce9a2d8295fd129f6770613d453",
+            "5562c0ef657736da2befd521853989027baa8d7087c542ba4b8338db9417ab1f",
         ),
         (2.5, True, "solvent"): (
-            "36e4cddf63e193bb2be045b086b5a6a4e274ed9839a1f882b128b6e4a28c3576",
-            "e10951e0ac5009ce0df0ca56d9cd988428ef254753ec4f3b9bd8521a0055789e",
-            "ea62b851f82c92e361318317972a6adac0c9a956e565cb6d28184879e998d770",
+            "a8c8825807641e8c7c048363d338a768a3267281ae38d5928a353ce103efb562",
+            "307f9a4f729f077544d40a754f9cb3c33dc3bd8234ab567a5cb622fd3cbe3000",
+            "a414f262797393dbff286c00267777bfe64cfb986acc78e2048a7608fbffa471",
         ),
         (2.5, True, "complex"): (
-            "274bc64918b7e9a8e1b267a88067a1368e63c634976bee2ad3fc0eb8644fed2f",
-            "82cad187cb1e9b9a4372a2601a516999bf613b57fa045e3ddd7ad220b3d3a08a",
-            "19064bc70cf4b6092dcd41061a5d6fc630b71d8eba786de08c8a3ed27e1ee1dc",
+            "2a1c3e1f64669141bf4c009dc8804cd3771951dfcbc7ab1fdc42b82a9f3ce94c",
+            "66d1636ce9c003e322f41af4e6c6aa1a0620ed7d014f5ec61d8973c8660d5ea3",
+            "58388728e9d9e597d2911dcc2331d351994b5aa8755dbe0a608c228fb1c47270",
         ),
         (4.0, True, "vacuum"): (
-            "d5e3092c4c2b3457740c4dd4fe0796c7a0cedef5266c56bd40455731ef0360c7",
-            "0d83eb91d490e17b43ec8c0b08410a1caa5f9adf6020eb5be9a88df39a17f1f9",
-            "87d3b3961c735e60c4abfef0d027cb79c10a582ceb57e8307b3f0b18890d6ac7",
-        ),
-        (4.0, True, "solvent"): (
-            "34b243851fb8ca3e917b8809ffd46c117c68f466de357d5532cabd14efc1e361",
-            "b9108deb285332d74fa82118d781bf7aa423ff8d5dcc2a583771e4d87381c9eb",
-            "96938aa1d535d3e4aa14a6e8cdd96cc7f212d1b790f8ddfbccb452580b43b548",
-        ),
-        (4.0, True, "complex"): (
-            "e3ae50a25d4f1e7c15f7b6708bb645000e763b17d75f65789a0591f905216e3d",
-            "762f32e32b49153f7b165484b0ceef58ea73f4c21bdcf37622479b720c14820a",
-            "d7b75a192be3a8bbc3130554ccf395dd2f4925dd4ed4979070f4de872f1d5e9d",
+            "b2d263bda26cb3e23d0d226f8dace9f0599dc4c72baa3ffb9a57aa10593dd039",
+            "8e0f2d8de49599cdd300672cd7ca0e56fbe7bd7ccb371ca481c2cc3f53a33012",
+            "01041663e514dfdecf6487fe3ab4e6a08462ed6ce5368797f4f698f10e4f3054",
         ),
         (4.0, False, "vacuum"): (
-            "f8e7a6656e1b28f041a376d6e7acd853360eba43087d63b3ac0ffe81572a03a3",
-            "b03f0f405a5c750e47d2c00933d95e7574f693f1d919f09bccba37e8bb1bd8c1",
-            "c761281afc297c6390818cd539350c61208970cd5eb99ae644ce9403eb228b2d",
+            "8b531b26c53ff1cf846bb2fb6d2d7a46fca6e39b113bcdf191a5122cf43ea30e",
+            "30f886aa422b67560d369061d6462aa43bd5bcf531914f232911adffb3f22a84",
+            "58cca6f72298ac66a5165c584bb3860452c86a5d16600ac52aa52c754135a2fb",
+        ),
+        (4.0, True, "solvent"): (
+            "b8af3823ef3f761188c9de41812fd9c900b9a0ef7f2fb93d0c87a01060cc3a56",
+            "d635ee21bee4af49c1d6beceaf6dc1d9d400d722d278318253b51a7fa544cbd3",
+            "1985cd540423c0572e3b04523054a4411e81cdad304fcddd7ef540d24df515c0",
         ),
         (4.0, False, "solvent"): (
-            "7476cdc6bcae5a72318bab7c77a22b7d26fba9ea895a94dccf2349e82c302901",
-            "f8a3ebd89206577c4164324851736176e6bc57b5ea23940f9fed29e365dd6e31",
-            "de7fc53f3938c883cfcf07ded437e96254361b7c8e45cf33febd289eab14cb86",
+            "fe0a676588a687771fa54dea1d2ed6b86440e7d5513983c2cbbfb3d77fc7297d",
+            "6fed9f74dfc3663d41a93c4ce72da39db832686108676b36655fec7206abd40c",
+            "29cc24ebd7464f637e6928a49a2c994d12bc01cbed64511e41cf4399368f642c",
+        ),
+        (4.0, True, "complex"): (
+            "1ba0f2027854fea61f123476c883a13af8d0c4e65ff06167b19c5f31c0f43afb",
+            "25fc0f54646625a4869a2ad4e6e7b69af876566789ced9742cd1a65b6be8ed20",
+            "2d3c5bcebf647e5df7c4dc2d127ad68a5807ef113f1c390a404b131be848b59f",
         ),
         (4.0, False, "complex"): (
-            "11aef67dbe62a30360e49539b90f07e2dc3443fc2d936efa0e41cbf92deaf650",
-            "6e7164dc8d3eb93485ab804a6dcf6adc524f3cb6789335b6af1660d75b8700fb",
-            "1a23b430efeb89156717f28f0668634a224bb3955d98b195fdbdd2456f875eb4",
+            "ed7beb52ffe269cf40fb45ee2d850ecee26519026cc38a0463b907bde7ee278e",
+            "a62c00e616346ada35105831595e1517528176e63f66a6cbd8a24500dc2340da",
+            "b7c9b52c906d355b06e4a6b687e16f6436e094c4db6be6c409474f5f912277d4",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
@@ -1131,28 +1131,28 @@ def test_rest_ligand_flexibility(
 ):
     leg_hashes = {
         (False, "vacuum"): (
-            "2feb38420e3ae156432ca00591ba32ebd633253f872272488379fb5fa9ce3917",
-            "da964f31de444643ed73e33d48233f7cd3b3120bc6359a46702d1328e154a05f",
+            "4b4f4aae7d9af242e9fd4c15269378db5d99da7a20ae2553e4db2e0b96bd16e5",
+            "9b2d35221fe9889c441cd75e572dd4bf0c73c6e38062d9e302dd4c269bed63f8",
         ),
         (False, "solvent"): (
-            "73bc0d498bf13281bdf19d44bb514f62063f95bf94650b33fedf1330f2258180",
-            "7d232f1bc9faeb087e62b623e668eca98eb188e30e42ff272e8a3b8a70fdb5cb",
+            "2158003560f8ac26b48a23e00be6ac3b4b763e0dc9425371d6d0d4888abe1f08",
+            "1e81d7708775d99ec001229b92832bb4451eba8b49c08c68bf0f5d2156763250",
         ),
         (False, "complex"): (
-            "217f352008492cdb02fd1572202bbf824641cf5104a87f10116569db9ee11b08",
-            "afebf2731977d83263f49e9244668692d6a0cbe965681f6dcdc865f00406e0cc",
+            "8c95acf2417940e978cd6589732a76ef2efae170520366b288acb879bcc9715d",
+            "09036d1c4ab4a5a037effccd23b72482e06298c4655864703efde1c132689de9",
         ),
         (True, "vacuum"): (
-            "ba5d44e58b76b50e2f1b6705f30078fbf83b3f869c8d2ec556ed693cebf2d47b",
-            "4060a24524d8a60d3c1aeb40f081db4447cb6b80035acd68ea946f859f09a2bd",
+            "46fa4e9e79cf8a13ce14c127e96da32282b20ee77673ed905d86c4b27d225766",
+            "f7b575dd76564c2d4deb3ff3fd7390849100604ed9a6fc738ee334d5e7192317",
         ),
         (True, "solvent"): (
-            "d4278a0f6ca305977846c7047f3ab8b1aea7048dc7f44a0a5fbf5dab3a26d5a9",
-            "fa647631ba6bdea4af4c1b9be90ebaa00ee3f058d46c60b015fe2998c137fb38",
+            "8b99dec85d092a90721a55cc8647fd78bb76b38f4ea4ba9ea7559541d1749b60",
+            "9fb35b8f0e38d88d6a4734a3b57da8e84f7c8fb7762bea9afc714f4d1121e4f9",
         ),
         (True, "complex"): (
-            "7a1ca0962b4c8de327ef13db50d13be494fb50ab51e760eb848beb994f9a4d9f",
-            "4074dfd62df3578840c202c81012cfaaac52f6830c836fb982ed55d95c4f2010",
+            "193f86e87a350ee55252abd103399f707dadedeb9abd5bfe314228e811a0ceaa",
+            "a8b25d98cf467dd1a2690c4c96be7ae0143915fd818f0051b55b3a0233e6b25d",
         ),
     }
 
@@ -1233,44 +1233,44 @@ def test_run_rbfe_legs_local(
     # Hashes are of results.npz, lambda0_traj.npz and lambda1_traj.npz respectively.
     leg_results_hashes = {
         ("solvent", 400, True): (
-            "c01316b521049caaf3e1f63d0f1830fb77f6530e8b429cd65561d57aac6d654b",
-            "c470985d32295b2546c16aec75f2cc46ad20c6cce0aedb4c68ab56366b3e9b7c",
-            "e33a437e6e8382ba8f98b34fcc4c473565e17e8c4283a12d67260207d1a8baf1",
+            "833b9407bb157c549a15d236429b56a2464c6f15dc3560752f609451504b50ea",
+            "5c015956b47a341a4c8db4ea0d1ff689ca07f26e0bd5507d5fec2ba4fa8477ac",
+            "c6fbcf9773ee65f7d3a5c733e49c0fce6fefc75d91c916b71dc441f0c3afa7da",
         ),
         ("complex", 400, True): (
-            "f2e1460d840b078f2bf38b5b9227ca6ddee0e84fa93147c22a3ac956371f356b",
-            "87d18987aa2b8fa51f31bbe46d2f9584245b92dbe405445e483d941a643625d0",
-            "ea4cd670aefa23789ac69550c121201a0f056aa67e116cafc24de6d1e0ba4bbc",
+            "25bdaa4b4747e807dff2d322374a68f6dc352d3e9e91bc7ccfe144a1085115cf",
+            "887fe39b1cdd841b7f72899d3ec98fba8e4f4f02c580a810332822b5db5ebeaf",
+            "738cc4c2e27d57d4f44f4cf00e20567e0a4a3b24a7423300cd25eee3f895eb80",
         ),
         ("solvent", 390, True): (
-            "64b799698c9447c2d4e58a131509e22702386b95512a604fb1919a7f7b85b1b3",
-            "27c875863ccdc4779fcf3c9d32e7a7bb42556069364707391358ee4ee79863e3",
-            "b91e0481e702b4d2b13a62da5baa6b2ed97c3b5b8cb8ae5f99d8a82aeb647889",
+            "dded8c71b149e97eb5b3b5df20f3fbd92c38758fb14123b9c32cafa3cffacbf1",
+            "3007396eeb6bdca645ed17ccf1a866fbb60c0c8a2f4d55d090fc9de1615f1089",
+            "73fa2861e7b5bde9dad3b2ea567ecc6d884e1f80772be9f7700a90a9c6c7cd5b",
         ),
         ("complex", 390, True): (
-            "d5bf18f3b4d4455287182134629ccb2fd3556bdb07848fe87ba526c839957c39",
-            "a15442eb1a719bb041ef49dd463e14dc137df6e112e67709e2fa13cdccb9eed7",
-            "c35de41652ba53b3e402c9733275b2b861314c2234a09098a24f7b9ea3d5cc00",
+            "09570dfacf7d29c1f64e03602ed6f2d8e4d2e10697233ee833d0eeae165a2a7e",
+            "38ec37f740ab4b6dd57250fac7f75acbaa424d73af10dd041c0edbc577f29c5b",
+            "4eba297bcb6650909897342c8ed0a241c299e0f800d38e78e5e66466d9704ea6",
         ),
         ("solvent", 400, False): (
-            "9ed3695a22e6fedc415ea5f6283277d0735c220c35d2cb6fd8ebcdcc75036c5d",
-            "2a237fd00ca0d97a813b4cb00199da06c0eb7adbe7dc672fd83d33b7e8182adc",
-            "8be34a836397cbe44477fde3169453124fb9454fda4f53f41d1360a2a7230938",
+            "08e9437384be95745148d711418964a39c4070ef2097383dc82d2957eeabe02d",
+            "5572a7135e1eb0b8828b0cbf963a2dab869404ebfe8fb5fd1e19c2f1d72e0986",
+            "9ca7d0bb6d37a4e380b45aad349a94d9941e1bcc3fa4b8c9a1796f1afabf16ba",
         ),
         ("complex", 400, False): (
-            "57ab179a55db8ce0bbebb7685831336e8dc75ff1f5b7291c80cf0548cc064828",
-            "7feab4f10d291d1500e075b840f4d9e6af4f62bc924f3a0c2e531d06af20c42d",
-            "3b6924f6414342823bb0c6dd27eea4de380de457cf02d9d642b48a8b3be6f473",
+            "88fb1fae72eede620ac34b769910b69b163892cf4739b11d29afffed0eb1f155",
+            "1686954d8304fc98dc70dab751437d03b4b36f65493ad09e9bcfe98a7ffec7f5",
+            "35699db4acc6bd84c72bc0f9629fc65130356ba6f0f5c26dd4e5bb451a763c42",
         ),
         ("solvent", 390, False): (
-            "cca75665a37f9d07e3ded8a34e75c88150c81e82485ff7659222c2d4043145fa",
-            "6bf78b6a27dc1936e7ed7b5f386f65194a644b9ac6fe219fd30db41d978c47e8",
-            "cdcf1eb106e7512090f44894de3bfb317e3d41408174e92d8a0d2a9f80ce58ee",
+            "3540314e802e77b1356f205b9d5e510055a13d9c3f96f7880b87452f0e155adf",
+            "be6ad1e6547bf6abeb7c65e9783f6b3f08e8203869b99e7fcff0d51b9a26a94d",
+            "e1f5d9da773cebadcc12be41c78d6f2ff97b240d925dc1d039a7708a77487807",
         ),
         ("complex", 390, False): (
-            "9f841461e644cda31398ed322b8c6e464b00fa5aa6b7c0931975391dded1b69a",
-            "c6c678520714d8add54af50ce9b953943b9e7bf09423e38389ec138356afa1b9",
-            "52bcde9f27b41f387c7c2e8fda013dcd942a568152474045a1df76814cfcd440",
+            "36457c121ec4fc7f889903cef30ee1c21d29bd8b6b31b6c211a1c2c308ee669b",
+            "584460c9f76cf5bc3212d54d62d8a6efbb30a6d84f21c0995b09afb16c5a4321",
+            "1d942c75b54c7a6653b8a057456c3a3ede5c76351f0dddd978af643b8572b879",
         ),
     }
     with resources.as_file(resources.files("tmd.testsystems.fep_benchmark.hif2a")) as hif2a_dir:
