@@ -496,9 +496,11 @@ def fire_minimize_system(
     n_steps_per_window: int = 500,
     max_lambda: float = 0.1,
     n_windows: int = 2,
+    restraint_k: float = 5_000.0,
 ) -> NDArray:
     """
-    Minimize a system using the Fire minimizer.
+    Minimize a system using the Fire minimizer. Performs restrained hydrogen minimization followed by unrestrained minimization in each
+    lambda window.
 
     The mol coordinates are free during minimization, use fire_minimize_host if you only want to minimize the host.
     Updates the mol coordinates on each RDKit Mol.
@@ -528,6 +530,9 @@ def fire_minimize_system(
     n_windows: integer
         The number of windows to linearly interpolate between the max_lambda value and 0.0.
 
+    restraint_k: float
+        The restraint k for restrained hydrogen minimization. Defaults to 5000
+
     Returns
     -------
     np.ndarray
@@ -554,8 +559,10 @@ def fire_minimize_system(
     x = combined_coords
 
     for lamb in np.linspace(max_lambda, 0.0, n_windows):
-        # Minimize just hydrogens
-        du_dx_fxn = make_du_dx_fxn(hgt, host_config, mols, x0=np.array(x), free_idxs=hydrogen_atoms, lamb=lamb)
+        # Minimize just hydrogens with restraints
+        du_dx_fxn = make_du_dx_fxn(
+            hgt, host_config, mols, x0=np.array(x), free_idxs=hydrogen_atoms, lamb=lamb, restraint_k=restraint_k
+        )
         x[hydrogen_atoms] = fire_minimize(x[hydrogen_atoms], du_dx_fxn, config)
 
         # Minimize everything
@@ -687,11 +694,16 @@ def make_du_dx_fxn(
     lamb: float = 0.0,
     x0: NDArray | None = None,
     free_idxs: NDArray[np.int32] | None = None,
+    restraint_k: float = 0.0,
+    restrained_idxs: Optional[NDArray] = None,
 ):
     """construct function to compute du_dx, given a box
 
     Scales down the charges of the provided molecules by the number of molecules. IE 2 mols will result in the charges being scaled by half."""
     assert host_config.box.shape == (3, 3)
+    if restrained_idxs is not None and free_idxs is not None:
+        assert restraint_k > 0.0, "Restraint k must be greater than 0.0 if restrained indices provided"
+        assert set(restrained_idxs).issubset(set(free_idxs)), "Restrained indices must be a subset of free indices"
 
     num_host_atoms = len(host_config.conf)
 
@@ -706,6 +718,20 @@ def make_du_dx_fxn(
     if free_idxs is None:
         free_idxs = np.arange(hgt.get_num_atoms(), dtype=np.int32)
 
+    restraint_grad = None
+    restrained_free_idxs = None
+    restrained_mask = None
+    starting_restrained = None
+    if restraint_k > 0.0:
+        assert x0 is not None, "x0 must be provided if restraint_k > 0.0"
+        if restrained_idxs is None:
+            restrained_idxs = free_idxs
+        restraint_grad = jax.grad(harmonic_positional_restraint, argnums=1)
+
+        restrained_mask = np.isin(free_idxs, restrained_idxs)
+        restrained_free_idxs = free_idxs[restrained_mask]
+        starting_restrained = np.array(x0[restrained_free_idxs])
+
     # wrap gpu_impl, partially applying box, mol coords
     def du_dx_fxn(x_free):
         if x0 is None:
@@ -714,6 +740,9 @@ def make_du_dx_fxn(
             x = np.array(x0)
         x[free_idxs] = x_free
         du_dx, _ = gpu_impl.execute(x, host_config.box, compute_u=False)
+        if restraint_grad is not None:
+            grad = restraint_grad(starting_restrained, x_free[restrained_mask], host_config.box, k=restraint_k)
+            du_dx[restrained_free_idxs] += np.asarray(grad)
         return du_dx[free_idxs]
 
     return du_dx_fxn
