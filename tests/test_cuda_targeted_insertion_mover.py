@@ -505,7 +505,7 @@ def test_targeted_insertion_brd4_rbfe_with_context(
 ):
     # Interval has to be large enough to resolve clashes in the MD steps
     interval = 800
-    steps = interval * 10
+    steps = interval * 15
     initial_state = brd4_rbfe_state
 
     conf = initial_state.x0.astype(precision)
