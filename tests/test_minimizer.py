@@ -39,69 +39,89 @@ from tmd.utils import path_to_internal_file
 
 
 @pytest.mark.parametrize(
-    "pdb_path, sdf_path, mol_a_name, mol_b_name",
+    "module_name, pdb_filename, ligands_filename, mol_a_name, mol_b_name",
     [
         pytest.param(
-            path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb"),
-            path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf"),
+            "tmd.testsystems.fep_benchmark.hif2a",
+            "5tbm_prepared.pdb",
+            "ligands.sdf",
             "43",
             "234",
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
-            path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "6hvi_prepared.pdb"),
-            path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf"),
+            "tmd.testsystems.fep_benchmark.pfkfb3",
+            "6hvi_prepared.pdb",
+            "ligands.sdf",
             "20",
             "43",
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
-            path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "6hvi_prepared.pdb"),
-            path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf"),
+            "tmd.testsystems.fep_benchmark.pfkfb3",
+            "6hvi_prepared.pdb",
+            "ligands.sdf",
             "41",
             "43",
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
-            path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "6hvi_prepared.pdb"),
-            path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf"),
+            "tmd.testsystems.fep_benchmark.pfkfb3",
+            "6hvi_prepared.pdb",
+            "ligands.sdf",
             "34",
             "37",
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
-            path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "6hvi_prepared.pdb"),
-            path_to_internal_file("tmd.testsystems.fep_benchmark.pfkfb3", "ligands.sdf"),
+            "tmd.testsystems.fep_benchmark.pfkfb3",
+            "6hvi_prepared.pdb",
+            "ligands.sdf",
             "26",
             "37",
             marks=pytest.mark.nightly(reason="slow"),
         ),
         pytest.param(
-            path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "5tbm_prepared.pdb"),
-            path_to_internal_file("tmd.testsystems.fep_benchmark.hif2a", "ligands.sdf"),
+            "tmd.testsystems.fep_benchmark.hif2a",
+            "5tbm_prepared.pdb",
+            "ligands.sdf",
             "43",
             "234",
         ),
         # Failure around waters not getting deleted and causing crashes in the minimizer
         pytest.param(
-            path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "cdk8_structure.pdb"),
-            path_to_internal_file("tmd.testsystems.fep_benchmark.cdk8", "ligands.sdf"),
+            "tmd.testsystems.fep_benchmark.cdk8",
+            "cdk8_structure.pdb",
+            "ligands.sdf",
             "43",
             "44",
         ),
+        pytest.param(
+            "tmd.testsystems.fep_benchmark.cdk2",
+            "cdk2_structure.pdb",
+            "ligands.sdf",
+            "17",
+            "1oi9",
+        ),
     ],
 )
-def test_fire_minimize_host_protein(pdb_path, sdf_path, mol_a_name, mol_b_name):
+@pytest.mark.parametrize("equilibrate_mols", [False, True])
+def test_fire_minimize_protein(module_name, pdb_filename, ligands_filename, mol_a_name, mol_b_name, equilibrate_mols):
     ff = Forcefield.load_from_file("smirnoff_2_0_0_sc.py")
-    with sdf_path as ligand_path:
+    with path_to_internal_file(module_name, ligands_filename) as ligand_path:
         mols_by_name = read_sdf_mols_by_name(ligand_path)
     mol_a = mols_by_name[mol_a_name]
     mol_b = mols_by_name[mol_b_name]
 
-    with pdb_path as host_path:
+    with path_to_internal_file(module_name, pdb_filename) as host_path:
         for mols in [[mol_a], [mol_b], [mol_a, mol_b]]:
+            # Create copies of the mols to avoid using different conformers
+            mols = [Chem.Mol(m) for m in mols]
             host_config = builders.build_protein_system(str(host_path), ff.protein_ff, ff.water_ff, mols=mols)
-            x_host = minimizer.fire_minimize_host(mols, host_config, ff)
+            if not equilibrate_mols:
+                x_host = minimizer.fire_minimize_host(mols, host_config, ff)
+            else:
+                x_host = minimizer.fire_minimize_system(mols, host_config, ff)
             assert x_host.shape == host_config.conf.shape
 
 
