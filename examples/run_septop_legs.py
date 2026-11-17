@@ -285,13 +285,13 @@ def main():
     )
     parser.add_argument(
         "--eps_scale_lambda",
-        default=0.25,
+        default=0.55,
         type=float,
         help="LJ epsilon scaling happens over the interval [0, eps_scale_lambda]",
     )
     parser.add_argument(
         "--w_lambda",
-        default=0.5,
+        default=0.45,
         type=float,
         help="W-coordinate (4D) decoupling happens over the interval [w_lambda, 1.0]",
     )

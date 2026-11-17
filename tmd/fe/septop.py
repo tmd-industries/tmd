@@ -789,8 +789,8 @@ def run_septop(
     rst_params: RestraintParams,
     eq_md_params: MDParams | None = None,
     decharge_lambda: float = 0.25,
-    eps_scale_lambda: float = 0.25,
-    w_lambda: float = 0.5,
+    eps_scale_lambda: float = 0.55,
+    w_lambda: float = 0.45,
     enable_batching: bool = False,
     leg: str = COMPLEX_LEG,
 ) -> tuple[SimulationResult, SepTopCorrections]:
