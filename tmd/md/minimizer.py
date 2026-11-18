@@ -66,11 +66,16 @@ class FireMinimizationConfig:
     n_steps: int
     dt_start: float = 1e-5
     dt_max: float = 1e-4
-    n_min: float = 5
+    dt_min: float = 2e-7
+    n_min: float = 20
     f_inc: float = 1.1
     f_dec: float = 0.5
     alpha_start: float = 0.1
     f_alpha: float = 0.99
+    n_neg_max: int = 100
+    initial_delay: bool = True
+    dmax: float = 1e-3  # cap on per-atom displacement per step (nm); guards against wall tunneling
+    stall_patience: int = 250  # max |force| must improve at least once every N steps (0 disables)
 
 
 @dataclass(frozen=True)
@@ -156,9 +161,11 @@ def fire_minimize(
     x0: NDArray,
     du_dx_fxn: Callable[[NDArray], NDArray],
     config: FireMinimizationConfig,
+    masses: Optional[NDArray] = None,
 ) -> NDArray:
     """
-    Minimize coordinates using the FIRE algorithm
+    Minimize coordinates using the FIRE 2.0 algorithm (Velocity Verlet integration,
+    backtracking of uphill motion, and per-atom masses).
 
     Parameters
     ----------
@@ -170,34 +177,79 @@ def fire_minimize(
     config: FireMinimizationConfig
         Fire configuration for minimization
 
+    masses: np.ndarray, optional
+        Per-atom masses [n] (same length as x0). If None, unit masses are used and a
+        MinimizationWarning is emitted.
+
     Returns
     -------
     np.ndarray
         Minimized coords.
 
     """
+    if masses is None:
+        warnings.warn(
+            "FIRE minimization called without masses; using unit masses (m=1) for all atoms. "
+            "Pass per-atom masses for physically correct FIRE 2.0 dynamics.",
+            MinimizationWarning,
+        )
+        masses = np.ones(x0.shape[0])
+    masses = np.asarray(masses, dtype=x0.dtype)
 
     def force(coords):
         forces = -du_dx_fxn(coords)
         return forces
 
-    def shift(d, dr):
-        return d + dr
+    def shift(d, dr=None):
+        # tmd._vendored.fire applies the displacement to R itself and calls shift_fn once with the
+        # updated position; accept the legacy (d, dr) form as well so this stays a valid shift_fn.
+        return d if dr is None else d + dr
 
     init, f = fire_descent(
         force,
         shift,
+        masses,
         dt_start=config.dt_start,
         dt_max=config.dt_max,
+        dt_min=config.dt_min,
         n_min=config.n_min,
         f_inc=config.f_inc,
         f_dec=config.f_dec,
         alpha_start=config.alpha_start,
         f_alpha=config.f_alpha,
+        initial_delay=config.initial_delay,
+        dmax=config.dmax,
     )
     opt_state = init(x0)
+    best_max_force = np.inf
+    steps_since_improvement = 0
     for _ in range(config.n_steps):
         opt_state = f(opt_state)
+        if opt_state.n_neg > config.n_neg_max:
+            warnings.warn(
+                f"FIRE stopped early: {int(opt_state.n_neg)} consecutive uphill steps (P<=0) "
+                f"exceeded n_neg_max={config.n_neg_max}; the system appears stuck.",
+                MinimizationWarning,
+            )
+            break
+        # Stuck detection via progress on max |force|: near a stiff repulsive wall P can
+        # alternate sign every step (bouncing), which resets the consecutive-count n_neg so
+        # the vdfmax/n_neg_max criterion above never fires. max |force| stalling is the
+        # robust signal that the system is no longer relaxing.
+        if config.stall_patience > 0:
+            max_force = float(np.max(np.linalg.norm(opt_state.force, axis=-1)))
+            if max_force < best_max_force:
+                best_max_force = max_force
+                steps_since_improvement = 0
+            else:
+                steps_since_improvement += 1
+            if steps_since_improvement > config.stall_patience:
+                warnings.warn(
+                    f"FIRE stopped early: max |force| = {max_force:.3e} did not improve for "
+                    f"{config.stall_patience} consecutive steps; the system appears stuck.",
+                    MinimizationWarning,
+                )
+                break
     return np.asarray(opt_state.position)
 
 
@@ -493,7 +545,7 @@ def fire_minimize_system(
     host_config: HostConfig,
     ff: Forcefield,
     mol_coords: Optional[list[NDArray]] = None,
-    n_steps_per_window: int = 500,
+    n_steps_per_window: int = 1000,
     max_lambda: float = 0.1,
     n_windows: int = 2,
     restraint_k: float = 5_000.0,
@@ -542,7 +594,9 @@ def fire_minimize_system(
 
     assert 1.0 >= max_lambda > 0.0, "Max lambda must be greater than 0.0 and less than or equal to 1.0"
 
-    hgt, combined_coords, combined_masses = combine_mols_and_host(mols, host_config, ff, mol_coords=mol_coords)
+    hgt, combined_coords, combined_masses = combine_mols_and_host(
+        mols, host_config, ff, mol_coords=mol_coords, equilibrate_mols=True
+    )
     hydrogen_element = Element.getBySymbol("H")
     hydrogen_atoms = np.array(
         [atom.index for atom in host_config.omm_topology.atoms() if atom.element == hydrogen_element], np.int32
@@ -563,11 +617,13 @@ def fire_minimize_system(
         du_dx_fxn = make_du_dx_fxn(
             hgt, host_config, mols, x0=np.array(x), free_idxs=hydrogen_atoms, lamb=lamb, restraint_k=restraint_k
         )
-        x[hydrogen_atoms] = fire_minimize(x[hydrogen_atoms], du_dx_fxn, config)
+        x[hydrogen_atoms] = fire_minimize(
+            x[hydrogen_atoms], du_dx_fxn, config, masses=combined_masses[hydrogen_atoms].astype(x.dtype)
+        )
 
         # Minimize everything
         du_dx_fxn = make_du_dx_fxn(hgt, host_config, mols, lamb=lamb)
-        x = fire_minimize(x, du_dx_fxn, config)
+        x = fire_minimize(x, du_dx_fxn, config, masses=combined_masses.astype(x.dtype))
 
     du_dx = du_dx_fxn(x)
     check_force_norm(-du_dx)
@@ -638,7 +694,7 @@ def fire_minimize_host(
 
     for lamb in np.linspace(max_lambda, 0.0, n_windows):
         du_dx_fxn = make_du_dx_fxn(hgt, host_config, mols, x0=np.array(combined_coords), free_idxs=free_idxs, lamb=lamb)
-        x_host = fire_minimize(x_host, du_dx_fxn, config)
+        x_host = fire_minimize(x_host, du_dx_fxn, config, masses=np.asarray(host_config.masses, dtype=x_host.dtype))
 
     du_dx = du_dx_fxn(x_host)
     check_force_norm(-du_dx)
@@ -882,6 +938,7 @@ def local_minimize(
     restraint_k: float = 0.0,
     restrained_idxs: Optional[NDArray] = None,
     force_threshold: float = MAX_FORCE_NORM,
+    masses: Optional[NDArray] = None,
 ) -> NDArray:
     """
     Minimize a local region given selected idxs.
@@ -921,6 +978,11 @@ def local_minimize(
     force_threshold: float
         Maximum force norm that is considered to be minimized. Defaults to tmd.constants.MAX_FORCE_NORM
 
+    masses: np.ndarray, optional
+        Full-system per-atom masses (one entry per atom in x0). When provided, the slice
+        corresponding to the free (local) atoms is passed to the FIRE minimizer. Only used
+        by FireMinimizationConfig; ignored by scipy-based configs.
+
 
     Returns
     -------
@@ -944,6 +1006,9 @@ def local_minimize(
     n_frozen = len(x0) - len(local_idxs)
 
     free_idxs = np.asarray(local_idxs)
+
+    if masses is not None:
+        assert masses.shape[0] == len(x0), "masses must have one entry per atom in x0"
 
     U_0, _ = val_and_grad_fn(x0)
 
@@ -985,7 +1050,8 @@ def local_minimize(
         if isinstance(config, ScipyMinimizationConfig):
             x_local_final = scipy_minimize(x_local_0, val_and_grad_fn_local, config)
         else:
-            x_local_final = fire_minimize(x_local_0, lambda x: val_and_grad_fn_local(x)[1], config)
+            local_masses = np.asarray(masses[free_idxs], dtype=x_local_0.dtype) if masses is not None else None
+            x_local_final = fire_minimize(x_local_0, lambda x: val_and_grad_fn_local(x)[1], config, masses=local_masses)
 
         x_final = x0.copy()
         x_final[free_idxs] = x_local_final
@@ -1059,5 +1125,7 @@ def replace_conformer_with_minimized(
     if minimizer_configs is None:
         minimizer_configs = [ScipyMinimizationConfig(method="BFGS")]
 
-    xs_opt = local_minimize(xs, box, val_and_grad_fn, all_idxs, minimizer_configs, verbose=False)
+    xs_opt = local_minimize(
+        xs, box, val_and_grad_fn, all_idxs, minimizer_configs, verbose=False, masses=get_mol_masses(mol)
+    )
     set_romol_conf(mol, xs_opt, conf_id)

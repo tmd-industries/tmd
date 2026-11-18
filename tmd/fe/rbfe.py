@@ -579,6 +579,7 @@ def optimize_initial_state_from_pre_optimized(
             # assertion can lead to spurious errors when new state is close to an existing one
             assert_energy_decreased=False,
             k=k,
+            masses=np.asarray(initial_state.integrator.masses),
         )
         return initial_state
 
@@ -593,6 +594,7 @@ def optimize_coords_state(
     restrained_idxs: Optional[NDArray] = None,
     minimization_configs: Optional[Sequence[minimizer.MinimizationConfig]] = None,
     force_threshold: float = 10_000.0,
+    masses: Optional[NDArray] = None,
 ) -> NDArray:
     """
     Minimize the coordinates of a single alchemical state.
@@ -630,6 +632,10 @@ def optimize_coords_state(
     force_threshold: float
         The maximum force norm that will be tolerated for the final minimized coords
 
+    masses: array (N,), optional
+        Per-atom masses (one entry per atom in x0). Passed through to FIRE-based minimizer
+        configs; if omitted, those configs fall back to unit masses and warn.
+
     Returns
     -------
     array (N, 3)
@@ -651,6 +657,7 @@ def optimize_coords_state(
         restrained_idxs=restrained_idxs,
         restraint_k=k,
         force_threshold=force_threshold,
+        masses=masses,
     )
     assert np.all(np.isfinite(x_opt)), "Minimization resulted in a nan"
     return x_opt
@@ -687,6 +694,7 @@ def _optimize_coords_along_states(
                 assert_energy_decreased=idx == 0,
                 restrained_idxs=initial_state.interacting_atoms,
                 k=k,
+                masses=np.asarray(initial_state.integrator.masses),
             )
         except (AssertionError, minimizer.MinimizationError) as e:
             raise minimizer.MinimizationError(f"Failed to optimized state at λ={initial_state.lamb}") from e
