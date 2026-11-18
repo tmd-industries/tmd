@@ -305,15 +305,20 @@ def test_local_minimize_fall_back():
 
     u_init, g_init = val_and_grad_fn(x0)
 
-    bad_config = minimizer.FireMinimizationConfig(1, dt_start=0.1, dt_max=0.1)  # Minimizing with large dt will fail
+    # Minimizing with large dt will fail; the default per-step displacement cap (dmax) would contain the
+    # huge dt, so disable it here to preserve the premise that this config blows up.
+    bad_config = minimizer.FireMinimizationConfig(1, dt_start=0.1, dt_max=0.1, dmax=np.inf)
     good_config = minimizer.ScipyMinimizationConfig("L-BFGS-B")
 
     combined_config = [bad_config, good_config]
 
     with warnings.catch_warnings(record=True) as captured_warnings:
         x_opt = minimizer.local_minimize(x0, box0, val_and_grad_fn, free_idxs, combined_config)
-    assert len(captured_warnings) == 1
-    assert "falling back to next minimizer" in captured_warnings[0].message.args[0]
+    # The FIRE path now also emits a MinimizationWarning about missing per-atom masses; filter to the
+    # warning this test actually cares about: exactly one minimizer fallback occurred.
+    fallback_warnings = [w for w in captured_warnings if "falling back to next minimizer" in str(w.message)]
+    assert len(fallback_warnings) == 1
+    assert "falling back to next minimizer" in fallback_warnings[0].message.args[0]
 
     np.testing.assert_array_equal(x0[frozen_idxs], x_opt[frozen_idxs])
     assert np.linalg.norm(x0[free_idxs] - x_opt[free_idxs]) > 0.01
@@ -428,7 +433,8 @@ def test_local_minimize_restrained_subset(seed, minimizer_config):
 @pytest.mark.parametrize(
     "minimizer_config",
     [
-        minimizer.FireMinimizationConfig(100),
+        # A deep clash needs more steps to clear under the default dmax displacement cap than under old uncapped FIRE.
+        minimizer.FireMinimizationConfig(500),
         minimizer.ScipyMinimizationConfig("BFGS"),
         minimizer.ScipyMinimizationConfig("L-BFGS-B"),
     ],
@@ -478,7 +484,10 @@ def test_local_minimize_restrained_waters_trigger_failure(seed, minimizer_config
     minimized_coords = minimizer.local_minimize(
         coords, box, val_and_grad_fn, free_idxs, [minimizer_config], restraint_k=k, restrained_idxs=ligand_idxs
     )
-    np.testing.assert_allclose(minimized_coords[ligand_idxs], coords[ligand_idxs], atol=0.005)
+    # FIRE 2.0 (Velocity Verlet + backtracking, N_delay=20) settles slightly more aggressively
+    # against the hard restraint than the legacy integrator; allow a small drift on the restrained
+    # ligand while still far below the >0.1 nm water displacement asserted below.
+    np.testing.assert_allclose(minimized_coords[ligand_idxs], coords[ligand_idxs], atol=0.01)
 
     # At least one water atom will need to have moved an angstrom to allow the ligand to be in the water
     assert np.any(np.linalg.norm(minimized_coords[unrestrained_idxs] - coords[unrestrained_idxs], axis=-1) > 0.1)

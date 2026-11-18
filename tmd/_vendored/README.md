@@ -4,6 +4,11 @@
 
 Taken from https://github.com/google/jax-md/blob/master/jax_md under an Apache 2.0 license
 
+### Modifications
+
+* Modified to be FIRE 2.0 as described in https://arxiv.org/abs/1908.02038
+
+
 ## Pymbar
 
 Taken https://github.com/choderalab/pymbar/commit/683644086ca57c5077fb99ac85f623472764343f under a MIT license
